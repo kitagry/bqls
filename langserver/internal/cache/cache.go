@@ -1,16 +1,24 @@
 package cache
 
 import (
-	"bytes"
-	"io/fs"
-	"os"
-	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/goccy/go-zetasql"
+	"github.com/goccy/go-zetasql/ast"
+	"github.com/kitagry/bqls/langserver/internal/lsp"
 )
 
 type Policy struct {
 	RawText string
+	Node    ast.Node
+	Errors  []Error
+}
+
+type Error struct {
+	Msg      string
+	Position lsp.Position
 }
 
 type GlobalCache struct {
@@ -18,74 +26,16 @@ type GlobalCache struct {
 	pathToPlicies map[string]*Policy
 }
 
-func NewGlobalCache(rootPath string) (*GlobalCache, error) {
+func NewGlobalCache() *GlobalCache {
 	g := &GlobalCache{pathToPlicies: make(map[string]*Policy)}
 
-	regoFilePaths, err := loadRegoFiles(rootPath)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, path := range regoFilePaths {
-		err = g.putWithPath(path)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return g, nil
-}
-
-func NewGlobalCacheWithFiles(pathToText map[string]string) (*GlobalCache, error) {
-	g := &GlobalCache{pathToPlicies: make(map[string]*Policy, len(pathToText))}
-
-	for path, text := range pathToText {
-		err := g.Put(path, text)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return g, nil
-}
-
-func loadRegoFiles(rootPath string) ([]string, error) {
-	result := make([]string, 0)
-	err := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if d.IsDir() {
-			return nil
-		}
-
-		if strings.HasSuffix(d.Name(), ".rego") {
-			result = append(result, path)
-		}
-		return nil
-	})
-	return result, err
+	return g
 }
 
 func (g *GlobalCache) Get(path string) *Policy {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return g.pathToPlicies[path]
-}
-
-func (g *GlobalCache) putWithPath(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	buf := new(bytes.Buffer)
-	_, err = buf.ReadFrom(f)
-	if err != nil {
-		return err
-	}
-
-	return g.Put(path, buf.String())
 }
 
 func (g *GlobalCache) Put(path string, rawText string) error {
@@ -97,8 +47,39 @@ func (g *GlobalCache) Put(path string, rawText string) error {
 		policy = &Policy{}
 	}
 	policy.RawText = rawText
+
+	node, err := zetasql.ParseScript(rawText, zetasql.NewParserOptions(), zetasql.ErrorMessageOneLine)
+	if err != nil {
+		error := parseZetaSQLError(err)
+		policy.Errors = []Error{error}
+		g.pathToPlicies[path] = policy
+		return nil
+	}
+
+	policy.Node = node
+	policy.Errors = nil
+
 	g.pathToPlicies[path] = policy
 	return nil
+}
+
+func parseZetaSQLError(err error) Error {
+	errStr := err.Error()
+	if !strings.Contains(errStr, "[at ") {
+		return Error{Msg: errStr}
+	}
+
+	// extract position information like "... [at 1:28]"
+	positionInd := strings.Index(errStr, "[at ")
+	location := errStr[positionInd+4 : len(errStr)-1]
+	locationSep := strings.Split(location, ":")
+	line, _ := strconv.Atoi(locationSep[0])
+	col, _ := strconv.Atoi(locationSep[1])
+	pos := lsp.Position{Line: line - 1, Character: col - 1}
+
+	// Trim position information
+	errStr = strings.TrimSpace(errStr[:positionInd])
+	return Error{Msg: errStr, Position: pos}
 }
 
 func (g *GlobalCache) Delete(path string) {
