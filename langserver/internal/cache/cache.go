@@ -6,15 +6,8 @@ import (
 	"sync"
 
 	"github.com/goccy/go-zetasql"
-	"github.com/goccy/go-zetasql/ast"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 )
-
-type Policy struct {
-	RawText string
-	Node    ast.Node
-	Errors  []Error
-}
 
 type Error struct {
 	Msg      string
@@ -22,44 +15,44 @@ type Error struct {
 }
 
 type GlobalCache struct {
-	mu            sync.RWMutex
-	pathToPlicies map[string]*Policy
+	mu        sync.RWMutex
+	pathToSQL map[string]*SQL
 }
 
 func NewGlobalCache() *GlobalCache {
-	g := &GlobalCache{pathToPlicies: make(map[string]*Policy)}
+	g := &GlobalCache{pathToSQL: make(map[string]*SQL)}
 
 	return g
 }
 
-func (g *GlobalCache) Get(path string) *Policy {
+func (g *GlobalCache) Get(path string) *SQL {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	return g.pathToPlicies[path]
+	return g.pathToSQL[path]
 }
 
 func (g *GlobalCache) Put(path string, rawText string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	policy, ok := g.pathToPlicies[path]
+	sql, ok := g.pathToSQL[path]
 	if !ok {
-		policy = &Policy{}
+		sql = &SQL{}
 	}
-	policy.RawText = rawText
+	sql.RawText = rawText
 
 	node, err := zetasql.ParseScript(rawText, zetasql.NewParserOptions(), zetasql.ErrorMessageOneLine)
 	if err != nil {
 		error := parseZetaSQLError(err)
-		policy.Errors = []Error{error}
-		g.pathToPlicies[path] = policy
+		sql.Errors = []Error{error}
+		g.pathToSQL[path] = sql
 		return nil
 	}
 
-	policy.Node = node
-	policy.Errors = nil
+	sql.Node = node
+	sql.Errors = nil
 
-	g.pathToPlicies[path] = policy
+	g.pathToSQL[path] = sql
 	return nil
 }
 
@@ -85,5 +78,5 @@ func parseZetaSQLError(err error) Error {
 func (g *GlobalCache) Delete(path string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	delete(g.pathToPlicies, path)
+	delete(g.pathToSQL, path)
 }
