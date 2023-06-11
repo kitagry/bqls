@@ -7,7 +7,7 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/source"
 )
 
-func (h *handler) diagnostic() {
+func (h *Handler) diagnostic() {
 	running := make(map[lsp.DocumentURI]context.CancelFunc)
 
 	for {
@@ -41,7 +41,7 @@ func (h *handler) diagnostic() {
 	}
 }
 
-func (h *handler) diagnose(ctx context.Context, uri lsp.DocumentURI) (map[lsp.DocumentURI][]lsp.Diagnostic, error) {
+func (h *Handler) diagnose(ctx context.Context, uri lsp.DocumentURI) (map[lsp.DocumentURI][]lsp.Diagnostic, error) {
 	result := make(map[lsp.DocumentURI][]lsp.Diagnostic)
 
 	pathToErrs := h.project.GetErrors(documentURIToURI(uri))

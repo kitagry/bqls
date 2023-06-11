@@ -8,7 +8,7 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 )
 
-func (h *handler) handleTextDocumentDidOpen(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result interface{}, err error) {
+func (h *Handler) handleTextDocumentDidOpen(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result interface{}, err error) {
 	if req.Params == nil {
 		return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams}
 	}
@@ -23,7 +23,7 @@ func (h *handler) handleTextDocumentDidOpen(ctx context.Context, conn *jsonrpc2.
 	return nil, nil
 }
 
-func (h *handler) handleTextDocumentDidChange(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result interface{}, err error) {
+func (h *Handler) handleTextDocumentDidChange(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result interface{}, err error) {
 	if req.Params == nil {
 		return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams}
 	}
@@ -38,7 +38,7 @@ func (h *handler) handleTextDocumentDidChange(ctx context.Context, conn *jsonrpc
 	return nil, nil
 }
 
-func (h *handler) handleTextDocumentDidClose(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result interface{}, err error) {
+func (h *Handler) handleTextDocumentDidClose(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result interface{}, err error) {
 	if req.Params == nil {
 		return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams}
 	}
@@ -53,7 +53,7 @@ func (h *handler) handleTextDocumentDidClose(ctx context.Context, conn *jsonrpc2
 	return nil, nil
 }
 
-func (h *handler) handleTextDocumentDidSave(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result interface{}, err error) {
+func (h *Handler) handleTextDocumentDidSave(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result interface{}, err error) {
 	if req.Params == nil {
 		return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams}
 	}
@@ -68,7 +68,7 @@ func (h *handler) handleTextDocumentDidSave(ctx context.Context, conn *jsonrpc2.
 	return nil, nil
 }
 
-func (h *handler) updateDocument(uri lsp.DocumentURI, text string, version int) {
+func (h *Handler) updateDocument(uri lsp.DocumentURI, text string, version int) {
 	h.project.UpdateFile(documentURIToURI(uri), text, version)
 	h.diagnosticRequest <- uri
 }

@@ -43,6 +43,10 @@ func NewProject(ctx context.Context, rootPath string) (*Project, error) {
 	}, nil
 }
 
+func (p *Project) Close() error {
+	return p.bqClient.Close()
+}
+
 func (p *Project) UpdateFile(path string, text string, version int) error {
 	p.cache.Put(path, text)
 

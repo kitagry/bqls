@@ -61,6 +61,7 @@ You can use your favorite lsp client.
 	}
 
 	handler := langserver.NewHandler()
+	defer handler.Close()
 	<-jsonrpc2.NewConn(context.Background(), jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}), handler).DisconnectNotify()
 	return exitCodeOK
 }
