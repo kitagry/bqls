@@ -10,7 +10,7 @@ import (
 type SQL struct {
 	RawText string
 	Node    ast.Node
-	Errors  []Error
+	Errors  []error
 }
 
 func (s *SQL) GetTables() ([]string, error) {

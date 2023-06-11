@@ -22,7 +22,7 @@ func (h *handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req
 	}
 	h.initializeParams = params
 
-	p, err := source.NewProject(params.RootPath)
+	p, err := source.NewProject(context.Background(), params.RootPath)
 	if err != nil {
 		return nil, err
 	}
