@@ -82,7 +82,11 @@ func bigqueryTypeToZetaSQLType(typ bq.FieldType, isRepeated bool, schema bq.Sche
 	}
 
 	if isRepeated {
-		return types.ArrayTypeFromKind(result.Kind()), nil
+		result, err = types.NewArrayType(result)
+		if err != nil {
+			return nil, fmt.Errorf("Failed to create array type: %w", err)
+		}
+		return result, nil
 	}
 
 	return result, nil
@@ -116,12 +120,12 @@ func literalBigqueryTypeToZetaSQLType(typ bq.FieldType, schema bq.Schema) (types
 		return types.BigNumericType(), nil
 	case bq.RecordFieldType:
 		fields := make([]*types.StructField, len(schema))
-		for _, field := range schema {
+		for i, field := range schema {
 			typ, err := bigqueryTypeToZetaSQLType(field.Type, field.Repeated, field.Schema)
 			if err != nil {
 				return nil, fmt.Errorf("failed to convert type(%s): %w", field.Name, err)
 			}
-			fields = append(fields, types.NewStructField(field.Name, typ))
+			fields[i] = types.NewStructField(field.Name, typ)
 		}
 		st, err := types.NewStructType(fields)
 		if err != nil {
