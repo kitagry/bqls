@@ -3,11 +3,11 @@ package langserver
 import (
 	"context"
 
-	"github.com/kitagry/bqls/langserver/internal/cache"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
+	"github.com/kitagry/bqls/langserver/internal/source"
 )
 
-func (h *handler) diagnostic() {
+func (h *Handler) diagnostic() {
 	running := make(map[lsp.DocumentURI]context.CancelFunc)
 
 	for {
@@ -41,7 +41,7 @@ func (h *handler) diagnostic() {
 	}
 }
 
-func (h *handler) diagnose(ctx context.Context, uri lsp.DocumentURI) (map[lsp.DocumentURI][]lsp.Diagnostic, error) {
+func (h *Handler) diagnose(ctx context.Context, uri lsp.DocumentURI) (map[lsp.DocumentURI][]lsp.Diagnostic, error) {
 	result := make(map[lsp.DocumentURI][]lsp.Diagnostic)
 
 	pathToErrs := h.project.GetErrors(documentURIToURI(uri))
@@ -53,7 +53,7 @@ func (h *handler) diagnose(ctx context.Context, uri lsp.DocumentURI) (map[lsp.Do
 	return result, nil
 }
 
-func convertErrorsToDiagnostics(errs []cache.Error) []lsp.Diagnostic {
+func convertErrorsToDiagnostics(errs []source.Error) []lsp.Diagnostic {
 	result := make([]lsp.Diagnostic, len(errs))
 	for i, err := range errs {
 		result[i] = lsp.Diagnostic{

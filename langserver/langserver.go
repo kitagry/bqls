@@ -2,6 +2,7 @@ package langserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -11,7 +12,7 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 )
 
-type handler struct {
+type Handler struct {
 	conn   *jsonrpc2.Conn
 	logger *log.Logger
 
@@ -21,16 +22,30 @@ type handler struct {
 	initializeParams  lsp.InitializeParams
 }
 
-func NewHandler() jsonrpc2.Handler {
-	handler := &handler{
+var _ jsonrpc2.Handler = (*Handler)(nil)
+
+func NewHandler() *Handler {
+	handler := &Handler{
 		logger:            log.New(os.Stderr, "", log.LstdFlags),
 		diagnosticRequest: make(chan lsp.DocumentURI, 3),
 	}
 	go handler.diagnostic()
-	return jsonrpc2.HandlerWithError(handler.handle)
+	return handler
 }
 
-func (h *handler) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result interface{}, err error) {
+func (h *Handler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	jsonrpc2.HandlerWithError(h.handle).Handle(ctx, conn, req)
+}
+
+func (h *Handler) Close() error {
+	var errs []error
+	errs = append(errs, h.conn.Close())
+	errs = append(errs, h.project.Close())
+	close(h.diagnosticRequest)
+	return errors.Join(errs...)
+}
+
+func (h *Handler) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result interface{}, err error) {
 	switch req.Method {
 	case "initialize":
 		return h.handleInitialize(ctx, conn, req)
