@@ -36,10 +36,12 @@ func (c *Catalog) FindTable(path []string) (types.Table, error) {
 	if err == nil {
 		return table, nil
 	}
+	errs := []error{fmt.Errorf("failed to find table: %w", err)}
 
-	addErr := c.addTable(path)
+	err = c.addTable(path)
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("failed to find table: %w", err), fmt.Errorf("failed to add table: %w", addErr))
+		errs = append(errs, fmt.Errorf("failed to add table: %w", err))
+		return nil, errors.Join(errs...)
 	}
 	return c.catalog.FindTable(path)
 }
