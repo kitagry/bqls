@@ -34,8 +34,12 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 		return nil, fmt.Errorf("failed to find node at %s", position)
 	}
 
-	if isTableIdentifierNode(targetNode) {
-		splitedNode := strings.Split(targetNode.Name(), ".")
+	if targetNode, ok := lookUpTablePathExpressionNode(targetNode); ok {
+		pathNames := make([]string, len(targetNode.PathExpr().Names()))
+		for i, n := range targetNode.PathExpr().Names() {
+			pathNames[i] = n.Name()
+		}
+		splitedNode := strings.Split(strings.Join(pathNames, "."), ".")
 		if len(splitedNode) == 3 {
 			targetTable, err := p.bqClient.GetTableMetadata(context.Background(), splitedNode[0], splitedNode[1], splitedNode[2])
 			if err != nil {
@@ -95,15 +99,15 @@ func positionToByteOffset(sql string, position lsp.Position) int {
 	return offset
 }
 
-func isTableIdentifierNode(n ast.Node) bool {
+func lookUpTablePathExpressionNode(n ast.Node) (*ast.TablePathExpressionNode, bool) {
 	if n == nil {
-		return false
+		return nil, false
 	}
 
-	_, ok := n.(*ast.FromClauseNode)
+	result, ok := n.(*ast.TablePathExpressionNode)
 	if ok {
-		return true
+		return result, true
 	}
 
-	return isTableIdentifierNode(n.Parent())
+	return lookUpTablePathExpressionNode(n.Parent())
 }
