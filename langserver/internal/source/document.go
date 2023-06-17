@@ -82,31 +82,6 @@ func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([
 	}, nil
 }
 
-func buildBigQueryFieldSchemaString(schema *bigquery.FieldSchema) string {
-	return buildNestedBigQueryFieldSchemaString(schema, 0)
-}
-
-func buildNestedBigQueryFieldSchemaString(schema *bigquery.FieldSchema, depth int) string {
-	typ := string(schema.Type)
-	if schema.Repeated {
-		typ = fmt.Sprintf("ARRAY<%s>", typ)
-	}
-
-	space := strings.Repeat(" ", depth*2)
-	result := fmt.Sprintf("%s* %s: %s", space, schema.Name, typ)
-	if schema.Description != "" {
-		result += fmt.Sprintf(" %s", schema.Description)
-	}
-
-	if schema.Type == bigquery.RecordFieldType {
-		for _, s := range schema.Schema {
-			result += fmt.Sprintf("\n%s", buildNestedBigQueryFieldSchemaString(s, depth+1))
-		}
-	}
-
-	return result
-}
-
 func positionToByteOffset(sql string, position lsp.Position) int {
 	buf := bufio.NewScanner(strings.NewReader(sql))
 	buf.Split(bufio.ScanLines)

@@ -16,12 +16,13 @@ type cache struct {
 	tableMetadataCache map[string]*bigquery.TableMetadata
 }
 
-func NewWithCache(bqClient Client) *cache {
+func newCache(bqClient Client) *cache {
 	return &cache{
-		bqClient:     bqClient,
-		projectCache: make([]*cloudresourcemanager.Project, 0),
-		datasetCache: make(map[string][]string),
-		tableCache:   make(map[string][]string),
+		bqClient:           bqClient,
+		projectCache:       make([]*cloudresourcemanager.Project, 0),
+		datasetCache:       make(map[string][]string),
+		tableCache:         make(map[string][]string),
+		tableMetadataCache: make(map[string]*bigquery.TableMetadata),
 	}
 }
 

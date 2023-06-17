@@ -35,7 +35,7 @@ type client struct {
 	cloudresourcemanagerService *cloudresourcemanager.Service
 }
 
-func New(ctx context.Context) (Client, error) {
+func New(ctx context.Context, withCache bool) (Client, error) {
 	cloudresourcemanagerService, err := cloudresourcemanager.NewService(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("cloudresourcemanager.NewService: %w", err)
@@ -51,7 +51,12 @@ func New(ctx context.Context) (Client, error) {
 		return nil, fmt.Errorf("bigquery.NewClient: %w", err)
 	}
 
-	return &client{bqClient, cloudresourcemanagerService}, nil
+	var client Client = &client{bqClient, cloudresourcemanagerService}
+	if withCache {
+		client = newCache(client)
+	}
+
+	return client, nil
 }
 
 func (c *client) Close() error {
