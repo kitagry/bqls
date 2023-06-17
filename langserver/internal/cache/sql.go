@@ -1,9 +1,6 @@
 package cache
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/goccy/go-zetasql/ast"
 )
 
@@ -13,31 +10,12 @@ type SQL struct {
 	Errors  []error
 }
 
-func (s *SQL) GetTables() ([]string, error) {
-	tables := make([]string, 0)
-	err := ast.Walk(s.Node, func(n ast.Node) error {
-		if n.IsTableExpression() {
-			n, ok := n.(*ast.TablePathExpressionNode)
-			if !ok {
-				return nil
-			}
-
-			names := n.PathExpr().Names()
-			if len(names) == 0 {
-				return nil
-			}
-
-			nameStrs := make([]string, len(names))
-			for i, name := range names {
-				nameStrs[i] = name.Name()
-			}
-
-			tables = append(tables, strings.Join(nameStrs, "."))
+func (s *SQL) GetStatementNodes() (stmts []ast.StatementNode) {
+	ast.Walk(s.Node, func(n ast.Node) error {
+		if n.IsStatement() {
+			stmts = append(stmts, n)
 		}
 		return nil
 	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to walk node: %v", err)
-	}
-	return tables, nil
+	return
 }

@@ -22,8 +22,10 @@ type Catalog struct {
 }
 
 func NewCatalog(bqClient bigquery.Client) types.Catalog {
+	catalog := types.NewSimpleCatalog(catalogName)
+	catalog.AddZetaSQLBuiltinFunctions(nil)
 	return &Catalog{
-		catalog:      types.NewSimpleCatalog(catalogName),
+		catalog:      catalog,
 		bqClient:     bqClient,
 		tableMetaMap: make(map[string]*bq.TableMetadata),
 	}

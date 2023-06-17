@@ -152,13 +152,102 @@ last modified at 2023-06-17 00:00:00`,
 				},
 			},
 		},
+		"hover column": {
+			files: map[string]string{
+				"file1.sql": "SELECT id, name FROM `project.dataset.table`",
+			},
+			bqTableMetadata: &bq.TableMetadata{
+				FullID:           "project.dataset.table",
+				CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+				LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+				Schema: bq.Schema{
+					{
+						Name:        "id",
+						Type:        bq.IntegerFieldType,
+						Description: "id description",
+					},
+					{
+						Name:        "name",
+						Type:        bq.StringFieldType,
+						Description: "name description",
+					},
+				},
+			},
+			uri: "file1.sql",
+			position: lsp.Position{
+				Line:      0,
+				Character: 11,
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{
+					Language: "markdown",
+					Value:    "name: STRING\nname description",
+				},
+			},
+		},
+		"hover column with alias": {
+			files: map[string]string{
+				"file1.sql": "SELECT name AS alias_name FROM `project.dataset.table`",
+			},
+			bqTableMetadata: &bq.TableMetadata{
+				FullID:           "project.dataset.table",
+				CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+				LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+				Schema: bq.Schema{
+					{
+						Name:        "name",
+						Type:        bq.StringFieldType,
+						Description: "name description",
+					},
+				},
+			},
+			uri: "file1.sql",
+			position: lsp.Position{
+				Line:      0,
+				Character: 7,
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{
+					Language: "markdown",
+					Value:    "name: STRING\nname description",
+				},
+			},
+		},
+		"hover column in where coluse": {
+			files: map[string]string{
+				"file1.sql": "SELECT name AS alias_name FROM `project.dataset.table` WHERE name = 'test'",
+			},
+			bqTableMetadata: &bq.TableMetadata{
+				FullID:           "project.dataset.table",
+				CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+				LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+				Schema: bq.Schema{
+					{
+						Name:        "name",
+						Type:        bq.StringFieldType,
+						Description: "name description",
+					},
+				},
+			},
+			uri: "file1.sql",
+			position: lsp.Position{
+				Line:      0,
+				Character: 61,
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{
+					Language: "markdown",
+					Value:    "name: STRING\nname description",
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {
 		t.Run(n, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			bqClient := mock_bigquery.NewMockClient(ctrl)
-			bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.bqTableMetadata, nil)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.bqTableMetadata, nil).MinTimes(0)
 			p := source.NewProjectWithBQClient("/", bqClient)
 
 			for uri, content := range tt.files {
