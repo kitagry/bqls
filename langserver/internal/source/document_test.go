@@ -305,6 +305,44 @@ last modified at 2023-06-17 00:00:00`,
 				},
 			},
 		},
+		"hover unnest table": {
+			files: map[string]string{
+				"file1.sql": "SELECT param.key FROM `project.dataset.table`, UNNEST(params) AS param",
+			},
+			bqTableMetadata: &bq.TableMetadata{
+				FullID: "project.dataset.table",
+				Schema: bq.Schema{
+					{
+						Name:        "params",
+						Description: "params description",
+						Type:        bq.RecordFieldType,
+						Repeated:    true,
+						Schema: bq.Schema{
+							{
+								Name: "key",
+								Type: bq.StringFieldType,
+							},
+							{
+								Name: "value",
+								Type: bq.StringFieldType,
+							},
+						},
+					},
+				},
+			},
+			uri: "file1.sql",
+			position: lsp.Position{
+				Line:      0,
+				Character: 54,
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{
+					Language: "markdown",
+					Value: `params: RECORD
+params description`,
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {

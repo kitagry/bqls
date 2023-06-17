@@ -38,22 +38,14 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 	}
 
 	// lookup table metadata
-	if targetNode, ok := lookUpNode[*ast.TablePathExpressionNode](targetNode); ok {
-		pathNames := make([]string, len(targetNode.PathExpr().Names()))
-		for i, n := range targetNode.PathExpr().Names() {
-			pathNames[i] = n.Name()
-		}
-		targetTable, err := p.getTableMetadataFromPath(ctx, strings.Join(pathNames, "."))
+	if targetNode, ok := lookupNode[*ast.TablePathExpressionNode](targetNode); ok {
+		result, err := p.createTableMarkedString(ctx, targetNode)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get table metadata: %w", err)
+			return nil, fmt.Errorf("failed to create table marked string: %w", err)
 		}
-
-		columns := make([]string, len(targetTable.Schema))
-		for i, c := range targetTable.Schema {
-			columns[i] = fmt.Sprintf("* %s: %s %s", c.Name, string(c.Type), c.Description)
+		if len(result) > 0 {
+			return result, nil
 		}
-
-		return buildBigQueryTableMetadataMarkedString(targetTable)
 	}
 
 	outputs, err := p.analyzeStatement(sql)
@@ -70,7 +62,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 		}, nil
 	}
 
-	if selectColumnNode, ok := lookUpNode[*ast.SelectColumnNode](targetNode); ok {
+	if selectColumnNode, ok := lookupNode[*ast.SelectColumnNode](targetNode); ok {
 		c, err := p.getSelectColumnNodeToAnalyzedOutputCoumnNode(outputs, selectColumnNode, termOffset)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get column info: %w", err)
@@ -130,6 +122,28 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 	return nil, nil
 }
 
+func (p *Project) createTableMarkedString(ctx context.Context, node *ast.TablePathExpressionNode) ([]lsp.MarkedString, error) {
+	pathExpr := node.PathExpr()
+	if pathExpr == nil {
+		return nil, nil
+	}
+	pathNames := make([]string, len(pathExpr.Names()))
+	for i, n := range node.PathExpr().Names() {
+		pathNames[i] = n.Name()
+	}
+	targetTable, err := p.getTableMetadataFromPath(ctx, strings.Join(pathNames, "."))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get table metadata: %w", err)
+	}
+
+	columns := make([]string, len(targetTable.Schema))
+	for i, c := range targetTable.Schema {
+		columns[i] = fmt.Sprintf("* %s: %s %s", c.Name, string(c.Type), c.Description)
+	}
+
+	return buildBigQueryTableMetadataMarkedString(targetTable)
+}
+
 func (p *Project) getSelectColumnNodeToAnalyzedOutputCoumnNode(outputs []*zetasql.AnalyzerOutput, column *ast.SelectColumnNode, termOffset int) (*rast.OutputColumnNode, error) {
 	for _, output := range outputs {
 		children := output.Statement().ChildNodes()
@@ -166,10 +180,6 @@ func (p *Project) getSelectColumnNodeToAnalyzedOutputCoumnNode(outputs []*zetasq
 		}
 	}
 	return nil, fmt.Errorf("failed to find column info")
-}
-
-type AnalyzeNode interface {
-	*rast.ColumnRefNode | *rast.GetStructFieldNode
 }
 
 func (p *Project) getColumnRefNode(outputs []*zetasql.AnalyzerOutput, termOffset int) (*rast.ColumnRefNode, error) {
@@ -293,7 +303,7 @@ type astNode interface {
 	*ast.TablePathExpressionNode | *ast.PathExpressionNode | *ast.SelectColumnNode
 }
 
-func lookUpNode[T astNode](n ast.Node) (T, bool) {
+func lookupNode[T astNode](n ast.Node) (T, bool) {
 	if n == nil {
 		return nil, false
 	}
@@ -303,5 +313,5 @@ func lookUpNode[T astNode](n ast.Node) (T, bool) {
 		return result, true
 	}
 
-	return lookUpNode[T](n.Parent())
+	return lookupNode[T](n.Parent())
 }
