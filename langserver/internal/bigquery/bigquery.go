@@ -26,8 +26,8 @@ type Client interface {
 	// ListTables lists all tables in the specified dataset.
 	ListTables(ctx context.Context, projectID, datasetID string) ([]string, error)
 
-	// GetSchema returns the schema of the specified table.
-	GetSchema(ctx context.Context, projectID, datasetID, tableID string) (bigquery.Schema, error)
+	// GetTableMetadata returns the metadata of the specified table.
+	GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.TableMetadata, error)
 }
 
 type client struct {
@@ -35,7 +35,7 @@ type client struct {
 	cloudresourcemanagerService *cloudresourcemanager.Service
 }
 
-func New(ctx context.Context) (Client, error) {
+func New(ctx context.Context, withCache bool) (Client, error) {
 	cloudresourcemanagerService, err := cloudresourcemanager.NewService(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("cloudresourcemanager.NewService: %w", err)
@@ -51,7 +51,12 @@ func New(ctx context.Context) (Client, error) {
 		return nil, fmt.Errorf("bigquery.NewClient: %w", err)
 	}
 
-	return &client{bqClient, cloudresourcemanagerService}, nil
+	var client Client = &client{bqClient, cloudresourcemanagerService}
+	if withCache {
+		client = newCache(client)
+	}
+
+	return client, nil
 }
 
 func (c *client) Close() error {
@@ -109,11 +114,11 @@ func (c *client) ListTables(ctx context.Context, projectID, datasetID string) ([
 	return tables, nil
 }
 
-func (c *client) GetSchema(ctx context.Context, projectID, datasetID, tableID string) (bigquery.Schema, error) {
+func (c *client) GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.TableMetadata, error) {
 	md, err := c.bqClient.DatasetInProject(projectID, datasetID).Table(tableID).Metadata(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("fail to get metadata: %w", err)
 	}
 
-	return md.Schema, nil
+	return md, nil
 }

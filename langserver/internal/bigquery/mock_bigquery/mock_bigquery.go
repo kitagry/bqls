@@ -64,19 +64,19 @@ func (mr *MockClientMockRecorder) GetDefaultProject() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDefaultProject", reflect.TypeOf((*MockClient)(nil).GetDefaultProject))
 }
 
-// GetSchema mocks base method.
-func (m *MockClient) GetSchema(ctx context.Context, projectID, datasetID, tableID string) (bigquery.Schema, error) {
+// GetTableMetadata mocks base method.
+func (m *MockClient) GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.TableMetadata, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetSchema", ctx, projectID, datasetID, tableID)
-	ret0, _ := ret[0].(bigquery.Schema)
+	ret := m.ctrl.Call(m, "GetTableMetadata", ctx, projectID, datasetID, tableID)
+	ret0, _ := ret[0].(*bigquery.TableMetadata)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetSchema indicates an expected call of GetSchema.
-func (mr *MockClientMockRecorder) GetSchema(ctx, projectID, datasetID, tableID interface{}) *gomock.Call {
+// GetTableMetadata indicates an expected call of GetTableMetadata.
+func (mr *MockClientMockRecorder) GetTableMetadata(ctx, projectID, datasetID, tableID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSchema", reflect.TypeOf((*MockClient)(nil).GetSchema), ctx, projectID, datasetID, tableID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTableMetadata", reflect.TypeOf((*MockClient)(nil).GetTableMetadata), ctx, projectID, datasetID, tableID)
 }
 
 // ListDatasets mocks base method.

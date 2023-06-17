@@ -34,6 +34,7 @@ func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req
 				Kind: toPtr(lsp.TDSKFull),
 			},
 			DocumentFormattingProvider: true,
+			HoverProvider:              true,
 		},
 	}, nil
 }

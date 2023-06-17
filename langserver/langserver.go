@@ -61,6 +61,8 @@ func (h *Handler) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2
 		return h.handleTextDocumentDidSave(ctx, conn, req)
 	case "textDocument/formatting":
 		return h.handleTextDocumentFormatting(ctx, conn, req)
+	case "textDocument/hover":
+		return h.handleTextDocumentHover(ctx, conn, req)
 	}
 	return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeMethodNotFound, Message: fmt.Sprintf("method not supported: %s", req.Method)}
 }

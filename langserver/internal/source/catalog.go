@@ -16,14 +16,16 @@ const (
 )
 
 type Catalog struct {
-	catalog  *types.SimpleCatalog
-	bqClient bigquery.Client
+	catalog      *types.SimpleCatalog
+	bqClient     bigquery.Client
+	tableMetaMap map[string]*bq.TableMetadata
 }
 
 func NewCatalog(bqClient bigquery.Client) types.Catalog {
 	return &Catalog{
-		catalog:  types.NewSimpleCatalog(catalogName),
-		bqClient: bqClient,
+		catalog:      types.NewSimpleCatalog(catalogName),
+		bqClient:     bqClient,
+		tableMetaMap: make(map[string]*bq.TableMetadata),
 	}
 }
 
@@ -48,12 +50,12 @@ func (c *Catalog) FindTable(path []string) (types.Table, error) {
 
 func (c *Catalog) addTable(path []string) error {
 	tableSep := strings.Split(strings.Join(path, "."), ".")
-	var schema bq.Schema
+	var metadata *bq.TableMetadata
 	var err error
 	if len(tableSep) == 3 {
-		schema, err = c.bqClient.GetSchema(context.Background(), tableSep[0], tableSep[1], tableSep[2])
+		metadata, err = c.bqClient.GetTableMetadata(context.Background(), tableSep[0], tableSep[1], tableSep[2])
 	} else if len(tableSep) == 2 {
-		schema, err = c.bqClient.GetSchema(context.Background(), c.bqClient.GetDefaultProject(), tableSep[0], tableSep[1])
+		metadata, err = c.bqClient.GetTableMetadata(context.Background(), c.bqClient.GetDefaultProject(), tableSep[0], tableSep[1])
 	} else {
 		return fmt.Errorf("unknown table: %s", strings.Join(path, "."))
 	}
@@ -63,6 +65,7 @@ func (c *Catalog) addTable(path []string) error {
 
 	tableName := strings.Join(path, ".")
 
+	schema := metadata.Schema
 	columns := make([]types.Column, len(schema))
 	for i, field := range schema {
 		typ, err := bigqueryTypeToZetaSQLType(field.Type, field.Repeated, field.Schema)
@@ -74,6 +77,7 @@ func (c *Catalog) addTable(path []string) error {
 
 	table := types.NewSimpleTable(tableName, columns)
 	c.catalog.AddTable(table)
+	c.tableMetaMap[tableName] = metadata
 	return nil
 }
 

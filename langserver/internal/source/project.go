@@ -28,7 +28,7 @@ type File struct {
 func NewProject(ctx context.Context, rootPath string) (*Project, error) {
 	cache := cache.NewGlobalCache()
 
-	bqClient, err := bigquery.New(ctx)
+	bqClient, err := bigquery.New(ctx, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create bigquery client: %w", err)
 	}
@@ -41,6 +41,17 @@ func NewProject(ctx context.Context, rootPath string) (*Project, error) {
 		bqClient: bqClient,
 		catalog:  catalog,
 	}, nil
+}
+
+func NewProjectWithBQClient(rootPath string, bqClient bigquery.Client) *Project {
+	cache := cache.NewGlobalCache()
+	catalog := NewCatalog(bqClient)
+	return &Project{
+		rootPath: rootPath,
+		cache:    cache,
+		bqClient: bqClient,
+		catalog:  catalog,
+	}
 }
 
 func (p *Project) Close() error {
