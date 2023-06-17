@@ -53,6 +53,19 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 		return nil, fmt.Errorf("failed to analyze statement: %w", err)
 	}
 
+	if node, err := p.getFunctionCallNode(outputs, termOffset); err == nil {
+		sigs := make([]string, 0, len(node.Function().Signatures()))
+		for _, sig := range node.Function().Signatures() {
+			sigs = append(sigs, sig.DebugString(node.Function().SQLName(), true))
+		}
+		return []lsp.MarkedString{
+			{
+				Language: "markdown",
+				Value:    fmt.Sprintf("## %s\n\n%s", node.Function().SQLName(), strings.Join(sigs, "\n")),
+			},
+		}, nil
+	}
+
 	if node, err := p.getGetStructFieldNode(outputs, termOffset); err == nil {
 		return []lsp.MarkedString{
 			{
@@ -209,6 +222,35 @@ func (p *Project) getColumnRefNode(outputs []*zetasql.AnalyzerOutput, termOffset
 		}
 	}
 	return nil, fmt.Errorf("failed to find column info")
+}
+
+func (p *Project) getFunctionCallNode(outputs []*zetasql.AnalyzerOutput, termOffset int) (*rast.FunctionCallNode, error) {
+	for _, output := range outputs {
+		var targetNode *rast.FunctionCallNode
+		rast.Walk(output.Statement(), func(n rast.Node) error {
+			node, ok := n.(*rast.FunctionCallNode)
+			if !ok {
+				return nil
+			}
+
+			lRange := node.ParseLocationRange()
+			if lRange == nil {
+				return nil
+			}
+
+			startOffset := lRange.Start().ByteOffset()
+			endOffset := startOffset + len(node.Function().Name())
+			if startOffset <= termOffset && termOffset <= endOffset {
+				targetNode = node
+			}
+			return nil
+		})
+
+		if targetNode != nil {
+			return targetNode, nil
+		}
+	}
+	return nil, fmt.Errorf("failed to find function call node")
 }
 
 func (p *Project) getGetStructFieldNode(outputs []*zetasql.AnalyzerOutput, termOffset int) (*rast.GetStructFieldNode, error) {

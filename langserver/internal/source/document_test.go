@@ -343,6 +343,34 @@ params description`,
 				},
 			},
 		},
+		"hover function call": {
+			files: map[string]string{
+				"file1.sql": "SELECT JSON_VALUE(json, '$.name') FROM `project.dataset.table`",
+			},
+			bqTableMetadata: &bq.TableMetadata{
+				FullID: "project.dataset.table",
+				Schema: bq.Schema{
+					{
+						Name: "json",
+						Type: bq.JSONFieldType,
+					},
+				},
+			},
+			uri: "file1.sql",
+			position: lsp.Position{
+				Line:      0,
+				Character: 7,
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{
+					Language: "markdown",
+					Value: `## JSON_VALUE
+
+JSON_VALUE(STRING, optional STRING {default_value: "$"}) -> STRING rejects_collation=TRUE
+JSON_VALUE(JSON, optional STRING {default_value: "$"}) -> STRING`,
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {
