@@ -6,7 +6,9 @@ import (
 	"strconv"
 	"strings"
 
+	bq "cloud.google.com/go/bigquery"
 	"github.com/goccy/go-zetasql"
+	ast "github.com/goccy/go-zetasql/resolved_ast"
 	"github.com/goccy/go-zetasql/types"
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/cache"
@@ -90,14 +92,100 @@ func (p *Project) GetErrors(path string) map[string][]Error {
 		return map[string][]Error{path: errs}
 	}
 
-	opts := zetasql.NewAnalyzerOptions()
-	opts.SetErrorMessageMode(zetasql.ErrorMessageOneLine)
-	_, err := zetasql.AnalyzeStatement(sql.RawText, p.catalog, opts)
+	_, err := p.analyzeStatement(sql)
 	if err != nil {
 		return map[string][]Error{path: {parseZetaSQLError(err)}}
 	}
 
 	return map[string][]Error{path: nil}
+}
+
+func (p *Project) analyzeStatement(sql *cache.SQL) ([]*zetasql.AnalyzerOutput, error) {
+	langOpt := zetasql.NewLanguageOptions()
+	langOpt.SetNameResolutionMode(zetasql.NameResolutionDefault)
+	langOpt.SetProductMode(types.ProductInternal)
+	langOpt.SetEnabledLanguageFeatures([]zetasql.LanguageFeature{
+		zetasql.FeatureAnalyticFunctions,
+		zetasql.FeatureNamedArguments,
+		zetasql.FeatureNumericType,
+		zetasql.FeatureBignumericType,
+		zetasql.FeatureV13DecimalAlias,
+		zetasql.FeatureCreateTableNotNull,
+		zetasql.FeatureParameterizedTypes,
+		zetasql.FeatureTablesample,
+		zetasql.FeatureTimestampNanos,
+		zetasql.FeatureV11HavingInAggregate,
+		zetasql.FeatureV11NullHandlingModifierInAggregate,
+		zetasql.FeatureV11NullHandlingModifierInAnalytic,
+		zetasql.FeatureV11OrderByCollate,
+		zetasql.FeatureV11SelectStarExceptReplace,
+		zetasql.FeatureV12SafeFunctionCall,
+		zetasql.FeatureJsonType,
+		zetasql.FeatureJsonArrayFunctions,
+		zetasql.FeatureJsonStrictNumberParsing,
+		zetasql.FeatureV13IsDistinct,
+		zetasql.FeatureV13FormatInCast,
+		zetasql.FeatureV13DateArithmetics,
+		zetasql.FeatureV11OrderByInAggregate,
+		zetasql.FeatureV11LimitInAggregate,
+		zetasql.FeatureV13DateTimeConstructors,
+		zetasql.FeatureV13ExtendedDateTimeSignatures,
+		zetasql.FeatureV12CivilTime,
+		zetasql.FeatureV12WeekWithWeekday,
+		zetasql.FeatureIntervalType,
+		zetasql.FeatureGroupByRollup,
+		zetasql.FeatureV13NullsFirstLastInOrderBy,
+		zetasql.FeatureV13Qualify,
+		zetasql.FeatureV13AllowDashesInTableName,
+		zetasql.FeatureGeography,
+		zetasql.FeatureV13ExtendedGeographyParsers,
+		zetasql.FeatureTemplateFunctions,
+		zetasql.FeatureV11WithOnSubquery,
+	})
+	langOpt.SetSupportedStatementKinds([]ast.Kind{
+		ast.BeginStmt,
+		ast.CommitStmt,
+		ast.MergeStmt,
+		ast.QueryStmt,
+		ast.InsertStmt,
+		ast.UpdateStmt,
+		ast.DeleteStmt,
+		ast.DropStmt,
+		ast.TruncateStmt,
+		ast.CreateTableStmt,
+		ast.CreateTableAsSelectStmt,
+		ast.CreateProcedureStmt,
+		ast.CreateFunctionStmt,
+		ast.CreateTableFunctionStmt,
+		ast.CreateViewStmt,
+	})
+	opts := zetasql.NewAnalyzerOptions()
+	opts.SetLanguage(langOpt)
+	opts.SetAllowUndeclaredParameters(true)
+	opts.SetErrorMessageMode(zetasql.ErrorMessageOneLine)
+	opts.SetParseLocationRecordType(zetasql.ParseLocationRecordCodeSearch)
+
+	var results []*zetasql.AnalyzerOutput
+	for _, stmt := range sql.GetStatementNodes() {
+		output, err := zetasql.AnalyzeStatementFromParserAST(sql.RawText, stmt, p.catalog, opts)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, output)
+	}
+	return results, nil
+}
+
+func (p *Project) getTableMetadataFromPath(ctx context.Context, path string) (*bq.TableMetadata, error) {
+	splitNode := strings.Split(path, ".")
+	switch len(splitNode) {
+	case 3:
+		return p.bqClient.GetTableMetadata(ctx, splitNode[0], splitNode[1], splitNode[2])
+	case 2:
+		return p.bqClient.GetTableMetadata(ctx, p.bqClient.GetDefaultProject(), splitNode[0], splitNode[1])
+	default:
+		return nil, fmt.Errorf("invalid path: %s", path)
+	}
 }
 
 type Error struct {

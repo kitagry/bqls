@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	bq "cloud.google.com/go/bigquery"
 	"github.com/goccy/go-zetasql/types"
@@ -19,13 +20,17 @@ type Catalog struct {
 	catalog      *types.SimpleCatalog
 	bqClient     bigquery.Client
 	tableMetaMap map[string]*bq.TableMetadata
+	mu           *sync.Mutex
 }
 
 func NewCatalog(bqClient bigquery.Client) types.Catalog {
+	catalog := types.NewSimpleCatalog(catalogName)
+	catalog.AddZetaSQLBuiltinFunctions(nil)
 	return &Catalog{
-		catalog:      types.NewSimpleCatalog(catalogName),
+		catalog:      catalog,
 		bqClient:     bqClient,
 		tableMetaMap: make(map[string]*bq.TableMetadata),
+		mu:           &sync.Mutex{},
 	}
 }
 
@@ -34,6 +39,9 @@ func (c *Catalog) FullName() string {
 }
 
 func (c *Catalog) FindTable(path []string) (types.Table, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	table, err := c.catalog.FindTable(path)
 	if err == nil {
 		return table, nil
