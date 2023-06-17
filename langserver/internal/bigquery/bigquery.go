@@ -26,8 +26,8 @@ type Client interface {
 	// ListTables lists all tables in the specified dataset.
 	ListTables(ctx context.Context, projectID, datasetID string) ([]string, error)
 
-	// GetSchema returns the schema of the specified table.
-	GetSchema(ctx context.Context, projectID, datasetID, tableID string) (bigquery.Schema, error)
+	// GetTableMetadata returns the metadata of the specified table.
+	GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.TableMetadata, error)
 }
 
 type client struct {
@@ -109,11 +109,11 @@ func (c *client) ListTables(ctx context.Context, projectID, datasetID string) ([
 	return tables, nil
 }
 
-func (c *client) GetSchema(ctx context.Context, projectID, datasetID, tableID string) (bigquery.Schema, error) {
+func (c *client) GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.TableMetadata, error) {
 	md, err := c.bqClient.DatasetInProject(projectID, datasetID).Table(tableID).Metadata(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("fail to get metadata: %w", err)
 	}
 
-	return md.Schema, nil
+	return md, nil
 }

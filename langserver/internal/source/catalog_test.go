@@ -26,10 +26,12 @@ func TestCatalog_AddTable(t *testing.T) {
 			path: []string{"project.dataset.table"},
 			createMockBigQuery: func(ctrl *gomock.Controller) bigquery.Client {
 				bqClient := mock_bigquery.NewMockClient(ctrl)
-				bqClient.EXPECT().GetSchema(gomock.Any(), "project", "dataset", "table").Return(bq.Schema{
-					{
-						Name: "name",
-						Type: bq.StringFieldType,
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					Schema: bq.Schema{
+						{
+							Name: "name",
+							Type: bq.StringFieldType,
+						},
 					},
 				}, nil)
 				return bqClient
@@ -42,7 +44,7 @@ func TestCatalog_AddTable(t *testing.T) {
 			path: []string{"project.dataset.table"},
 			createMockBigQuery: func(ctrl *gomock.Controller) bigquery.Client {
 				bqClient := mock_bigquery.NewMockClient(ctrl)
-				bqClient.EXPECT().GetSchema(gomock.Any(), "project", "dataset", "table").Return(nil, dummyErr)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(nil, dummyErr)
 				return bqClient
 			},
 
@@ -85,10 +87,12 @@ func TestCatalog_shouldNotGetSchemaTwice(t *testing.T) {
 	defer ctrl.Finish()
 
 	bqClient := mock_bigquery.NewMockClient(ctrl)
-	bqClient.EXPECT().GetSchema(gomock.Any(), "project", "dataset", "table").Return(bq.Schema{
-		{
-			Name: "name",
-			Type: bq.StringFieldType,
+	bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+		Schema: bq.Schema{
+			{
+				Name: "name",
+				Type: bq.StringFieldType,
+			},
 		},
 	}, nil).Times(1)
 	catalog := source.NewCatalog(bqClient)

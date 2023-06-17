@@ -43,6 +43,17 @@ func NewProject(ctx context.Context, rootPath string) (*Project, error) {
 	}, nil
 }
 
+func NewProjectWithBQClient(rootPath string, bqClient bigquery.Client) *Project {
+	cache := cache.NewGlobalCache()
+	catalog := NewCatalog(bqClient)
+	return &Project{
+		rootPath: rootPath,
+		cache:    cache,
+		bqClient: bqClient,
+		catalog:  catalog,
+	}
+}
+
 func (p *Project) Close() error {
 	return p.bqClient.Close()
 }
