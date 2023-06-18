@@ -12,6 +12,7 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/bigquery/mock_bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source"
+	"github.com/kitagry/bqls/langserver/internal/source/helper"
 )
 
 func TestProject_TermDocument(t *testing.T) {
@@ -20,17 +21,13 @@ func TestProject_TermDocument(t *testing.T) {
 		files           map[string]string
 		bqTableMetadata *bq.TableMetadata
 
-		// input
-		uri      string
-		position lsp.Position
-
 		// output
 		expectMarkedStrings []lsp.MarkedString
 		expectErr           error
 	}{
 		"hover table": {
 			files: map[string]string{
-				"file1.sql": "SELECT * FROM `project.dataset.table`",
+				"file1.sql": "SELECT * FROM |`project.dataset.table`",
 			},
 			bqTableMetadata: &bq.TableMetadata{
 				FullID:           "project.dataset.table",
@@ -44,11 +41,6 @@ func TestProject_TermDocument(t *testing.T) {
 						Description: "name description",
 					},
 				},
-			},
-			uri: "file1.sql",
-			position: lsp.Position{
-				Line:      0,
-				Character: 14,
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
@@ -72,7 +64,7 @@ last modified at 2023-06-17 00:00:00`,
 		},
 		"hover separated into project, dataset and table": {
 			files: map[string]string{
-				"file1.sql": "SELECT * FROM `project`.`dataset`.`table`",
+				"file1.sql": "SELECT * FROM |`project`.`dataset`.`table`",
 			},
 			bqTableMetadata: &bq.TableMetadata{
 				FullID:           "project.dataset.table",
@@ -86,11 +78,6 @@ last modified at 2023-06-17 00:00:00`,
 						Description: "name description",
 					},
 				},
-			},
-			uri: "file1.sql",
-			position: lsp.Position{
-				Line:      0,
-				Character: 14,
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
@@ -114,7 +101,7 @@ last modified at 2023-06-17 00:00:00`,
 		},
 		"hover joined table": {
 			files: map[string]string{
-				"file1.sql": "SELECT * FROM `project.dataset.dummy_table` JOIN `project.dataset.table`",
+				"file1.sql": "SELECT * FROM `project.dataset.dummy_table` JOIN |`project.dataset.table`",
 			},
 			bqTableMetadata: &bq.TableMetadata{
 				FullID:           "project.dataset.table",
@@ -127,11 +114,6 @@ last modified at 2023-06-17 00:00:00`,
 						Description: "name description",
 					},
 				},
-			},
-			uri: "file1.sql",
-			position: lsp.Position{
-				Line:      0,
-				Character: 49,
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
@@ -154,7 +136,7 @@ last modified at 2023-06-17 00:00:00`,
 		},
 		"hover column": {
 			files: map[string]string{
-				"file1.sql": "SELECT id, name FROM `project.dataset.table`",
+				"file1.sql": "SELECT id, |name FROM `project.dataset.table`",
 			},
 			bqTableMetadata: &bq.TableMetadata{
 				FullID:           "project.dataset.table",
@@ -173,11 +155,6 @@ last modified at 2023-06-17 00:00:00`,
 					},
 				},
 			},
-			uri: "file1.sql",
-			position: lsp.Position{
-				Line:      0,
-				Character: 11,
-			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
 					Language: "markdown",
@@ -187,7 +164,7 @@ last modified at 2023-06-17 00:00:00`,
 		},
 		"hover column with alias": {
 			files: map[string]string{
-				"file1.sql": "SELECT name AS alias_name FROM `project.dataset.table`",
+				"file1.sql": "SELECT |name AS alias_name FROM `project.dataset.table`",
 			},
 			bqTableMetadata: &bq.TableMetadata{
 				FullID:           "project.dataset.table",
@@ -200,11 +177,6 @@ last modified at 2023-06-17 00:00:00`,
 						Description: "name description",
 					},
 				},
-			},
-			uri: "file1.sql",
-			position: lsp.Position{
-				Line:      0,
-				Character: 7,
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
@@ -215,7 +187,7 @@ last modified at 2023-06-17 00:00:00`,
 		},
 		"hover column with table_alias": {
 			files: map[string]string{
-				"file1.sql": "SELECT a.name FROM `project.dataset.table` AS a",
+				"file1.sql": "SELECT a.|name FROM `project.dataset.table` AS a",
 			},
 			bqTableMetadata: &bq.TableMetadata{
 				FullID:           "project.dataset.table",
@@ -229,11 +201,6 @@ last modified at 2023-06-17 00:00:00`,
 					},
 				},
 			},
-			uri: "file1.sql",
-			position: lsp.Position{
-				Line:      0,
-				Character: 9,
-			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
 					Language: "markdown",
@@ -243,7 +210,7 @@ last modified at 2023-06-17 00:00:00`,
 		},
 		"hover column unnest record": {
 			files: map[string]string{
-				"file1.sql": "SELECT param.key FROM `project.dataset.table`, UNNEST(params) AS param",
+				"file1.sql": "SELECT param.|key FROM `project.dataset.table`, UNNEST(params) AS param",
 			},
 			bqTableMetadata: &bq.TableMetadata{
 				FullID: "project.dataset.table",
@@ -265,11 +232,6 @@ last modified at 2023-06-17 00:00:00`,
 					},
 				},
 			},
-			uri: "file1.sql",
-			position: lsp.Position{
-				Line:      0,
-				Character: 13,
-			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
 					Language: "markdown",
@@ -279,7 +241,7 @@ last modified at 2023-06-17 00:00:00`,
 		},
 		"hover column in where coluse": {
 			files: map[string]string{
-				"file1.sql": "SELECT name AS alias_name FROM `project.dataset.table` WHERE name = 'test'",
+				"file1.sql": "SELECT name AS alias_name FROM `project.dataset.table` WHERE |name = 'test'",
 			},
 			bqTableMetadata: &bq.TableMetadata{
 				FullID:           "project.dataset.table",
@@ -293,11 +255,6 @@ last modified at 2023-06-17 00:00:00`,
 					},
 				},
 			},
-			uri: "file1.sql",
-			position: lsp.Position{
-				Line:      0,
-				Character: 61,
-			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
 					Language: "markdown",
@@ -307,7 +264,7 @@ last modified at 2023-06-17 00:00:00`,
 		},
 		"hover unnest table": {
 			files: map[string]string{
-				"file1.sql": "SELECT param.key FROM `project.dataset.table`, UNNEST(params) AS param",
+				"file1.sql": "SELECT param.key FROM `project.dataset.table`, UNNEST(|params) AS param",
 			},
 			bqTableMetadata: &bq.TableMetadata{
 				FullID: "project.dataset.table",
@@ -330,11 +287,6 @@ last modified at 2023-06-17 00:00:00`,
 					},
 				},
 			},
-			uri: "file1.sql",
-			position: lsp.Position{
-				Line:      0,
-				Character: 54,
-			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
 					Language: "markdown",
@@ -345,7 +297,7 @@ params description`,
 		},
 		"hover function call": {
 			files: map[string]string{
-				"file1.sql": "SELECT JSON_VALUE(json, '$.name') FROM `project.dataset.table`",
+				"file1.sql": "SELECT |JSON_VALUE(json, '$.name') FROM `project.dataset.table`",
 			},
 			bqTableMetadata: &bq.TableMetadata{
 				FullID: "project.dataset.table",
@@ -355,11 +307,6 @@ params description`,
 						Type: bq.JSONFieldType,
 					},
 				},
-			},
-			uri: "file1.sql",
-			position: lsp.Position{
-				Line:      0,
-				Character: 7,
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
@@ -373,7 +320,7 @@ JSON_VALUE(JSON, optional STRING {default_value: "$"}) -> STRING`,
 		},
 		"hover function argument": {
 			files: map[string]string{
-				"file1.sql": "SELECT JSON_VALUE(json, '$.name') FROM `project.dataset.table`",
+				"file1.sql": "SELECT JSON_VALUE(|json, '$.name') FROM `project.dataset.table`",
 			},
 			bqTableMetadata: &bq.TableMetadata{
 				FullID: "project.dataset.table",
@@ -384,11 +331,6 @@ JSON_VALUE(JSON, optional STRING {default_value: "$"}) -> STRING`,
 						Type:        bq.JSONFieldType,
 					},
 				},
-			},
-			uri: "file1.sql",
-			position: lsp.Position{
-				Line:      0,
-				Character: 18,
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
@@ -407,11 +349,16 @@ json description`,
 			bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.bqTableMetadata, nil).MinTimes(0)
 			p := source.NewProjectWithBQClient("/", bqClient)
 
-			for uri, content := range tt.files {
+			files, path, position, err := helper.GetLspPosition(tt.files)
+			if err != nil {
+				t.Fatalf("failed to get position: %v", err)
+			}
+
+			for uri, content := range files {
 				p.UpdateFile(uri, content, 1)
 			}
 
-			got, err := p.TermDocument(tt.uri, tt.position)
+			got, err := p.TermDocument(path, position)
 			if !errors.Is(err, tt.expectErr) {
 				t.Fatalf("got error %v, but want %v", err, tt.expectErr)
 			}
