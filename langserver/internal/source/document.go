@@ -75,34 +75,6 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 		}, nil
 	}
 
-	if selectColumnNode, ok := lookupNode[*ast.SelectColumnNode](targetNode); ok {
-		c, err := p.getSelectColumnNodeToAnalyzedOutputCoumnNode(outputs, selectColumnNode, termOffset)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get column info: %w", err)
-		}
-
-		column := c.Column()
-		if column == nil {
-			return nil, fmt.Errorf("failed to find column: %v", c)
-		}
-
-		tableMetadata, err := p.getTableMetadataFromPath(ctx, column.TableNameID())
-		if err != nil {
-			return nil, fmt.Errorf("failed to get table metadata: %w", err)
-		}
-
-		for _, c := range tableMetadata.Schema {
-			if column.Name() == c.Name {
-				return []lsp.MarkedString{
-					{
-						Language: "markdown",
-						Value:    fmt.Sprintf("%s: %s\n%s", c.Name, c.Type, c.Description),
-					},
-				}, nil
-			}
-		}
-	}
-
 	term, err := p.getColumnRefNode(outputs, termOffset)
 	if err == nil {
 		column := term.Column()
@@ -119,6 +91,33 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 					Value:    fmt.Sprintf("%s: %s", column.Name(), column.Type()),
 				},
 			}, nil
+		}
+
+		for _, c := range tableMetadata.Schema {
+			if column.Name() == c.Name {
+				return []lsp.MarkedString{
+					{
+						Language: "markdown",
+						Value:    fmt.Sprintf("%s: %s\n%s", c.Name, c.Type, c.Description),
+					},
+				}, nil
+			}
+		}
+	}
+	if selectColumnNode, ok := lookupNode[*ast.SelectColumnNode](targetNode); ok {
+		c, err := p.getSelectColumnNodeToAnalyzedOutputCoumnNode(outputs, selectColumnNode, termOffset)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get column info: %w", err)
+		}
+
+		column := c.Column()
+		if column == nil {
+			return nil, fmt.Errorf("failed to find column: %v", c)
+		}
+
+		tableMetadata, err := p.getTableMetadataFromPath(ctx, column.TableNameID())
+		if err != nil {
+			return nil, fmt.Errorf("failed to get table metadata: %w", err)
 		}
 
 		for _, c := range tableMetadata.Schema {
