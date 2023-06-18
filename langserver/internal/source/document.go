@@ -10,6 +10,7 @@ import (
 	"github.com/goccy/go-zetasql"
 	"github.com/goccy/go-zetasql/ast"
 	rast "github.com/goccy/go-zetasql/resolved_ast"
+	"github.com/goccy/go-zetasql/types"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 )
 
@@ -18,22 +19,8 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 	sql := p.cache.Get(uri)
 
 	termOffset := positionToByteOffset(sql.RawText, position)
-	var targetNode *ast.PathExpressionNode
-	ast.Walk(sql.Node, func(n ast.Node) error {
-		node, ok := n.(*ast.PathExpressionNode)
-		if !ok {
-			return nil
-		}
-		lRange := node.ParseLocationRange()
-		startOffset := lRange.Start().ByteOffset()
-		endOffset := lRange.End().ByteOffset()
-		if startOffset <= termOffset && termOffset <= endOffset {
-			targetNode = node
-		}
-		return nil
-	})
-
-	if targetNode == nil {
+	targetNode, ok := searchAstNode[*ast.PathExpressionNode](sql.Node, termOffset)
+	if !ok {
 		return nil, nil
 	}
 
@@ -53,7 +40,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 		return nil, fmt.Errorf("failed to analyze statement: %w", err)
 	}
 
-	if node, err := p.getFunctionCallNode(outputs, termOffset); err == nil {
+	if node, ok := searchResolvedAstNode[*rast.FunctionCallNode](outputs, termOffset); ok {
 		sigs := make([]string, 0, len(node.Function().Signatures()))
 		for _, sig := range node.Function().Signatures() {
 			sigs = append(sigs, sig.DebugString(node.Function().SQLName(), true))
@@ -66,7 +53,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 		}, nil
 	}
 
-	if node, err := p.getGetStructFieldNode(outputs, termOffset); err == nil {
+	if node, ok := searchResolvedAstNode[*rast.GetStructFieldNode](outputs, termOffset); ok {
 		return []lsp.MarkedString{
 			{
 				Language: "markdown",
@@ -75,8 +62,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 		}, nil
 	}
 
-	term, err := p.getColumnRefNode(outputs, termOffset)
-	if err == nil {
+	if term, ok := searchResolvedAstNode[*rast.ColumnRefNode](outputs, termOffset); ok {
 		column := term.Column()
 		if column == nil {
 			return nil, fmt.Errorf("failed to find term: %v", term)
@@ -104,6 +90,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 			}
 		}
 	}
+
 	if selectColumnNode, ok := lookupNode[*ast.SelectColumnNode](targetNode); ok {
 		c, err := p.getSelectColumnNodeToAnalyzedOutputCoumnNode(outputs, selectColumnNode, termOffset)
 		if err != nil {
@@ -131,6 +118,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 			}
 		}
 	}
+
 	return nil, nil
 }
 
@@ -194,93 +182,6 @@ func (p *Project) getSelectColumnNodeToAnalyzedOutputCoumnNode(outputs []*zetasq
 	return nil, fmt.Errorf("failed to find column info")
 }
 
-func (p *Project) getColumnRefNode(outputs []*zetasql.AnalyzerOutput, termOffset int) (*rast.ColumnRefNode, error) {
-	for _, output := range outputs {
-		var targetNode *rast.ColumnRefNode
-		rast.Walk(output.Statement(), func(n rast.Node) error {
-			node, ok := n.(*rast.ColumnRefNode)
-			if !ok {
-				return nil
-			}
-
-			lRange := node.ParseLocationRange()
-			if lRange == nil {
-				return nil
-			}
-
-			startOffset := lRange.Start().ByteOffset()
-			endOffset := lRange.End().ByteOffset()
-			if startOffset <= termOffset && termOffset <= endOffset {
-				targetNode = node
-			}
-			return nil
-		})
-
-		if targetNode != nil {
-			return targetNode, nil
-		}
-	}
-	return nil, fmt.Errorf("failed to find column info")
-}
-
-func (p *Project) getFunctionCallNode(outputs []*zetasql.AnalyzerOutput, termOffset int) (*rast.FunctionCallNode, error) {
-	for _, output := range outputs {
-		var targetNode *rast.FunctionCallNode
-		rast.Walk(output.Statement(), func(n rast.Node) error {
-			node, ok := n.(*rast.FunctionCallNode)
-			if !ok {
-				return nil
-			}
-
-			lRange := node.ParseLocationRange()
-			if lRange == nil {
-				return nil
-			}
-
-			startOffset := lRange.Start().ByteOffset()
-			endOffset := startOffset + len(node.Function().Name())
-			if startOffset <= termOffset && termOffset <= endOffset {
-				targetNode = node
-			}
-			return nil
-		})
-
-		if targetNode != nil {
-			return targetNode, nil
-		}
-	}
-	return nil, fmt.Errorf("failed to find function call node")
-}
-
-func (p *Project) getGetStructFieldNode(outputs []*zetasql.AnalyzerOutput, termOffset int) (*rast.GetStructFieldNode, error) {
-	for _, output := range outputs {
-		var targetNode *rast.GetStructFieldNode
-		rast.Walk(output.Statement(), func(n rast.Node) error {
-			node, ok := n.(*rast.GetStructFieldNode)
-			if !ok {
-				return nil
-			}
-
-			lRange := node.ParseLocationRange()
-			if lRange == nil {
-				return nil
-			}
-
-			startOffset := lRange.Start().ByteOffset()
-			endOffset := lRange.End().ByteOffset()
-			if startOffset <= termOffset && termOffset <= endOffset {
-				targetNode = node
-			}
-			return nil
-		})
-
-		if targetNode != nil {
-			return targetNode, nil
-		}
-	}
-	return nil, fmt.Errorf("failed to find column info")
-}
-
 func getSelectColumnName(targetNode *ast.SelectColumnNode) (string, bool) {
 	alias := targetNode.Alias()
 	if alias != nil {
@@ -338,6 +239,62 @@ func positionToByteOffset(sql string, position lsp.Position) int {
 	}
 	offset += position.Character
 	return offset
+}
+
+type locationRangeNode interface {
+	ParseLocationRange() *types.ParseLocationRange
+}
+
+func searchAstNode[T locationRangeNode](node ast.Node, termOffset int) (T, bool) {
+	var targetNode T
+	var found bool
+	ast.Walk(node, func(n ast.Node) error {
+		node, ok := n.(T)
+		if !ok {
+			return nil
+		}
+		lRange := node.ParseLocationRange()
+		if lRange == nil {
+			return nil
+		}
+		startOffset := lRange.Start().ByteOffset()
+		endOffset := lRange.End().ByteOffset()
+		if startOffset <= termOffset && termOffset <= endOffset {
+			targetNode = node
+			found = true
+		}
+		return nil
+	})
+	return targetNode, found
+}
+
+func searchResolvedAstNode[T locationRangeNode](outputs []*zetasql.AnalyzerOutput, termOffset int) (T, bool) {
+	var targetNode T
+	var found bool
+	for _, output := range outputs {
+		rast.Walk(output.Statement(), func(n rast.Node) error {
+			node, ok := n.(T)
+			if !ok {
+				return nil
+			}
+			lRange := node.ParseLocationRange()
+			if lRange == nil {
+				return nil
+			}
+			startOffset := lRange.Start().ByteOffset()
+			endOffset := lRange.End().ByteOffset()
+			if startOffset <= termOffset && termOffset <= endOffset {
+				targetNode = node
+				found = true
+			}
+			return nil
+		})
+
+		if found {
+			return targetNode, found
+		}
+	}
+	return targetNode, false
 }
 
 type astNode interface {
