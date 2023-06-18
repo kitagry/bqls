@@ -53,6 +53,19 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 		return nil, fmt.Errorf("failed to analyze statement: %w", err)
 	}
 
+	if node, err := p.getFunctionCallNode(outputs, termOffset); err == nil {
+		sigs := make([]string, 0, len(node.Function().Signatures()))
+		for _, sig := range node.Function().Signatures() {
+			sigs = append(sigs, sig.DebugString(node.Function().SQLName(), true))
+		}
+		return []lsp.MarkedString{
+			{
+				Language: "markdown",
+				Value:    fmt.Sprintf("## %s\n\n%s", node.Function().SQLName(), strings.Join(sigs, "\n")),
+			},
+		}, nil
+	}
+
 	if node, err := p.getGetStructFieldNode(outputs, termOffset); err == nil {
 		return []lsp.MarkedString{
 			{
@@ -60,34 +73,6 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 				Value:    node.Type().DebugString(false),
 			},
 		}, nil
-	}
-
-	if selectColumnNode, ok := lookupNode[*ast.SelectColumnNode](targetNode); ok {
-		c, err := p.getSelectColumnNodeToAnalyzedOutputCoumnNode(outputs, selectColumnNode, termOffset)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get column info: %w", err)
-		}
-
-		column := c.Column()
-		if column == nil {
-			return nil, fmt.Errorf("failed to find column: %v", c)
-		}
-
-		tableMetadata, err := p.getTableMetadataFromPath(ctx, column.TableNameID())
-		if err != nil {
-			return nil, fmt.Errorf("failed to get table metadata: %w", err)
-		}
-
-		for _, c := range tableMetadata.Schema {
-			if column.Name() == c.Name {
-				return []lsp.MarkedString{
-					{
-						Language: "markdown",
-						Value:    fmt.Sprintf("%s: %s\n%s", c.Name, c.Type, c.Description),
-					},
-				}, nil
-			}
-		}
 	}
 
 	term, err := p.getColumnRefNode(outputs, termOffset)
@@ -106,6 +91,33 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 					Value:    fmt.Sprintf("%s: %s", column.Name(), column.Type()),
 				},
 			}, nil
+		}
+
+		for _, c := range tableMetadata.Schema {
+			if column.Name() == c.Name {
+				return []lsp.MarkedString{
+					{
+						Language: "markdown",
+						Value:    fmt.Sprintf("%s: %s\n%s", c.Name, c.Type, c.Description),
+					},
+				}, nil
+			}
+		}
+	}
+	if selectColumnNode, ok := lookupNode[*ast.SelectColumnNode](targetNode); ok {
+		c, err := p.getSelectColumnNodeToAnalyzedOutputCoumnNode(outputs, selectColumnNode, termOffset)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get column info: %w", err)
+		}
+
+		column := c.Column()
+		if column == nil {
+			return nil, fmt.Errorf("failed to find column: %v", c)
+		}
+
+		tableMetadata, err := p.getTableMetadataFromPath(ctx, column.TableNameID())
+		if err != nil {
+			return nil, fmt.Errorf("failed to get table metadata: %w", err)
 		}
 
 		for _, c := range tableMetadata.Schema {
@@ -209,6 +221,35 @@ func (p *Project) getColumnRefNode(outputs []*zetasql.AnalyzerOutput, termOffset
 		}
 	}
 	return nil, fmt.Errorf("failed to find column info")
+}
+
+func (p *Project) getFunctionCallNode(outputs []*zetasql.AnalyzerOutput, termOffset int) (*rast.FunctionCallNode, error) {
+	for _, output := range outputs {
+		var targetNode *rast.FunctionCallNode
+		rast.Walk(output.Statement(), func(n rast.Node) error {
+			node, ok := n.(*rast.FunctionCallNode)
+			if !ok {
+				return nil
+			}
+
+			lRange := node.ParseLocationRange()
+			if lRange == nil {
+				return nil
+			}
+
+			startOffset := lRange.Start().ByteOffset()
+			endOffset := startOffset + len(node.Function().Name())
+			if startOffset <= termOffset && termOffset <= endOffset {
+				targetNode = node
+			}
+			return nil
+		})
+
+		if targetNode != nil {
+			return targetNode, nil
+		}
+	}
+	return nil, fmt.Errorf("failed to find function call node")
 }
 
 func (p *Project) getGetStructFieldNode(outputs []*zetasql.AnalyzerOutput, termOffset int) (*rast.GetStructFieldNode, error) {
