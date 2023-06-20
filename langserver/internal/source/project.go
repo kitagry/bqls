@@ -8,7 +8,8 @@ import (
 
 	bq "cloud.google.com/go/bigquery"
 	"github.com/goccy/go-zetasql"
-	ast "github.com/goccy/go-zetasql/resolved_ast"
+	"github.com/goccy/go-zetasql/ast"
+	rast "github.com/goccy/go-zetasql/resolved_ast"
 	"github.com/goccy/go-zetasql/types"
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/cache"
@@ -92,7 +93,7 @@ func (p *Project) GetErrors(path string) map[string][]Error {
 		return map[string][]Error{path: errs}
 	}
 
-	_, err := p.analyzeStatement(sql)
+	_, err := p.analyzeStatements(sql)
 	if err != nil {
 		return map[string][]Error{path: {parseZetaSQLError(err)}}
 	}
@@ -100,7 +101,19 @@ func (p *Project) GetErrors(path string) map[string][]Error {
 	return map[string][]Error{path: nil}
 }
 
-func (p *Project) analyzeStatement(sql *cache.SQL) ([]*zetasql.AnalyzerOutput, error) {
+func (p *Project) analyzeStatements(sql *cache.SQL) ([]*zetasql.AnalyzerOutput, error) {
+	var results []*zetasql.AnalyzerOutput
+	for _, stmt := range sql.GetStatementNodes() {
+		output, err := p.analyzeStatement(sql.RawText, stmt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to analyze statement: %w", err)
+		}
+		results = append(results, output)
+	}
+	return results, nil
+}
+
+func (p *Project) analyzeStatement(rawText string, stmt ast.StatementNode) (*zetasql.AnalyzerOutput, error) {
 	langOpt := zetasql.NewLanguageOptions()
 	langOpt.SetNameResolutionMode(zetasql.NameResolutionDefault)
 	langOpt.SetProductMode(types.ProductInternal)
@@ -142,38 +155,29 @@ func (p *Project) analyzeStatement(sql *cache.SQL) ([]*zetasql.AnalyzerOutput, e
 		zetasql.FeatureTemplateFunctions,
 		zetasql.FeatureV11WithOnSubquery,
 	})
-	langOpt.SetSupportedStatementKinds([]ast.Kind{
-		ast.BeginStmt,
-		ast.CommitStmt,
-		ast.MergeStmt,
-		ast.QueryStmt,
-		ast.InsertStmt,
-		ast.UpdateStmt,
-		ast.DeleteStmt,
-		ast.DropStmt,
-		ast.TruncateStmt,
-		ast.CreateTableStmt,
-		ast.CreateTableAsSelectStmt,
-		ast.CreateProcedureStmt,
-		ast.CreateFunctionStmt,
-		ast.CreateTableFunctionStmt,
-		ast.CreateViewStmt,
+	langOpt.SetSupportedStatementKinds([]rast.Kind{
+		rast.BeginStmt,
+		rast.CommitStmt,
+		rast.MergeStmt,
+		rast.QueryStmt,
+		rast.InsertStmt,
+		rast.UpdateStmt,
+		rast.DeleteStmt,
+		rast.DropStmt,
+		rast.TruncateStmt,
+		rast.CreateTableStmt,
+		rast.CreateTableAsSelectStmt,
+		rast.CreateProcedureStmt,
+		rast.CreateFunctionStmt,
+		rast.CreateTableFunctionStmt,
+		rast.CreateViewStmt,
 	})
 	opts := zetasql.NewAnalyzerOptions()
 	opts.SetLanguage(langOpt)
 	opts.SetAllowUndeclaredParameters(true)
 	opts.SetErrorMessageMode(zetasql.ErrorMessageOneLine)
 	opts.SetParseLocationRecordType(zetasql.ParseLocationRecordCodeSearch)
-
-	var results []*zetasql.AnalyzerOutput
-	for _, stmt := range sql.GetStatementNodes() {
-		output, err := zetasql.AnalyzeStatementFromParserAST(sql.RawText, stmt, p.catalog, opts)
-		if err != nil {
-			return nil, err
-		}
-		results = append(results, output)
-	}
-	return results, nil
+	return zetasql.AnalyzeStatementFromParserAST(rawText, stmt, p.catalog, opts)
 }
 
 func (p *Project) getTableMetadataFromPath(ctx context.Context, path string) (*bq.TableMetadata, error) {

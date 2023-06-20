@@ -3,6 +3,7 @@ package source_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	bq "cloud.google.com/go/bigquery"
@@ -16,9 +17,9 @@ import (
 
 func TestProject_Complete(t *testing.T) {
 	tests := map[string]struct {
-		files           map[string]string
-		supportSunippet bool
-		bqTableMetadata *bq.TableMetadata
+		files              map[string]string
+		supportSunippet    bool
+		bqTableMetadataMap map[string]*bq.TableMetadata
 
 		expectCompletionItems []lsp.CompletionItem
 		expectErr             error
@@ -28,16 +29,18 @@ func TestProject_Complete(t *testing.T) {
 				"file1.sql": "SELECT id, | FROM `project.dataset.table`",
 			},
 			supportSunippet: false,
-			bqTableMetadata: &bq.TableMetadata{
-				Schema: bq.Schema{
-					{
-						Name:        "id",
-						Type:        bq.IntegerFieldType,
-						Description: "id description",
-					},
-					{
-						Name: "name",
-						Type: bq.StringFieldType,
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Type:        bq.IntegerFieldType,
+							Description: "id description",
+						},
+						{
+							Name: "name",
+							Type: bq.StringFieldType,
+						},
 					},
 				},
 			},
@@ -61,16 +64,18 @@ func TestProject_Complete(t *testing.T) {
 				"file1.sql": "SELECT id, | FROM `project.dataset.table`",
 			},
 			supportSunippet: true,
-			bqTableMetadata: &bq.TableMetadata{
-				Schema: bq.Schema{
-					{
-						Name:        "id",
-						Type:        bq.IntegerFieldType,
-						Description: "id description",
-					},
-					{
-						Name: "name",
-						Type: bq.StringFieldType,
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Type:        bq.IntegerFieldType,
+							Description: "id description",
+						},
+						{
+							Name: "name",
+							Type: bq.StringFieldType,
+						},
 					},
 				},
 			},
@@ -108,16 +113,14 @@ func TestProject_Complete(t *testing.T) {
 				"file1.sql": "SELECT | FROM `project.dataset.table`",
 			},
 			supportSunippet: true,
-			bqTableMetadata: &bq.TableMetadata{
-				Schema: bq.Schema{
-					{
-						Name:        "id",
-						Type:        bq.IntegerFieldType,
-						Description: "id description",
-					},
-					{
-						Name: "name",
-						Type: bq.StringFieldType,
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Type:        bq.IntegerFieldType,
+							Description: "id description",
+						},
 					},
 				},
 			},
@@ -135,6 +138,34 @@ func TestProject_Complete(t *testing.T) {
 						},
 					},
 				},
+			},
+		},
+		"Consider selectable table": {
+			files: map[string]string{
+				"file1.sql": "SELECT * FROM `project.dataset.table`;\n" +
+					"SELECT *| FROM `project.dataset.table2`;",
+			},
+			supportSunippet: true,
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Type:        bq.IntegerFieldType,
+							Description: "id description",
+						},
+					},
+				},
+				"project.dataset.table2": {
+					Schema: bq.Schema{
+						{
+							Name: "name",
+							Type: bq.StringFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []lsp.CompletionItem{
 				{
 					InsertTextFormat: lsp.ITFSnippet,
 					Kind:             lsp.CIKField,
@@ -143,8 +174,41 @@ func TestProject_Complete(t *testing.T) {
 					TextEdit: &lsp.TextEdit{
 						NewText: "name",
 						Range: lsp.Range{
-							Start: lsp.Position{Line: 0, Character: 7},
-							End:   lsp.Position{Line: 0, Character: 7},
+							Start: lsp.Position{Line: 1, Character: 8},
+							End:   lsp.Position{Line: 1, Character: 8},
+						},
+					},
+				},
+			},
+		},
+		"Select WITH table": {
+			files: map[string]string{
+				"file1.sql": "WITH data AS (SELECT id FROM `project.dataset.table`)\n" +
+					"SELECT | FROM data;",
+			},
+			supportSunippet: true,
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Type:        bq.IntegerFieldType,
+							Description: "id description",
+						},
+					},
+				},
+			},
+			expectCompletionItems: []lsp.CompletionItem{
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKField,
+					Label:            "id",
+					Detail:           "INT64",
+					TextEdit: &lsp.TextEdit{
+						NewText: "id",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 1, Character: 7},
+							End:   lsp.Position{Line: 1, Character: 7},
 						},
 					},
 				},
@@ -156,7 +220,13 @@ func TestProject_Complete(t *testing.T) {
 		t.Run(n, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			bqClient := mock_bigquery.NewMockClient(ctrl)
-			bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.bqTableMetadata, nil).MinTimes(0)
+			for tablePath, schema := range tt.bqTableMetadataMap {
+				tablePathSplitted := strings.Split(tablePath, ".")
+				if len(tablePathSplitted) != 3 {
+					t.Fatalf("table path length should be 3, got %s", tablePath)
+				}
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), tablePathSplitted[0], tablePathSplitted[1], tablePathSplitted[2]).Return(schema, nil).MinTimes(0)
+			}
 			p := source.NewProjectWithBQClient("/", bqClient)
 
 			files, path, position, err := helper.GetLspPosition(tt.files)

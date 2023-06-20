@@ -6,7 +6,9 @@ import (
 	"strings"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/goccy/go-zetasql"
 	"github.com/goccy/go-zetasql/ast"
+	rast "github.com/goccy/go-zetasql/resolved_ast"
 	"github.com/kitagry/bqls/langserver/internal/cache"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 )
@@ -14,15 +16,15 @@ import (
 func (p *Project) Complete(ctx context.Context, uri string, position lsp.Position, supportSunippet bool) ([]lsp.CompletionItem, error) {
 	result := make([]lsp.CompletionItem, 0)
 	sql := p.cache.Get(uri)
+	termOffset := positionToByteOffset(sql.RawText, position)
 
 	if hasSelectListEmptyError(sql.Errors) {
-		bytesOffset := positionToByteOffset(sql.RawText, position)
 		// inserted text
 		// before:
 		//   SELECT | FROM table_name
 		// after:
 		//   SELECT * FROM table_name
-		rawText := sql.RawText[:bytesOffset] + "*" + sql.RawText[bytesOffset:]
+		rawText := sql.RawText[:termOffset] + "*" + sql.RawText[termOffset:]
 		dummySQL := cache.NewSQL(rawText)
 		if len(dummySQL.Errors) > 0 {
 			return nil, nil
@@ -30,23 +32,49 @@ func (p *Project) Complete(ctx context.Context, uri string, position lsp.Positio
 		sql = dummySQL
 	}
 
-	fromNodes := listAstNode[*ast.FromClauseNode](sql.Node)
-	for _, fromNode := range fromNodes {
-		tableExpr := fromNode.TableExpression()
-		if tableExpr == nil {
+	var statementNode ast.StatementNode
+	for _, stmt := range sql.GetStatementNodes() {
+		loc := stmt.ParseLocationRange()
+		if loc == nil {
 			continue
 		}
+		startOffset := loc.Start().ByteOffset()
+		endOffset := loc.End().ByteOffset()
+		if startOffset <= termOffset && termOffset <= endOffset {
+			statementNode = stmt
+			break
+		}
+	}
+	output, err := p.analyzeStatement(sql.RawText, statementNode)
+	if err != nil {
+		return nil, nil
+	}
 
-		switch tableExpr := tableExpr.(type) {
-		case *ast.TablePathExpressionNode:
-			tableMeta, err := p.getTableMetadataFromTablePathExpressionNode(ctx, tableExpr)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get table metadata: %w", err)
+	node, ok := searchResolvedAstNode[*rast.ProjectScanNode]([]*zetasql.AnalyzerOutput{output}, termOffset)
+	if !ok {
+		// In some case, *rast.ProjectScanNode.ParseLocationRange() returns nil.
+		// So, if we cannot find *rast.ProjectScanNode, we search *rast.ProjectScanNode which ParseLocationRange returns nil.
+		rast.Walk(output.Statement(), func(n rast.Node) error {
+			sNode, ok := n.(*rast.ProjectScanNode)
+			if !ok {
+				return nil
 			}
+			lRange := sNode.ParseLocationRange()
+			if lRange == nil {
+				node = sNode
+			}
+			return nil
+		})
+		if node == nil {
+			return nil, nil
+		}
+	}
 
-			for _, schema := range tableMeta.Schema {
-				result = append(result, createCompletionItemFromSchema(schema, position, supportSunippet))
-			}
+	columns := node.InputScan().ColumnList()
+	for _, column := range columns {
+		item, ok := p.createCompletionItemFromColumn(ctx, column, position, supportSunippet)
+		if ok {
+			result = append(result, item)
 		}
 	}
 
@@ -60,6 +88,47 @@ func hasSelectListEmptyError(errs []error) bool {
 		}
 	}
 	return false
+}
+
+func (p *Project) createCompletionItemFromColumn(ctx context.Context, column *rast.Column, cursorPosition lsp.Position, supportSunippet bool) (lsp.CompletionItem, bool) {
+	tableMetadata, err := p.getTableMetadataFromPath(ctx, column.TableNameID())
+	if err != nil {
+		// cannot find table metadata
+		return createCompletionItemFromColumn(column, cursorPosition, supportSunippet), true
+	}
+
+	for _, c := range tableMetadata.Schema {
+		if column.Name() == c.Name {
+			return createCompletionItemFromSchema(c, cursorPosition, supportSunippet), true
+		}
+	}
+
+	return lsp.CompletionItem{}, false
+}
+
+func createCompletionItemFromColumn(column *rast.Column, cursorPosition lsp.Position, supportSunippet bool) lsp.CompletionItem {
+	if !supportSunippet {
+		return lsp.CompletionItem{
+			InsertTextFormat: lsp.ITFPlainText,
+			Kind:             lsp.CIKField,
+			Label:            column.Name(),
+			Detail:           column.Type().Kind().String(),
+		}
+	}
+
+	return lsp.CompletionItem{
+		InsertTextFormat: lsp.ITFSnippet,
+		Kind:             lsp.CIKField,
+		Label:            column.Name(),
+		Detail:           column.Type().Kind().String(),
+		TextEdit: &lsp.TextEdit{
+			NewText: column.Name(),
+			Range: lsp.Range{
+				Start: cursorPosition,
+				End:   cursorPosition,
+			},
+		},
+	}
 }
 
 func createCompletionItemFromSchema(schema *bigquery.FieldSchema, cursorPosition lsp.Position, supportSunippet bool) lsp.CompletionItem {

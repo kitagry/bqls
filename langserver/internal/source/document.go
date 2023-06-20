@@ -35,7 +35,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 		}
 	}
 
-	outputs, err := p.analyzeStatement(sql)
+	outputs, err := p.analyzeStatements(sql)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze statement: %w", err)
 	}
