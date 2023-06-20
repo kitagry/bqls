@@ -32,20 +32,7 @@ func (p *Project) Complete(ctx context.Context, uri string, position lsp.Positio
 		sql = dummySQL
 	}
 
-	var statementNode ast.StatementNode
-	for _, stmt := range sql.GetStatementNodes() {
-		loc := stmt.ParseLocationRange()
-		if loc == nil {
-			continue
-		}
-		startOffset := loc.Start().ByteOffset()
-		endOffset := loc.End().ByteOffset()
-		if startOffset <= termOffset && termOffset <= endOffset {
-			statementNode = stmt
-			break
-		}
-	}
-	output, err := p.analyzeStatement(sql.RawText, statementNode)
+	output, incompleteColumnName, err := p.forceAnalyzeStatement(sql, termOffset)
 	if err != nil {
 		return nil, nil
 	}
@@ -72,13 +59,71 @@ func (p *Project) Complete(ctx context.Context, uri string, position lsp.Positio
 
 	columns := node.InputScan().ColumnList()
 	for _, column := range columns {
-		item, ok := p.createCompletionItemFromColumn(ctx, column, position, supportSunippet)
-		if ok {
-			result = append(result, item)
+		if !strings.HasPrefix(column.Name(), incompleteColumnName) {
+			continue
 		}
+		item, ok := p.createCompletionItemFromColumn(ctx, column, position, supportSunippet)
+		if !ok {
+			continue
+		}
+
+		if supportSunippet {
+			item.TextEdit.Range.Start.Character -= len(incompleteColumnName)
+		}
+		result = append(result, item)
 	}
 
 	return result, nil
+}
+
+func (p *Project) forceAnalyzeStatement(sql *cache.SQL, termOffset int) (output *zetasql.AnalyzerOutput, incompleteColumnName string, err error) {
+	findTargetStatement := func(sql *cache.SQL, termOffset int) (ast.StatementNode, bool) {
+		for _, stmt := range sql.GetStatementNodes() {
+			loc := stmt.ParseLocationRange()
+			if loc == nil {
+				continue
+			}
+			startOffset := loc.Start().ByteOffset()
+			endOffset := loc.End().ByteOffset()
+			if startOffset <= termOffset && termOffset <= endOffset {
+				return stmt, true
+			}
+		}
+		return nil, false
+	}
+
+	statementNode, ok := findTargetStatement(sql, termOffset)
+	if !ok {
+		return nil, "", fmt.Errorf("failed to find target statementNode")
+	}
+
+	output, err = p.analyzeStatement(sql.RawText, statementNode)
+	if err == nil {
+		return output, "", nil
+	}
+	ind := strings.Index(err.Error(), "Unrecognized name: ")
+	if ind == -1 {
+		return nil, "", fmt.Errorf("Failed to analyze statement: %w", err)
+	}
+
+	// When the error is "Unrecognized name: ", we should complete the name.
+	// But it can't be analyzed by zetasql, we should replace the name to '*'
+	// Error message example is `INVALID_ARGUMENT: Unrecognized name: i [at 1:8]`
+	parsedErr := parseZetaSQLError(err)
+	incompleteColumnName = strings.TrimSpace(parsedErr.Msg[ind+len("Unrecognized name: "):])
+	errOffset := positionToByteOffset(sql.RawText, parsedErr.Position)
+
+	replacedSQL := sql.RawText[:errOffset] + "*" + sql.RawText[errOffset+len(incompleteColumnName):]
+	sql = cache.NewSQL(replacedSQL)
+	stmt, ok := findTargetStatement(sql, errOffset)
+	if !ok {
+		return nil, "", fmt.Errorf("failed to find target statementNode")
+	}
+	output, err = p.analyzeStatement(sql.RawText, stmt)
+	if err != nil {
+		return nil, "", fmt.Errorf("Failed to analyze statement: %w", err)
+	}
+	return output, incompleteColumnName, nil
 }
 
 func hasSelectListEmptyError(errs []error) bool {

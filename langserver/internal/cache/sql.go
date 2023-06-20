@@ -27,6 +27,9 @@ func NewSQL(rawText string) *SQL {
 
 func (s *SQL) GetStatementNodes() (stmts []ast.StatementNode) {
 	ast.Walk(s.Node, func(n ast.Node) error {
+		if n == nil {
+			return nil
+		}
 		if n.IsStatement() {
 			stmts = append(stmts, n)
 		}
