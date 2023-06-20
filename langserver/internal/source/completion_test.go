@@ -103,6 +103,53 @@ func TestProject_Complete(t *testing.T) {
 				},
 			},
 		},
+		"When file cannot be parsed": {
+			files: map[string]string{
+				"file1.sql": "SELECT | FROM `project.dataset.table`",
+			},
+			supportSunippet: true,
+			bqTableMetadata: &bq.TableMetadata{
+				Schema: bq.Schema{
+					{
+						Name:        "id",
+						Type:        bq.IntegerFieldType,
+						Description: "id description",
+					},
+					{
+						Name: "name",
+						Type: bq.StringFieldType,
+					},
+				},
+			},
+			expectCompletionItems: []lsp.CompletionItem{
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKField,
+					Label:            "id",
+					Detail:           "INTEGER\nid description",
+					TextEdit: &lsp.TextEdit{
+						NewText: "id",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 0, Character: 7},
+							End:   lsp.Position{Line: 0, Character: 7},
+						},
+					},
+				},
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKField,
+					Label:            "name",
+					Detail:           "STRING",
+					TextEdit: &lsp.TextEdit{
+						NewText: "name",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 0, Character: 7},
+							End:   lsp.Position{Line: 0, Character: 7},
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {

@@ -7,12 +7,28 @@ import (
 
 	"cloud.google.com/go/bigquery"
 	"github.com/goccy/go-zetasql/ast"
+	"github.com/kitagry/bqls/langserver/internal/cache"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 )
 
 func (p *Project) Complete(ctx context.Context, uri string, position lsp.Position, supportSunippet bool) ([]lsp.CompletionItem, error) {
 	result := make([]lsp.CompletionItem, 0)
 	sql := p.cache.Get(uri)
+
+	if hasSelectListEmptyError(sql.Errors) {
+		bytesOffset := positionToByteOffset(sql.RawText, position)
+		// inserted text
+		// before:
+		//   SELECT | FROM table_name
+		// after:
+		//   SELECT * FROM table_name
+		rawText := sql.RawText[:bytesOffset] + "*" + sql.RawText[bytesOffset:]
+		dummySQL := cache.NewSQL(rawText)
+		if len(dummySQL.Errors) > 0 {
+			return nil, nil
+		}
+		sql = dummySQL
+	}
 
 	fromNodes := listAstNode[*ast.FromClauseNode](sql.Node)
 	for _, fromNode := range fromNodes {
@@ -29,38 +45,50 @@ func (p *Project) Complete(ctx context.Context, uri string, position lsp.Positio
 			}
 
 			for _, schema := range tableMeta.Schema {
-				detail := string(schema.Type)
-				if schema.Description != "" {
-					detail += "\n" + schema.Description
-				}
-				if !supportSunippet {
-					result = append(result, lsp.CompletionItem{
-						InsertTextFormat: lsp.ITFPlainText,
-						Kind:             lsp.CIKField,
-						Label:            schema.Name,
-						Detail:           detail,
-					})
-					continue
-				}
-
-				result = append(result, lsp.CompletionItem{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKField,
-					Label:            schema.Name,
-					Detail:           detail,
-					TextEdit: &lsp.TextEdit{
-						NewText: schema.Name,
-						Range: lsp.Range{
-							Start: position,
-							End:   position,
-						},
-					},
-				})
+				result = append(result, createCompletionItemFromSchema(schema, position, supportSunippet))
 			}
 		}
 	}
 
 	return result, nil
+}
+
+func hasSelectListEmptyError(errs []error) bool {
+	for _, err := range errs {
+		if strings.Contains(err.Error(), "Syntax error: SELECT list must not be empty") {
+			return true
+		}
+	}
+	return false
+}
+
+func createCompletionItemFromSchema(schema *bigquery.FieldSchema, cursorPosition lsp.Position, supportSunippet bool) lsp.CompletionItem {
+	detail := string(schema.Type)
+	if schema.Description != "" {
+		detail += "\n" + schema.Description
+	}
+	if !supportSunippet {
+		return lsp.CompletionItem{
+			InsertTextFormat: lsp.ITFPlainText,
+			Kind:             lsp.CIKField,
+			Label:            schema.Name,
+			Detail:           detail,
+		}
+	}
+
+	return lsp.CompletionItem{
+		InsertTextFormat: lsp.ITFSnippet,
+		Kind:             lsp.CIKField,
+		Label:            schema.Name,
+		Detail:           detail,
+		TextEdit: &lsp.TextEdit{
+			NewText: schema.Name,
+			Range: lsp.Range{
+				Start: cursorPosition,
+				End:   cursorPosition,
+			},
+		},
+	}
 }
 
 func (p *Project) getTableMetadataFromTablePathExpressionNode(ctx context.Context, tableNode *ast.TablePathExpressionNode) (*bigquery.TableMetadata, error) {

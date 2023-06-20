@@ -2,10 +2,7 @@ package cache
 
 import (
 	"sync"
-
-	"github.com/goccy/go-zetasql"
 )
-
 
 type GlobalCache struct {
 	mu        sync.RWMutex
@@ -28,23 +25,7 @@ func (g *GlobalCache) Put(path string, rawText string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	sql, ok := g.pathToSQL[path]
-	if !ok {
-		sql = &SQL{}
-	}
-	sql.RawText = rawText
-
-	node, err := zetasql.ParseScript(rawText, zetasql.NewParserOptions(), zetasql.ErrorMessageOneLine)
-	if err != nil {
-		sql.Errors = []error{err}
-		g.pathToSQL[path] = sql
-		return nil
-	}
-
-	sql.Node = node
-	sql.Errors = nil
-
-	g.pathToSQL[path] = sql
+	g.pathToSQL[path] = NewSQL(rawText)
 	return nil
 }
 
