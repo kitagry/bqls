@@ -113,7 +113,7 @@ func (p *Project) forceAnalyzeStatement(sql *cache.SQL, termOffset int) (output 
 	incompleteColumnName = strings.TrimSpace(parsedErr.Msg[ind+len("Unrecognized name: "):])
 	errOffset := positionToByteOffset(sql.RawText, parsedErr.Position)
 
-	replacedSQL := sql.RawText[:errOffset] + "*" + sql.RawText[errOffset+len(incompleteColumnName):]
+	replacedSQL := sql.RawText[:errOffset] + "1," + sql.RawText[errOffset+len(incompleteColumnName):]
 	sql = cache.NewSQL(replacedSQL)
 	stmt, ok := findTargetStatement(sql, errOffset)
 	if !ok {

@@ -246,6 +246,38 @@ func TestProject_Complete(t *testing.T) {
 				},
 			},
 		},
+		"Complete incomplete column2": {
+			files: map[string]string{
+				"file1.sql": "SELECT id, i| id FROM `project.dataset.table`",
+			},
+			supportSunippet: true,
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Type:        bq.IntegerFieldType,
+							Description: "id description",
+						},
+					},
+				},
+			},
+			expectCompletionItems: []lsp.CompletionItem{
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKField,
+					Label:            "id",
+					Detail:           "INTEGER\nid description",
+					TextEdit: &lsp.TextEdit{
+						NewText: "id",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 0, Character: 11},
+							End:   lsp.Position{Line: 0, Character: 12},
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {
