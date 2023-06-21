@@ -24,12 +24,61 @@ func (p *Project) Complete(ctx context.Context, uri string, position lsp.Positio
 		//   SELECT | FROM table_name
 		// after:
 		//   SELECT * FROM table_name
-		rawText := sql.RawText[:termOffset] + "*" + sql.RawText[termOffset:]
+		rawText := sql.RawText[:termOffset] + "1" + sql.RawText[termOffset:]
 		dummySQL := cache.NewSQL(rawText)
 		if len(dummySQL.Errors) > 0 {
 			return nil, nil
 		}
 		sql = dummySQL
+	}
+
+	// cursor is on table name
+	if node, ok := searchAstNode[*ast.TablePathExpressionNode](sql.Node, termOffset); ok {
+		tablePath, ok := createTableNameFromTablePathExpressionNode(node)
+		if !ok {
+			return nil, nil
+		}
+
+		splittedTablePath := strings.Split(tablePath, ".")
+		if len(splittedTablePath) != 3 {
+			return nil, nil
+		}
+
+		tables, err := p.bqClient.ListTables(ctx, splittedTablePath[0], splittedTablePath[1])
+		if err != nil {
+			return nil, nil
+		}
+		result := make([]lsp.CompletionItem, 0)
+		for _, t := range tables {
+			if !strings.HasPrefix(t.TableID, splittedTablePath[2]) {
+				continue
+			}
+
+			if !supportSunippet {
+				result = append(result, lsp.CompletionItem{
+					InsertTextFormat: lsp.ITFPlainText,
+					Kind:             lsp.CIKFile,
+					Label:            t.TableID,
+					Detail:           fmt.Sprintf("%s.%s.%s", t.ProjectID, t.DatasetID, t.TableID),
+				})
+			} else {
+				result = append(result, lsp.CompletionItem{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKFile,
+					Label:            t.TableID,
+					Detail:           fmt.Sprintf("%s.%s.%s", t.ProjectID, t.DatasetID, t.TableID),
+					TextEdit: &lsp.TextEdit{
+						NewText: t.TableID,
+						Range: lsp.Range{
+							Start: position,
+							End:   position,
+						},
+					},
+				})
+			}
+		}
+
+		return result, nil
 	}
 
 	output, incompleteColumnName, err := p.forceAnalyzeStatement(sql, termOffset)

@@ -12,7 +12,7 @@ type cache struct {
 	bqClient           Client
 	projectCache       []*cloudresourcemanager.Project
 	datasetCache       map[string][]string
-	tableCache         map[string][]string
+	tableCache         map[string][]*bigquery.Table
 	tableMetadataCache map[string]*bigquery.TableMetadata
 }
 
@@ -21,7 +21,7 @@ func newCache(bqClient Client) *cache {
 		bqClient:           bqClient,
 		projectCache:       make([]*cloudresourcemanager.Project, 0),
 		datasetCache:       make(map[string][]string),
-		tableCache:         make(map[string][]string),
+		tableCache:         make(map[string][]*bigquery.Table),
 		tableMetadataCache: make(map[string]*bigquery.TableMetadata),
 	}
 }
@@ -66,7 +66,7 @@ func (c *cache) ListDatasets(ctx context.Context, projectID string) ([]string, e
 	return result, nil
 }
 
-func (c *cache) ListTables(ctx context.Context, projectID, datasetID string) ([]string, error) {
+func (c *cache) ListTables(ctx context.Context, projectID, datasetID string) ([]*bigquery.Table, error) {
 	cacheKey := fmt.Sprintf("%s:%s", projectID, datasetID)
 	if len(c.tableCache[cacheKey]) > 0 {
 		return c.tableCache[cacheKey], nil

@@ -24,7 +24,7 @@ type Client interface {
 	ListDatasets(ctx context.Context, projectID string) ([]string, error)
 
 	// ListTables lists all tables in the specified dataset.
-	ListTables(ctx context.Context, projectID, datasetID string) ([]string, error)
+	ListTables(ctx context.Context, projectID, datasetID string) ([]*bigquery.Table, error)
 
 	// GetTableMetadata returns the metadata of the specified table.
 	GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.TableMetadata, error)
@@ -94,12 +94,12 @@ func (c *client) ListDatasets(ctx context.Context, projectID string) ([]string, 
 	return datasets, nil
 }
 
-func (c *client) ListTables(ctx context.Context, projectID, datasetID string) ([]string, error) {
+func (c *client) ListTables(ctx context.Context, projectID, datasetID string) ([]*bigquery.Table, error) {
 	dataset := c.bqClient.DatasetInProject(projectID, datasetID)
 
 	it := dataset.Tables(ctx)
 
-	tables := make([]string, 0)
+	tables := make([]*bigquery.Table, 0)
 	for {
 		table, err := it.Next()
 		if err == iterator.Done {
@@ -109,7 +109,7 @@ func (c *client) ListTables(ctx context.Context, projectID, datasetID string) ([
 			return nil, fmt.Errorf("fail to scan DatasetInProject: %w", err)
 		}
 
-		tables = append(tables, table.TableID)
+		tables = append(tables, table)
 	}
 	return tables, nil
 }
