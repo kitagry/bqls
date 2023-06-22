@@ -80,10 +80,10 @@ func (mr *MockClientMockRecorder) GetTableMetadata(ctx, projectID, datasetID, ta
 }
 
 // ListDatasets mocks base method.
-func (m *MockClient) ListDatasets(ctx context.Context, projectID string) ([]string, error) {
+func (m *MockClient) ListDatasets(ctx context.Context, projectID string) ([]*bigquery.Dataset, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ListDatasets", ctx, projectID)
-	ret0, _ := ret[0].([]string)
+	ret0, _ := ret[0].([]*bigquery.Dataset)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -110,10 +110,10 @@ func (mr *MockClientMockRecorder) ListProjects(ctx interface{}) *gomock.Call {
 }
 
 // ListTables mocks base method.
-func (m *MockClient) ListTables(ctx context.Context, projectID, datasetID string) ([]string, error) {
+func (m *MockClient) ListTables(ctx context.Context, projectID, datasetID string) ([]*bigquery.Table, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ListTables", ctx, projectID, datasetID)
-	ret0, _ := ret[0].([]string)
+	ret0, _ := ret[0].([]*bigquery.Table)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

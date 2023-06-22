@@ -3,19 +3,22 @@ package source_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	bq "cloud.google.com/go/bigquery"
 	"github.com/golang/mock/gomock"
 	"github.com/google/go-cmp/cmp"
+	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/bigquery/mock_bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source"
 	"github.com/kitagry/bqls/langserver/internal/source/helper"
+	"google.golang.org/api/cloudresourcemanager/v1"
 )
 
-func TestProject_Complete(t *testing.T) {
+func TestProject_CompleteColumn(t *testing.T) {
 	tests := map[string]struct {
 		files              map[string]string
 		supportSunippet    bool
@@ -303,6 +306,238 @@ func TestProject_Complete(t *testing.T) {
 			}
 
 			got, err := p.Complete(context.Background(), path, position, tt.supportSunippet)
+			if !errors.Is(err, tt.expectErr) {
+				t.Fatalf("got error %v, but want %v", err, tt.expectErr)
+			}
+
+			if diff := cmp.Diff(got, tt.expectCompletionItems); diff != "" {
+				t.Errorf("(-got, +want)\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestProject_CompleteFromClause(t *testing.T) {
+	tests := map[string]struct {
+		files                  map[string]string
+		supportSnippet         bool
+		bigqueryClientMockFunc func(t *testing.T) bigquery.Client
+
+		expectCompletionItems []lsp.CompletionItem
+		expectErr             error
+	}{
+		"list table": {
+			files: map[string]string{
+				"file1.sql": "SELECT * FROM `project.dataset.|`",
+			},
+			supportSnippet: true,
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+
+				bqClient.EXPECT().ListTables(gomock.Any(), "project", "dataset").Return([]*bq.Table{
+					{
+						ProjectID: "project",
+						DatasetID: "dataset",
+						TableID:   "1table",
+					},
+					{
+						ProjectID: "project",
+						DatasetID: "dataset",
+						TableID:   "2table",
+					},
+				}, nil)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
+				return bqClient
+			},
+			expectCompletionItems: []lsp.CompletionItem{
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKFile,
+					Label:            "1table",
+					Detail:           "project.dataset.1table",
+					TextEdit: &lsp.TextEdit{
+						NewText: "1table",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 0, Character: 31},
+							End:   lsp.Position{Line: 0, Character: 31},
+						},
+					},
+				},
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKFile,
+					Label:            "2table",
+					Detail:           "project.dataset.2table",
+					TextEdit: &lsp.TextEdit{
+						NewText: "2table",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 0, Character: 31},
+							End:   lsp.Position{Line: 0, Character: 31},
+						},
+					},
+				},
+			},
+		},
+		"select latest suffix table": {
+			files: map[string]string{
+				"file1.sql": "SELECT * FROM `project.dataset.|`",
+			},
+			supportSnippet: true,
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+
+				bqClient.EXPECT().ListTables(gomock.Any(), "project", "dataset").Return([]*bq.Table{
+					{
+						ProjectID: "project",
+						DatasetID: "dataset",
+						TableID:   "table20230621",
+					},
+					{
+						ProjectID: "project",
+						DatasetID: "dataset",
+						TableID:   "table20230622",
+					},
+				}, nil)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
+				return bqClient
+			},
+			expectCompletionItems: []lsp.CompletionItem{
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKFile,
+					Label:            "table20230622",
+					Detail:           "project.dataset.table20230622",
+					TextEdit: &lsp.TextEdit{
+						NewText: "table20230622",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 0, Character: 31},
+							End:   lsp.Position{Line: 0, Character: 31},
+						},
+					},
+				},
+			},
+		},
+		"complete datasetID": {
+			files: map[string]string{
+				"file1.sql": "SELECT * FROM `project.|`",
+			},
+			supportSnippet: true,
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+
+				bqClient.EXPECT().ListDatasets(gomock.Any(), "project").Return([]*bq.Dataset{
+					{
+						ProjectID: "project",
+						DatasetID: "dataset1",
+					},
+					{
+						ProjectID: "project",
+						DatasetID: "dataset2",
+					},
+				}, nil)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
+				return bqClient
+			},
+			expectCompletionItems: []lsp.CompletionItem{
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKFile,
+					Label:            "dataset1",
+					Detail:           "project.dataset1",
+					TextEdit: &lsp.TextEdit{
+						NewText: "dataset1",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 0, Character: 23},
+							End:   lsp.Position{Line: 0, Character: 23},
+						},
+					},
+				},
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKFile,
+					Label:            "dataset2",
+					Detail:           "project.dataset2",
+					TextEdit: &lsp.TextEdit{
+						NewText: "dataset2",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 0, Character: 23},
+							End:   lsp.Position{Line: 0, Character: 23},
+						},
+					},
+				},
+			},
+		},
+		"complete projectID": {
+			files: map[string]string{
+				"file1.sql": "SELECT * FROM `p|`",
+			},
+			supportSnippet: true,
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+
+				bqClient.EXPECT().ListProjects(gomock.Any()).Return([]*cloudresourcemanager.Project{
+					{
+						ProjectId: "project1",
+						Name:      "project name",
+					},
+					{
+						ProjectId: "project2",
+						Name:      "project name",
+					},
+				}, nil)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
+				return bqClient
+			},
+			expectCompletionItems: []lsp.CompletionItem{
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKFile,
+					Label:            "project1",
+					Detail:           "project name",
+					TextEdit: &lsp.TextEdit{
+						NewText: "project1",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 0, Character: 15},
+							End:   lsp.Position{Line: 0, Character: 16},
+						},
+					},
+				},
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKFile,
+					Label:            "project2",
+					Detail:           "project name",
+					TextEdit: &lsp.TextEdit{
+						NewText: "project2",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 0, Character: 15},
+							End:   lsp.Position{Line: 0, Character: 16},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			bqClient := tt.bigqueryClientMockFunc(t)
+			p := source.NewProjectWithBQClient("/", bqClient)
+
+			files, path, position, err := helper.GetLspPosition(tt.files)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for uri, content := range files {
+				p.UpdateFile(uri, content, 1)
+			}
+
+			got, err := p.Complete(context.Background(), path, position, tt.supportSnippet)
 			if !errors.Is(err, tt.expectErr) {
 				t.Fatalf("got error %v, but want %v", err, tt.expectErr)
 			}

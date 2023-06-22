@@ -2,32 +2,43 @@ package bigquery
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 
 	"cloud.google.com/go/bigquery"
 	"google.golang.org/api/cloudresourcemanager/v1"
 )
 
 type cache struct {
+	db                 *database
 	bqClient           Client
-	projectCache       []*cloudresourcemanager.Project
-	datasetCache       map[string][]string
-	tableCache         map[string][]string
 	tableMetadataCache map[string]*bigquery.TableMetadata
 }
 
-func newCache(bqClient Client) *cache {
-	return &cache{
-		bqClient:           bqClient,
-		projectCache:       make([]*cloudresourcemanager.Project, 0),
-		datasetCache:       make(map[string][]string),
-		tableCache:         make(map[string][]string),
-		tableMetadataCache: make(map[string]*bigquery.TableMetadata),
+func newCache(bqClient Client) (*cache, error) {
+	db, err := newDB()
+	if err != nil {
+		return nil, err
 	}
+
+	err = db.Migrate()
+	if err != nil {
+		return nil, fmt.Errorf("Migrate: %w", err)
+	}
+
+	return &cache{
+		db:                 db,
+		bqClient:           bqClient,
+		tableMetadataCache: make(map[string]*bigquery.TableMetadata),
+	}, nil
 }
 
 func (c *cache) Close() error {
-	return c.bqClient.Close()
+	var errs []error
+	errs = append(errs, c.db.Close())
+	errs = append(errs, c.bqClient.Close())
+	return errors.Join(errs...)
 }
 
 func (c *cache) GetDefaultProject() string {
@@ -35,8 +46,13 @@ func (c *cache) GetDefaultProject() string {
 }
 
 func (c *cache) ListProjects(ctx context.Context) ([]*cloudresourcemanager.Project, error) {
-	if len(c.projectCache) > 0 {
-		return c.projectCache, nil
+	results, err := c.db.SelectProjects(ctx)
+	if err == nil && len(results) > 0 {
+		return results, nil
+	}
+	if err != nil {
+		// TODO
+		fmt.Fprintf(os.Stderr, "failed to select projects: %v\n", err)
 	}
 
 	result, err := c.bqClient.ListProjects(ctx)
@@ -44,15 +60,24 @@ func (c *cache) ListProjects(ctx context.Context) ([]*cloudresourcemanager.Proje
 		return nil, err
 	}
 
-	if result != nil {
-		c.projectCache = result
+	if len(result) > 0 {
+		err := c.db.InsertProjects(ctx, result)
+		if err != nil {
+			// TODO
+			fmt.Fprintf(os.Stderr, "failed to insert projects: %v\n", err)
+		}
 	}
 	return result, nil
 }
 
-func (c *cache) ListDatasets(ctx context.Context, projectID string) ([]string, error) {
-	if len(c.datasetCache[projectID]) > 0 {
-		return c.datasetCache[projectID], nil
+func (c *cache) ListDatasets(ctx context.Context, projectID string) ([]*bigquery.Dataset, error) {
+	results, err := c.db.SelectDatasets(ctx, projectID)
+	if err == nil && len(results) > 0 {
+		return results, nil
+	}
+	if err != nil {
+		// TODO
+		fmt.Fprintf(os.Stderr, "failed to select datasets: %v\n", err)
 	}
 
 	result, err := c.bqClient.ListDatasets(ctx, projectID)
@@ -60,16 +85,24 @@ func (c *cache) ListDatasets(ctx context.Context, projectID string) ([]string, e
 		return nil, err
 	}
 
-	if result != nil {
-		c.datasetCache[projectID] = result
+	if len(result) > 0 {
+		err := c.db.InsertDatasets(ctx, result)
+		if err != nil {
+			// TODO
+			fmt.Fprintf(os.Stderr, "failed to insert datasets: %v\n", err)
+		}
 	}
 	return result, nil
 }
 
-func (c *cache) ListTables(ctx context.Context, projectID, datasetID string) ([]string, error) {
-	cacheKey := fmt.Sprintf("%s:%s", projectID, datasetID)
-	if len(c.tableCache[cacheKey]) > 0 {
-		return c.tableCache[cacheKey], nil
+func (c *cache) ListTables(ctx context.Context, projectID, datasetID string) ([]*bigquery.Table, error) {
+	results, err := c.db.SelectTables(ctx, projectID, datasetID)
+	if err == nil && len(results) > 0 {
+		return results, nil
+	}
+	if err != nil {
+		// TODO
+		fmt.Fprintf(os.Stderr, "failed to select tables: %v\n", err)
 	}
 
 	result, err := c.bqClient.ListTables(ctx, projectID, datasetID)
@@ -77,8 +110,12 @@ func (c *cache) ListTables(ctx context.Context, projectID, datasetID string) ([]
 		return nil, err
 	}
 
-	if result != nil {
-		c.tableCache[cacheKey] = result
+	if len(result) > 0 {
+		err := c.db.InsertTables(ctx, result)
+		if err != nil {
+			// TODO
+			fmt.Fprintf(os.Stderr, "failed to insert tables: %v\n", err)
+		}
 	}
 	return result, nil
 }

@@ -123,15 +123,11 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 }
 
 func (p *Project) createTableMarkedString(ctx context.Context, node *ast.TablePathExpressionNode) ([]lsp.MarkedString, error) {
-	pathExpr := node.PathExpr()
-	if pathExpr == nil {
+	tablePath, ok := createTableNameFromTablePathExpressionNode(node)
+	if !ok {
 		return nil, nil
 	}
-	pathNames := make([]string, len(pathExpr.Names()))
-	for i, n := range node.PathExpr().Names() {
-		pathNames[i] = n.Name()
-	}
-	targetTable, err := p.getTableMetadataFromPath(ctx, strings.Join(pathNames, "."))
+	targetTable, err := p.getTableMetadataFromPath(ctx, tablePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get table metadata: %w", err)
 	}
