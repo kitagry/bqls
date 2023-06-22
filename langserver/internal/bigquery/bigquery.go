@@ -53,7 +53,10 @@ func New(ctx context.Context, withCache bool) (Client, error) {
 
 	var client Client = &client{bqClient, cloudresourcemanagerService}
 	if withCache {
-		client = newCache(client)
+		client, err = newCache(client)
+		if err != nil {
+			return nil, fmt.Errorf("newCache: %w", err)
+		}
 	}
 
 	return client, nil
