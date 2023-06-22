@@ -80,10 +80,10 @@ func (mr *MockClientMockRecorder) GetTableMetadata(ctx, projectID, datasetID, ta
 }
 
 // ListDatasets mocks base method.
-func (m *MockClient) ListDatasets(ctx context.Context, projectID string) ([]string, error) {
+func (m *MockClient) ListDatasets(ctx context.Context, projectID string) ([]*bigquery.Dataset, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ListDatasets", ctx, projectID)
-	ret0, _ := ret[0].([]string)
+	ret0, _ := ret[0].([]*bigquery.Dataset)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

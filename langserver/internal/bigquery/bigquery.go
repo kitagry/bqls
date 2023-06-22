@@ -21,7 +21,7 @@ type Client interface {
 	ListProjects(ctx context.Context) ([]*cloudresourcemanager.Project, error)
 
 	// ListDatasets lists all datasets in the specified project.
-	ListDatasets(ctx context.Context, projectID string) ([]string, error)
+	ListDatasets(ctx context.Context, projectID string) ([]*bigquery.Dataset, error)
 
 	// ListTables lists all tables in the specified dataset.
 	ListTables(ctx context.Context, projectID, datasetID string) ([]*bigquery.Table, error)
@@ -76,10 +76,10 @@ func (c *client) ListProjects(ctx context.Context) ([]*cloudresourcemanager.Proj
 	return results.Projects, nil
 }
 
-func (c *client) ListDatasets(ctx context.Context, projectID string) ([]string, error) {
+func (c *client) ListDatasets(ctx context.Context, projectID string) ([]*bigquery.Dataset, error) {
 	it := c.bqClient.DatasetsInProject(ctx, projectID)
 
-	datasets := make([]string, 0)
+	datasets := make([]*bigquery.Dataset, 0)
 	for {
 		dt, err := it.Next()
 		if err == iterator.Done {
@@ -89,7 +89,7 @@ func (c *client) ListDatasets(ctx context.Context, projectID string) ([]string, 
 			return nil, fmt.Errorf("fail to scan DatasetsInProject: %w", err)
 		}
 
-		datasets = append(datasets, dt.DatasetID)
+		datasets = append(datasets, dt)
 	}
 	return datasets, nil
 }

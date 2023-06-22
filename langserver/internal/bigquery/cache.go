@@ -11,7 +11,7 @@ import (
 type cache struct {
 	bqClient           Client
 	projectCache       []*cloudresourcemanager.Project
-	datasetCache       map[string][]string
+	datasetCache       map[string][]*bigquery.Dataset
 	tableCache         map[string][]*bigquery.Table
 	tableMetadataCache map[string]*bigquery.TableMetadata
 }
@@ -20,7 +20,7 @@ func newCache(bqClient Client) *cache {
 	return &cache{
 		bqClient:           bqClient,
 		projectCache:       make([]*cloudresourcemanager.Project, 0),
-		datasetCache:       make(map[string][]string),
+		datasetCache:       make(map[string][]*bigquery.Dataset),
 		tableCache:         make(map[string][]*bigquery.Table),
 		tableMetadataCache: make(map[string]*bigquery.TableMetadata),
 	}
@@ -50,7 +50,7 @@ func (c *cache) ListProjects(ctx context.Context) ([]*cloudresourcemanager.Proje
 	return result, nil
 }
 
-func (c *cache) ListDatasets(ctx context.Context, projectID string) ([]string, error) {
+func (c *cache) ListDatasets(ctx context.Context, projectID string) ([]*bigquery.Dataset, error) {
 	if len(c.datasetCache[projectID]) > 0 {
 		return c.datasetCache[projectID], nil
 	}

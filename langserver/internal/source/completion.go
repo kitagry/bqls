@@ -106,11 +106,54 @@ func (p *Project) completeTablePath(ctx context.Context, node *ast.TablePathExpr
 	}
 
 	switch len(splittedTablePath) {
+	case 2:
+		return p.completeDatasetForTablePath(ctx, params, position, supportSnippet)
 	case 3:
 		return p.completeTableForTablePath(ctx, params, position, supportSnippet)
 	}
 
 	return nil, nil
+}
+
+func (p *Project) completeDatasetForTablePath(ctx context.Context, param tablePathParams, position lsp.Position, supportSnippet bool) ([]lsp.CompletionItem, error) {
+	datasets, err := p.bqClient.ListDatasets(ctx, param.ProjectID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to listLatestSuffixTables: %w", err)
+	}
+
+	result := make([]lsp.CompletionItem, 0)
+	for _, d := range datasets {
+		if !strings.HasPrefix(d.DatasetID, param.TableID) {
+			continue
+		}
+
+		if !supportSnippet {
+			result = append(result, lsp.CompletionItem{
+				InsertTextFormat: lsp.ITFPlainText,
+				Kind:             lsp.CIKFile,
+				Label:            d.DatasetID,
+				Detail:           fmt.Sprintf("%s.%s", d.ProjectID, d.DatasetID),
+			})
+		} else {
+			startPosition := position
+			startPosition.Character -= len(param.TableID)
+			result = append(result, lsp.CompletionItem{
+				InsertTextFormat: lsp.ITFSnippet,
+				Kind:             lsp.CIKFile,
+				Label:            d.DatasetID,
+				Detail:           fmt.Sprintf("%s.%s", d.ProjectID, d.DatasetID),
+				TextEdit: &lsp.TextEdit{
+					NewText: d.DatasetID,
+					Range: lsp.Range{
+						Start: startPosition,
+						End:   position,
+					},
+				},
+			})
+		}
+	}
+
+	return result, nil
 }
 
 func (p *Project) completeTableForTablePath(ctx context.Context, param tablePathParams, position lsp.Position, supportSnippet bool) ([]lsp.CompletionItem, error) {

@@ -3,6 +3,7 @@ package source
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -243,6 +244,11 @@ func (p *Project) listLatestSuffixTables(ctx context.Context, projectID, dataset
 	for _, t := range maxSuffixTables {
 		filteredTables = append(filteredTables, t.table)
 	}
+
+	sort.Slice(filteredTables, func(i, j int) bool {
+		return filteredTables[i].TableID < filteredTables[j].TableID
+	})
+
 	return filteredTables, nil
 }
 

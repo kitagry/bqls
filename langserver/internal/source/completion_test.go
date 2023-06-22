@@ -418,6 +418,57 @@ func TestProject_CompleteFromClause(t *testing.T) {
 				},
 			},
 		},
+		"complete datasetID": {
+			files: map[string]string{
+				"file1.sql": "SELECT * FROM `project.|`",
+			},
+			supportSnippet: true,
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+
+				bqClient.EXPECT().ListDatasets(gomock.Any(), "project").Return([]*bq.Dataset{
+					{
+						ProjectID: "project",
+						DatasetID: "dataset1",
+					},
+					{
+						ProjectID: "project",
+						DatasetID: "dataset2",
+					},
+				}, nil)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
+				return bqClient
+			},
+			expectCompletionItems: []lsp.CompletionItem{
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKFile,
+					Label:            "dataset1",
+					Detail:           "project.dataset1",
+					TextEdit: &lsp.TextEdit{
+						NewText: "dataset1",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 0, Character: 23},
+							End:   lsp.Position{Line: 0, Character: 23},
+						},
+					},
+				},
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKFile,
+					Label:            "dataset2",
+					Detail:           "project.dataset2",
+					TextEdit: &lsp.TextEdit{
+						NewText: "dataset2",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 0, Character: 23},
+							End:   lsp.Position{Line: 0, Character: 23},
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {
