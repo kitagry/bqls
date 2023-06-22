@@ -68,12 +68,26 @@ func (c *client) GetDefaultProject() string {
 }
 
 func (c *client) ListProjects(ctx context.Context) ([]*cloudresourcemanager.Project, error) {
-	results, err := c.cloudresourcemanagerService.Projects.List().Context(ctx).Do()
+	caller := c.cloudresourcemanagerService.Projects.List().Context(ctx)
+
+	list, err := caller.Do()
 	if err != nil {
 		return nil, fmt.Errorf("cloudresourcemanagerService.Projects.List: %w", err)
 	}
 
-	return results.Projects, nil
+	result := make([]*cloudresourcemanager.Project, 0, len(list.Projects))
+	result = append(result, list.Projects...)
+
+	for list.NextPageToken != "" {
+		list, err = caller.PageToken(list.NextPageToken).Do()
+		if err != nil {
+			return nil, fmt.Errorf("cloudresourcemanagerService.Projects.List: %w", err)
+		}
+
+		result = append(result, list.Projects...)
+	}
+
+	return result, nil
 }
 
 func (c *client) ListDatasets(ctx context.Context, projectID string) ([]*bigquery.Dataset, error) {

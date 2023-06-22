@@ -106,6 +106,8 @@ func (p *Project) completeTablePath(ctx context.Context, node *ast.TablePathExpr
 	}
 
 	switch len(splittedTablePath) {
+	case 0, 1:
+		return p.completeProjectForTablePath(ctx, params, position, supportSnippet)
 	case 2:
 		return p.completeDatasetForTablePath(ctx, params, position, supportSnippet)
 	case 3:
@@ -115,15 +117,56 @@ func (p *Project) completeTablePath(ctx context.Context, node *ast.TablePathExpr
 	return nil, nil
 }
 
+func (p *Project) completeProjectForTablePath(ctx context.Context, param tablePathParams, position lsp.Position, supportSnippet bool) ([]lsp.CompletionItem, error) {
+	projects, err := p.bqClient.ListProjects(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to ListProjects: %w", err)
+	}
+
+	result := make([]lsp.CompletionItem, 0)
+	for _, p := range projects {
+		if !strings.HasPrefix(p.ProjectId, param.ProjectID) {
+			continue
+		}
+
+		if !supportSnippet {
+			result = append(result, lsp.CompletionItem{
+				InsertTextFormat: lsp.ITFPlainText,
+				Kind:             lsp.CIKFile,
+				Label:            p.ProjectId,
+				Detail:           p.Name,
+			})
+		} else {
+			startPosition := position
+			startPosition.Character -= len(param.ProjectID)
+			result = append(result, lsp.CompletionItem{
+				InsertTextFormat: lsp.ITFSnippet,
+				Kind:             lsp.CIKFile,
+				Label:            p.ProjectId,
+				Detail:           p.Name,
+				TextEdit: &lsp.TextEdit{
+					NewText: p.ProjectId,
+					Range: lsp.Range{
+						Start: startPosition,
+						End:   position,
+					},
+				},
+			})
+		}
+	}
+
+	return result, nil
+}
+
 func (p *Project) completeDatasetForTablePath(ctx context.Context, param tablePathParams, position lsp.Position, supportSnippet bool) ([]lsp.CompletionItem, error) {
 	datasets, err := p.bqClient.ListDatasets(ctx, param.ProjectID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to listLatestSuffixTables: %w", err)
+		return nil, fmt.Errorf("failed to ListDatasets: %w", err)
 	}
 
 	result := make([]lsp.CompletionItem, 0)
 	for _, d := range datasets {
-		if !strings.HasPrefix(d.DatasetID, param.TableID) {
+		if !strings.HasPrefix(d.DatasetID, param.DatasetID) {
 			continue
 		}
 
@@ -136,7 +179,7 @@ func (p *Project) completeDatasetForTablePath(ctx context.Context, param tablePa
 			})
 		} else {
 			startPosition := position
-			startPosition.Character -= len(param.TableID)
+			startPosition.Character -= len(param.DatasetID)
 			result = append(result, lsp.CompletionItem{
 				InsertTextFormat: lsp.ITFSnippet,
 				Kind:             lsp.CIKFile,

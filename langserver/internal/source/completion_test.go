@@ -15,6 +15,7 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source"
 	"github.com/kitagry/bqls/langserver/internal/source/helper"
+	"google.golang.org/api/cloudresourcemanager/v1"
 )
 
 func TestProject_CompleteColumn(t *testing.T) {
@@ -464,6 +465,57 @@ func TestProject_CompleteFromClause(t *testing.T) {
 						Range: lsp.Range{
 							Start: lsp.Position{Line: 0, Character: 23},
 							End:   lsp.Position{Line: 0, Character: 23},
+						},
+					},
+				},
+			},
+		},
+		"complete projectID": {
+			files: map[string]string{
+				"file1.sql": "SELECT * FROM `p|`",
+			},
+			supportSnippet: true,
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+
+				bqClient.EXPECT().ListProjects(gomock.Any()).Return([]*cloudresourcemanager.Project{
+					{
+						ProjectId: "project1",
+						Name:      "project name",
+					},
+					{
+						ProjectId: "project2",
+						Name:      "project name",
+					},
+				}, nil)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
+				return bqClient
+			},
+			expectCompletionItems: []lsp.CompletionItem{
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKFile,
+					Label:            "project1",
+					Detail:           "project name",
+					TextEdit: &lsp.TextEdit{
+						NewText: "project1",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 0, Character: 15},
+							End:   lsp.Position{Line: 0, Character: 16},
+						},
+					},
+				},
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKFile,
+					Label:            "project2",
+					Detail:           "project name",
+					TextEdit: &lsp.TextEdit{
+						NewText: "project2",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 0, Character: 15},
+							End:   lsp.Position{Line: 0, Character: 16},
 						},
 					},
 				},
