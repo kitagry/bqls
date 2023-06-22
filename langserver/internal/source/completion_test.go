@@ -319,7 +319,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 func TestProject_CompleteFromClause(t *testing.T) {
 	tests := map[string]struct {
 		files                  map[string]string
-		supportSunippet        bool
+		supportSnippet         bool
 		bigqueryClientMockFunc func(t *testing.T) bigquery.Client
 
 		expectCompletionItems []lsp.CompletionItem
@@ -329,7 +329,7 @@ func TestProject_CompleteFromClause(t *testing.T) {
 			files: map[string]string{
 				"file1.sql": "SELECT * FROM `project.dataset.|`",
 			},
-			supportSunippet: true,
+			supportSnippet: true,
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
 				ctrl := gomock.NewController(t)
 				bqClient := mock_bigquery.NewMockClient(ctrl)
@@ -338,12 +338,12 @@ func TestProject_CompleteFromClause(t *testing.T) {
 					{
 						ProjectID: "project",
 						DatasetID: "dataset",
-						TableID:   "table1",
+						TableID:   "1table",
 					},
 					{
 						ProjectID: "project",
 						DatasetID: "dataset",
-						TableID:   "table2",
+						TableID:   "2table",
 					},
 				}, nil)
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
@@ -353,10 +353,10 @@ func TestProject_CompleteFromClause(t *testing.T) {
 				{
 					InsertTextFormat: lsp.ITFSnippet,
 					Kind:             lsp.CIKFile,
-					Label:            "table1",
-					Detail:           "project.dataset.table1",
+					Label:            "1table",
+					Detail:           "project.dataset.1table",
 					TextEdit: &lsp.TextEdit{
-						NewText: "table1",
+						NewText: "1table",
 						Range: lsp.Range{
 							Start: lsp.Position{Line: 0, Character: 31},
 							End:   lsp.Position{Line: 0, Character: 31},
@@ -366,10 +366,50 @@ func TestProject_CompleteFromClause(t *testing.T) {
 				{
 					InsertTextFormat: lsp.ITFSnippet,
 					Kind:             lsp.CIKFile,
-					Label:            "table2",
-					Detail:           "project.dataset.table2",
+					Label:            "2table",
+					Detail:           "project.dataset.2table",
 					TextEdit: &lsp.TextEdit{
-						NewText: "table2",
+						NewText: "2table",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 0, Character: 31},
+							End:   lsp.Position{Line: 0, Character: 31},
+						},
+					},
+				},
+			},
+		},
+		"select latest suffix table": {
+			files: map[string]string{
+				"file1.sql": "SELECT * FROM `project.dataset.|`",
+			},
+			supportSnippet: true,
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+
+				bqClient.EXPECT().ListTables(gomock.Any(), "project", "dataset").Return([]*bq.Table{
+					{
+						ProjectID: "project",
+						DatasetID: "dataset",
+						TableID:   "table20230621",
+					},
+					{
+						ProjectID: "project",
+						DatasetID: "dataset",
+						TableID:   "table20230622",
+					},
+				}, nil)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
+				return bqClient
+			},
+			expectCompletionItems: []lsp.CompletionItem{
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKFile,
+					Label:            "table20230622",
+					Detail:           "project.dataset.table20230622",
+					TextEdit: &lsp.TextEdit{
+						NewText: "table20230622",
 						Range: lsp.Range{
 							Start: lsp.Position{Line: 0, Character: 31},
 							End:   lsp.Position{Line: 0, Character: 31},
@@ -394,7 +434,7 @@ func TestProject_CompleteFromClause(t *testing.T) {
 				p.UpdateFile(uri, content, 1)
 			}
 
-			got, err := p.Complete(context.Background(), path, position, tt.supportSunippet)
+			got, err := p.Complete(context.Background(), path, position, tt.supportSnippet)
 			if !errors.Is(err, tt.expectErr) {
 				t.Fatalf("got error %v, but want %v", err, tt.expectErr)
 			}
