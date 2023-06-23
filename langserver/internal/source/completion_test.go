@@ -281,6 +281,82 @@ func TestProject_CompleteColumn(t *testing.T) {
 				},
 			},
 		},
+		"Complete record column": {
+			files: map[string]string{
+				"file1.sql": "SELECT record.| FROM `project.dataset.table`",
+			},
+			supportSunippet: true,
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "record",
+							Type: bq.RecordFieldType,
+							Schema: bq.Schema{
+								{
+									Name:        "id",
+									Description: "id description",
+									Type:        bq.IntegerFieldType,
+								},
+							},
+						},
+					},
+				},
+			},
+			expectCompletionItems: []lsp.CompletionItem{
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKField,
+					Label:            "id",
+					Detail:           "INTEGER\nid description",
+					TextEdit: &lsp.TextEdit{
+						NewText: "id",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 0, Character: 14},
+							End:   lsp.Position{Line: 0, Character: 14},
+						},
+					},
+				},
+			},
+		},
+		"Complete record column with incomplete word": {
+			files: map[string]string{
+				"file1.sql": "SELECT record.i| FROM `project.dataset.table`",
+			},
+			supportSunippet: true,
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "record",
+							Type: bq.RecordFieldType,
+							Schema: bq.Schema{
+								{
+									Name:        "id",
+									Description: "id description",
+									Type:        bq.IntegerFieldType,
+								},
+							},
+						},
+					},
+				},
+			},
+			expectCompletionItems: []lsp.CompletionItem{
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKField,
+					Label:            "id",
+					Detail:           "INTEGER\nid description",
+					TextEdit: &lsp.TextEdit{
+						NewText: "id",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 0, Character: 14},
+							End:   lsp.Position{Line: 0, Character: 15},
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {
