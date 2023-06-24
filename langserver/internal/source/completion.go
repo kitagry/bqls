@@ -3,15 +3,20 @@ package source
 import (
 	"context"
 	"fmt"
+	"os"
+	"regexp"
 	"strings"
 
 	"cloud.google.com/go/bigquery"
 	"github.com/goccy/go-zetasql"
 	"github.com/goccy/go-zetasql/ast"
 	rast "github.com/goccy/go-zetasql/resolved_ast"
+	"github.com/goccy/go-zetasql/types"
 	"github.com/kitagry/bqls/langserver/internal/cache"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 )
+
+var lastDotRegex = regexp.MustCompile(`\w+\.\s`)
 
 func (p *Project) Complete(ctx context.Context, uri string, position lsp.Position, supportSnippet bool) ([]lsp.CompletionItem, error) {
 	result := make([]lsp.CompletionItem, 0)
@@ -39,6 +44,7 @@ func (p *Project) Complete(ctx context.Context, uri string, position lsp.Positio
 
 	output, incompleteColumnName, err := p.forceAnalyzeStatement(sql, termOffset)
 	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		return nil, nil
 	}
 
@@ -67,15 +73,22 @@ func (p *Project) Complete(ctx context.Context, uri string, position lsp.Positio
 		if !strings.HasPrefix(column.Name(), incompleteColumnName) {
 			continue
 		}
-		item, ok := p.createCompletionItemFromColumn(ctx, column, position, supportSnippet)
+		item, ok := p.createCompletionItemFromColumn(ctx, incompleteColumnName, column, position, supportSnippet)
 		if !ok {
 			continue
 		}
 
-		if supportSnippet {
-			item.TextEdit.Range.Start.Character -= len(incompleteColumnName)
-		}
 		result = append(result, item)
+	}
+
+	// for record column completion
+	for _, column := range columns {
+		if !strings.HasPrefix(incompleteColumnName, column.Name()) {
+			continue
+		}
+		items := p.createCompletionItemForRecordType(ctx, incompleteColumnName, column, position, supportSnippet)
+
+		result = append(result, items...)
 	}
 
 	return result, nil
@@ -241,21 +254,6 @@ func (p *Project) completeTableForTablePath(ctx context.Context, param tablePath
 }
 
 func (p *Project) forceAnalyzeStatement(sql *cache.SQL, termOffset int) (output *zetasql.AnalyzerOutput, incompleteColumnName string, err error) {
-	findTargetStatement := func(sql *cache.SQL, termOffset int) (ast.StatementNode, bool) {
-		for _, stmt := range sql.GetStatementNodes() {
-			loc := stmt.ParseLocationRange()
-			if loc == nil {
-				continue
-			}
-			startOffset := loc.Start().ByteOffset()
-			endOffset := loc.End().ByteOffset()
-			if startOffset <= termOffset && termOffset <= endOffset {
-				return stmt, true
-			}
-		}
-		return nil, false
-	}
-
 	statementNode, ok := findTargetStatement(sql, termOffset)
 	if !ok {
 		return nil, "", fmt.Errorf("failed to find target statementNode")
@@ -265,19 +263,74 @@ func (p *Project) forceAnalyzeStatement(sql *cache.SQL, termOffset int) (output 
 	if err == nil {
 		return output, "", nil
 	}
-	ind := strings.Index(err.Error(), "Unrecognized name: ")
-	if ind == -1 {
-		return nil, "", fmt.Errorf("Failed to analyze statement: %w", err)
+
+	// Find like e.x. SELECT item. FROM table
+	//
+	// zetasql returns odd error.
+	// e.x.)
+	// panic: INVALID_ARGUMENT: Unrecognized name: param [at 1:8]
+	// SELECT param.id, param. FROM `project.dataset.table`
+	//        ^
+	if loc := lastDotRegex.FindIndex([]byte(sql.RawText)); len(loc) == 2 {
+		// sql.Rawtext[loc[1]] is a space.
+		targetWord := sql.RawText[loc[0] : loc[1]-1]
+		replacedSQL := sql.RawText[:loc[0]] + "1," + sql.RawText[loc[1]-1:]
+		sql = cache.NewSQL(replacedSQL)
+		stmt, ok := findTargetStatement(sql, termOffset)
+		if !ok {
+			return nil, "", fmt.Errorf("failed to find target statementNode")
+		}
+		output, err = p.analyzeStatement(sql.RawText, stmt)
+		if err != nil {
+			return nil, "", fmt.Errorf("Failed to analyze statement: %w", err)
+		}
+		return output, targetWord, nil
 	}
 
-	// When the error is "Unrecognized name: ", we should complete the name.
-	// But it can't be analyzed by zetasql, we should replace the name to '*'
-	// Error message example is `INVALID_ARGUMENT: Unrecognized name: i [at 1:8]`
 	parsedErr := parseZetaSQLError(err)
+	if strings.Contains(parsedErr.Msg, "Unrecognized name: ") {
+		return p.forceAnalyzeUnrecognizedNameStatement(sql, parsedErr)
+	}
+
+	if strings.Contains(parsedErr.Msg, "does not exist in STRUCT") {
+		// if record errror, we should return incompleteColumnName which contains record name.
+		node, ok := searchAstNode[*ast.IdentifierNode](sql.Node, termOffset)
+		if !ok {
+			return nil, "", fmt.Errorf("failed to search ast node")
+		}
+		incompleteNode, ok := lookupNode[*ast.PathExpressionNode](node)
+		if !ok {
+			return nil, "", fmt.Errorf("failed to lookup node")
+		}
+
+		output, _, err := p.forceAnalyzeFieldDoesNotExitInStructStatement(sql, parsedErr)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to forceAnalyzeFieldDoesNotExitInStructStatement: %w", err)
+		}
+		names := make([]string, 0)
+		for _, n := range incompleteNode.Names() {
+			names = append(names, n.Name())
+		}
+		return output, strings.Join(names, "."), nil
+	}
+
+	return nil, "", fmt.Errorf("Failed to analyze statement: %w", err)
+}
+
+// When the error is "Unrecognized name: ", we should complete the name.
+// But it can't be analyzed by zetasql, we should replace the name to '1,'
+// Error message example is `INVALID_ARGUMENT: Unrecognized name: i [at 1:8]`
+func (p *Project) forceAnalyzeUnrecognizedNameStatement(sql *cache.SQL, parsedErr Error) (output *zetasql.AnalyzerOutput, incompleteColumnName string, err error) {
+	ind := strings.Index(parsedErr.Msg, "Unrecognized name: ")
+
 	incompleteColumnName = strings.TrimSpace(parsedErr.Msg[ind+len("Unrecognized name: "):])
 	errOffset := positionToByteOffset(sql.RawText, parsedErr.Position)
-	if errOffset == len(sql.RawText) {
+	if errOffset == 0 || errOffset == len(sql.RawText) {
 		return nil, "", fmt.Errorf("Failed to analyze statement: %w", parsedErr)
+	}
+
+	if sql.RawText[errOffset+len(incompleteColumnName)] == '.' {
+		incompleteColumnName += "."
 	}
 
 	replacedSQL := sql.RawText[:errOffset] + "1," + sql.RawText[errOffset+len(incompleteColumnName):]
@@ -293,6 +346,54 @@ func (p *Project) forceAnalyzeStatement(sql *cache.SQL, termOffset int) (output 
 	return output, incompleteColumnName, nil
 }
 
+func (p *Project) forceAnalyzeFieldDoesNotExitInStructStatement(sql *cache.SQL, parsedErr Error) (output *zetasql.AnalyzerOutput, incompleteColumnName string, err error) {
+	ind := strings.Index(parsedErr.Msg, "Field name ")
+	if ind == -1 {
+		return nil, "", parsedErr
+	}
+	incompleteColumnName = parsedErr.Msg[ind+len("Field name "):]
+	incompleteColumnName = incompleteColumnName[:strings.Index(incompleteColumnName, " ")]
+
+	errOffset := positionToByteOffset(sql.RawText, parsedErr.Position)
+	if errOffset == 0 || errOffset == len(sql.RawText) {
+		return nil, "", fmt.Errorf("Failed to analyze statement: %w", parsedErr)
+	}
+
+	replacedSQL := sql.RawText[:errOffset] + "*" + sql.RawText[errOffset+len(incompleteColumnName):]
+	sql = cache.NewSQL(replacedSQL)
+	stmt, ok := findTargetStatement(sql, errOffset)
+	if !ok {
+		return nil, "", fmt.Errorf("failed to find target statementNode")
+	}
+	output, err = p.analyzeStatement(sql.RawText, stmt)
+	if err != nil {
+		return nil, "", fmt.Errorf("Failed to analyze statement: %w", err)
+	}
+
+	return output, incompleteColumnName, nil
+}
+
+func findTargetStatement(sql *cache.SQL, termOffset int) (ast.StatementNode, bool) {
+	stmts := sql.GetStatementNodes()
+	if len(stmts) == 1 {
+		return stmts[0], true
+	}
+
+	for _, stmt := range stmts {
+		loc := stmt.ParseLocationRange()
+		if loc == nil {
+			continue
+		}
+		startOffset := loc.Start().ByteOffset()
+		endOffset := loc.End().ByteOffset()
+		if startOffset <= termOffset && termOffset <= endOffset {
+			return stmt, true
+		}
+	}
+
+	return nil, false
+}
+
 func hasSelectListEmptyError(errs []error) bool {
 	for _, err := range errs {
 		if strings.Contains(err.Error(), "Syntax error: SELECT list must not be empty") {
@@ -302,23 +403,71 @@ func hasSelectListEmptyError(errs []error) bool {
 	return false
 }
 
-func (p *Project) createCompletionItemFromColumn(ctx context.Context, column *rast.Column, cursorPosition lsp.Position, supportSnippet bool) (lsp.CompletionItem, bool) {
+func (p *Project) createCompletionItemFromColumn(ctx context.Context, incompleteColumnName string, column *rast.Column, cursorPosition lsp.Position, supportSnippet bool) (lsp.CompletionItem, bool) {
 	tableMetadata, err := p.getTableMetadataFromPath(ctx, column.TableNameID())
 	if err != nil {
 		// cannot find table metadata
-		return createCompletionItemFromColumn(column, cursorPosition, supportSnippet), true
+		return createCompletionItemFromColumn(column, cursorPosition, supportSnippet, len(incompleteColumnName)), true
 	}
 
 	for _, c := range tableMetadata.Schema {
 		if column.Name() == c.Name {
-			return createCompletionItemFromSchema(c, cursorPosition, supportSnippet), true
+			return createCompletionItemFromSchema(c, cursorPosition, supportSnippet, len(incompleteColumnName)), true
 		}
 	}
 
 	return lsp.CompletionItem{}, false
 }
 
-func createCompletionItemFromColumn(column *rast.Column, cursorPosition lsp.Position, supportSnippet bool) lsp.CompletionItem {
+func (p *Project) createCompletionItemForRecordType(ctx context.Context, incompleteColumnName string, column *rast.Column, cursorPosition lsp.Position, supportSnippet bool) []lsp.CompletionItem {
+	if !column.Type().IsStruct() {
+		return nil
+	}
+
+	splittedIncompleteColumnName := strings.Split(incompleteColumnName, ".")
+	if len(splittedIncompleteColumnName) <= 1 {
+		return nil
+	}
+	afterRecord := splittedIncompleteColumnName[1]
+
+	tableMetadata, err := p.getTableMetadataFromPath(ctx, column.TableNameID())
+	items := make([]lsp.CompletionItem, 0)
+	if err != nil {
+		fields := column.Type().AsStruct().Fields()
+		for _, field := range fields {
+			if !strings.HasPrefix(field.Name(), afterRecord) {
+				continue
+			}
+			items = append(items, createCompletionItemFromColumn(field, cursorPosition, supportSnippet, len(afterRecord)))
+		}
+		return items
+	}
+
+	for _, c := range tableMetadata.Schema {
+		if column.Name() == c.Name {
+			if c.Type != bigquery.RecordFieldType {
+				return nil
+			}
+
+			for _, field := range c.Schema {
+				if !strings.HasPrefix(field.Name, afterRecord) {
+					continue
+				}
+				items = append(items, createCompletionItemFromSchema(field, cursorPosition, supportSnippet, len(afterRecord)))
+			}
+			return items
+		}
+	}
+
+	return nil
+}
+
+type columnInterface interface {
+	Name() string
+	Type() types.Type
+}
+
+func createCompletionItemFromColumn(column columnInterface, cursorPosition lsp.Position, supportSnippet bool, startOffset int) lsp.CompletionItem {
 	if !supportSnippet {
 		return lsp.CompletionItem{
 			InsertTextFormat: lsp.ITFPlainText,
@@ -328,6 +477,8 @@ func createCompletionItemFromColumn(column *rast.Column, cursorPosition lsp.Posi
 		}
 	}
 
+	startPosition := cursorPosition
+	startPosition.Character = startPosition.Character - startOffset
 	return lsp.CompletionItem{
 		InsertTextFormat: lsp.ITFSnippet,
 		Kind:             lsp.CIKField,
@@ -336,14 +487,14 @@ func createCompletionItemFromColumn(column *rast.Column, cursorPosition lsp.Posi
 		TextEdit: &lsp.TextEdit{
 			NewText: column.Name(),
 			Range: lsp.Range{
-				Start: cursorPosition,
+				Start: startPosition,
 				End:   cursorPosition,
 			},
 		},
 	}
 }
 
-func createCompletionItemFromSchema(schema *bigquery.FieldSchema, cursorPosition lsp.Position, supportSnippet bool) lsp.CompletionItem {
+func createCompletionItemFromSchema(schema *bigquery.FieldSchema, cursorPosition lsp.Position, supportSnippet bool, startOffset int) lsp.CompletionItem {
 	detail := string(schema.Type)
 	if schema.Description != "" {
 		detail += "\n" + schema.Description
@@ -357,6 +508,8 @@ func createCompletionItemFromSchema(schema *bigquery.FieldSchema, cursorPosition
 		}
 	}
 
+	startPosition := cursorPosition
+	startPosition.Character = startPosition.Character - startOffset
 	return lsp.CompletionItem{
 		InsertTextFormat: lsp.ITFSnippet,
 		Kind:             lsp.CIKField,
@@ -365,37 +518,9 @@ func createCompletionItemFromSchema(schema *bigquery.FieldSchema, cursorPosition
 		TextEdit: &lsp.TextEdit{
 			NewText: schema.Name,
 			Range: lsp.Range{
-				Start: cursorPosition,
+				Start: startPosition,
 				End:   cursorPosition,
 			},
 		},
 	}
-}
-
-func (p *Project) getTableMetadataFromTablePathExpressionNode(ctx context.Context, tableNode *ast.TablePathExpressionNode) (*bigquery.TableMetadata, error) {
-	pathExpr := tableNode.PathExpr()
-	if pathExpr == nil {
-		return nil, fmt.Errorf("invalid table path expression")
-	}
-	pathNames := make([]string, len(pathExpr.Names()))
-	for i, n := range pathExpr.Names() {
-		pathNames[i] = n.Name()
-	}
-	targetTable, err := p.getTableMetadataFromPath(ctx, strings.Join(pathNames, "."))
-	if err != nil {
-		return nil, fmt.Errorf("failed to get table metadata: %w", err)
-	}
-	return targetTable, nil
-}
-
-func listAstNode[T ast.Node](node ast.Node) []T {
-	targetNodes := make([]T, 0)
-	ast.Walk(node, func(n ast.Node) error {
-		node, ok := n.(T)
-		if ok {
-			targetNodes = append(targetNodes, node)
-		}
-		return nil
-	})
-	return targetNodes
 }
