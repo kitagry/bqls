@@ -357,6 +357,82 @@ func TestProject_CompleteColumn(t *testing.T) {
 				},
 			},
 		},
+		"Complete record column with incomplete word and zetasql odd error": {
+			files: map[string]string{
+				"file1.sql": "SELECT record.id, record.| FROM `project.dataset.table`",
+			},
+			supportSunippet: true,
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "record",
+							Type: bq.RecordFieldType,
+							Schema: bq.Schema{
+								{
+									Name:        "id",
+									Description: "id description",
+									Type:        bq.IntegerFieldType,
+								},
+							},
+						},
+					},
+				},
+			},
+			expectCompletionItems: []lsp.CompletionItem{
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKField,
+					Label:            "id",
+					Detail:           "INTEGER\nid description",
+					TextEdit: &lsp.TextEdit{
+						NewText: "id",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 0, Character: 25},
+							End:   lsp.Position{Line: 0, Character: 25},
+						},
+					},
+				},
+			},
+		},
+		"Complete record column with WITH clause": {
+			files: map[string]string{
+				"file1.sql": "WITH data AS (SELECT * FROM `project.dataset.table`)\n" + "SELECT record.| FROM data",
+			},
+			supportSunippet: true,
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "record",
+							Type: bq.RecordFieldType,
+							Schema: bq.Schema{
+								{
+									Name:        "id",
+									Description: "id description",
+									Type:        bq.IntegerFieldType,
+								},
+							},
+						},
+					},
+				},
+			},
+			expectCompletionItems: []lsp.CompletionItem{
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKField,
+					Label:            "id",
+					Detail:           "INT64",
+					TextEdit: &lsp.TextEdit{
+						NewText: "id",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 1, Character: 14},
+							End:   lsp.Position{Line: 1, Character: 14},
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {

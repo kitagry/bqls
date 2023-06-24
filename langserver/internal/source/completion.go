@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"cloud.google.com/go/bigquery"
@@ -14,6 +15,8 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/cache"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 )
+
+var lastDotRegex = regexp.MustCompile(`\w+\.\s`)
 
 func (p *Project) Complete(ctx context.Context, uri string, position lsp.Position, supportSnippet bool) ([]lsp.CompletionItem, error) {
 	result := make([]lsp.CompletionItem, 0)
@@ -84,9 +87,6 @@ func (p *Project) Complete(ctx context.Context, uri string, position lsp.Positio
 			continue
 		}
 		items := p.createCompletionItemForRecordType(ctx, incompleteColumnName, column, position, supportSnippet)
-		if !ok {
-			continue
-		}
 
 		result = append(result, items...)
 	}
@@ -263,6 +263,30 @@ func (p *Project) forceAnalyzeStatement(sql *cache.SQL, termOffset int) (output 
 	if err == nil {
 		return output, "", nil
 	}
+
+	// Find like e.x. SELECT item. FROM table
+	//
+	// zetasql returns odd error.
+	// e.x.)
+	// panic: INVALID_ARGUMENT: Unrecognized name: param [at 1:8]
+	// SELECT param.id, param. FROM `project.dataset.table`
+	//        ^
+	if loc := lastDotRegex.FindIndex([]byte(sql.RawText)); len(loc) == 2 {
+		// sql.Rawtext[loc[1]] is a space.
+		targetWord := sql.RawText[loc[0] : loc[1]-1]
+		replacedSQL := sql.RawText[:loc[0]] + "1," + sql.RawText[loc[1]-1:]
+		sql = cache.NewSQL(replacedSQL)
+		stmt, ok := findTargetStatement(sql, termOffset)
+		if !ok {
+			return nil, "", fmt.Errorf("failed to find target statementNode")
+		}
+		output, err = p.analyzeStatement(sql.RawText, stmt)
+		if err != nil {
+			return nil, "", fmt.Errorf("Failed to analyze statement: %w", err)
+		}
+		return output, targetWord, nil
+	}
+
 	parsedErr := parseZetaSQLError(err)
 	if strings.Contains(parsedErr.Msg, "Unrecognized name: ") {
 		return p.forceAnalyzeUnrecognizedNameStatement(sql, parsedErr)
@@ -350,7 +374,12 @@ func (p *Project) forceAnalyzeFieldDoesNotExitInStructStatement(sql *cache.SQL, 
 }
 
 func findTargetStatement(sql *cache.SQL, termOffset int) (ast.StatementNode, bool) {
-	for _, stmt := range sql.GetStatementNodes() {
+	stmts := sql.GetStatementNodes()
+	if len(stmts) == 1 {
+		return stmts[0], true
+	}
+
+	for _, stmt := range stmts {
 		loc := stmt.ParseLocationRange()
 		if loc == nil {
 			continue
@@ -361,6 +390,7 @@ func findTargetStatement(sql *cache.SQL, termOffset int) (ast.StatementNode, boo
 			return stmt, true
 		}
 	}
+
 	return nil, false
 }
 
@@ -405,7 +435,6 @@ func (p *Project) createCompletionItemForRecordType(ctx context.Context, incompl
 	if err != nil {
 		fields := column.Type().AsStruct().Fields()
 		for _, field := range fields {
-			fmt.Println(field.Name())
 			if !strings.HasPrefix(field.Name(), afterRecord) {
 				continue
 			}
@@ -494,32 +523,4 @@ func createCompletionItemFromSchema(schema *bigquery.FieldSchema, cursorPosition
 			},
 		},
 	}
-}
-
-func (p *Project) getTableMetadataFromTablePathExpressionNode(ctx context.Context, tableNode *ast.TablePathExpressionNode) (*bigquery.TableMetadata, error) {
-	pathExpr := tableNode.PathExpr()
-	if pathExpr == nil {
-		return nil, fmt.Errorf("invalid table path expression")
-	}
-	pathNames := make([]string, len(pathExpr.Names()))
-	for i, n := range pathExpr.Names() {
-		pathNames[i] = n.Name()
-	}
-	targetTable, err := p.getTableMetadataFromPath(ctx, strings.Join(pathNames, "."))
-	if err != nil {
-		return nil, fmt.Errorf("failed to get table metadata: %w", err)
-	}
-	return targetTable, nil
-}
-
-func listAstNode[T ast.Node](node ast.Node) []T {
-	targetNodes := make([]T, 0)
-	ast.Walk(node, func(n ast.Node) error {
-		node, ok := n.(T)
-		if ok {
-			targetNodes = append(targetNodes, node)
-		}
-		return nil
-	})
-	return targetNodes
 }
