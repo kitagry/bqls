@@ -91,6 +91,9 @@ func (p *Project) Complete(ctx context.Context, uri string, position lsp.Positio
 		result = append(result, items...)
 	}
 
+	// for table alias completion
+	result = append(result, p.completeScanField(ctx, node.InputScan(), incompleteColumnName, position, supportSnippet)...)
+
 	return result, nil
 }
 
@@ -98,6 +101,124 @@ type tablePathParams struct {
 	ProjectID string
 	DatasetID string
 	TableID   string
+}
+
+func (p *Project) completeScanField(ctx context.Context, node rast.ScanNode, incompleteColumnName string, position lsp.Position, supportSnippet bool) []lsp.CompletionItem {
+	switch n := node.(type) {
+	case *rast.TableScanNode:
+		return p.completeTableScanField(ctx, n, incompleteColumnName, position, supportSnippet)
+	case *rast.WithRefScanNode:
+		return p.completeWithScanField(ctx, n, incompleteColumnName, position, supportSnippet)
+	}
+	return nil
+}
+
+func (p *Project) completeTableScanField(ctx context.Context, tableScanNode *rast.TableScanNode, incompleteColumnName string, position lsp.Position, supportSnippet bool) []lsp.CompletionItem {
+	if tableScanNode.Alias() == "" {
+		return nil
+	}
+
+	if strings.HasPrefix(tableScanNode.Alias(), incompleteColumnName) {
+		if !supportSnippet {
+			return []lsp.CompletionItem{
+				{
+					InsertTextFormat: lsp.ITFPlainText,
+					Kind:             lsp.CIKField,
+					Label:            tableScanNode.Alias(),
+					Detail:           tableScanNode.Table().FullName(),
+				},
+			}
+		}
+
+		startPosition := position
+		startPosition.Character -= len(incompleteColumnName)
+		return []lsp.CompletionItem{
+			{
+				InsertTextFormat: lsp.ITFSnippet,
+				Kind:             lsp.CIKField,
+				Label:            tableScanNode.Alias(),
+				Detail:           tableScanNode.Table().FullName(),
+				TextEdit: &lsp.TextEdit{
+					NewText: tableScanNode.Alias(),
+					Range: lsp.Range{
+						Start: startPosition,
+						End:   position,
+					},
+				},
+			},
+		}
+	}
+
+	if !strings.HasPrefix(incompleteColumnName, tableScanNode.Alias()+".") {
+		return nil
+	}
+
+	result := make([]lsp.CompletionItem, 0)
+	afterWord := strings.TrimPrefix(incompleteColumnName, tableScanNode.Alias()+".")
+	columns := tableScanNode.ColumnList()
+	for _, column := range columns {
+		if !strings.HasPrefix(column.Name(), afterWord) {
+			continue
+		}
+		item, ok := p.createCompletionItemFromColumn(ctx, afterWord, column, position, supportSnippet)
+		if !ok {
+			continue
+		}
+
+		result = append(result, item)
+	}
+	return result
+}
+
+func (p *Project) completeWithScanField(ctx context.Context, withScanNode *rast.WithRefScanNode, incompleteColumnName string, position lsp.Position, supportSnippet bool) []lsp.CompletionItem {
+	if strings.HasPrefix(withScanNode.WithQueryName(), incompleteColumnName) {
+		if !supportSnippet {
+			return []lsp.CompletionItem{
+				{
+					InsertTextFormat: lsp.ITFPlainText,
+					Kind:             lsp.CIKField,
+					Label:            withScanNode.WithQueryName(),
+				},
+			}
+		}
+
+		startPosition := position
+		startPosition.Character -= len(incompleteColumnName)
+		return []lsp.CompletionItem{
+			{
+				InsertTextFormat: lsp.ITFSnippet,
+				Kind:             lsp.CIKField,
+				Label:            withScanNode.WithQueryName(),
+				TextEdit: &lsp.TextEdit{
+					NewText: withScanNode.WithQueryName(),
+					Range: lsp.Range{
+						Start: startPosition,
+						End:   position,
+					},
+				},
+			},
+		}
+	}
+
+	if !strings.HasPrefix(incompleteColumnName, withScanNode.WithQueryName()+".") {
+		return nil
+	}
+
+	result := make([]lsp.CompletionItem, 0)
+	afterWord := strings.TrimPrefix(incompleteColumnName, withScanNode.WithQueryName()+".")
+	columns := withScanNode.ColumnList()
+	for _, column := range columns {
+		if !strings.HasPrefix(column.Name(), afterWord) {
+			continue
+		}
+		item, ok := p.createCompletionItemFromColumn(ctx, afterWord, column, position, supportSnippet)
+		if !ok {
+			continue
+		}
+
+		result = append(result, item)
+	}
+	return result
 }
 
 func (p *Project) completeTablePath(ctx context.Context, node *ast.TablePathExpressionNode, position lsp.Position, supportSnippet bool) ([]lsp.CompletionItem, error) {
@@ -254,16 +375,6 @@ func (p *Project) completeTableForTablePath(ctx context.Context, param tablePath
 }
 
 func (p *Project) forceAnalyzeStatement(sql *cache.SQL, termOffset int) (output *zetasql.AnalyzerOutput, incompleteColumnName string, err error) {
-	statementNode, ok := findTargetStatement(sql, termOffset)
-	if !ok {
-		return nil, "", fmt.Errorf("failed to find target statementNode")
-	}
-
-	output, err = p.analyzeStatement(sql.RawText, statementNode)
-	if err == nil {
-		return output, "", nil
-	}
-
 	// Find like e.x. SELECT item. FROM table
 	//
 	// zetasql returns odd error.
@@ -285,6 +396,16 @@ func (p *Project) forceAnalyzeStatement(sql *cache.SQL, termOffset int) (output 
 			return nil, "", fmt.Errorf("Failed to analyze statement: %w", err)
 		}
 		return output, targetWord, nil
+	}
+
+	statementNode, ok := findTargetStatement(sql, termOffset)
+	if !ok {
+		return nil, "", fmt.Errorf("failed to find target statementNode")
+	}
+
+	output, err = p.analyzeStatement(sql.RawText, statementNode)
+	if err == nil {
+		return output, "", nil
 	}
 
 	parsedErr := parseZetaSQLError(err)

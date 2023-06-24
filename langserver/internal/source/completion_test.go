@@ -215,6 +215,18 @@ func TestProject_CompleteColumn(t *testing.T) {
 						},
 					},
 				},
+				{ // TODO: Refactoring test
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKField,
+					Label:            "data",
+					TextEdit: &lsp.TextEdit{
+						NewText: "data",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 1, Character: 7},
+							End:   lsp.Position{Line: 1, Character: 7},
+						},
+					},
+				},
 			},
 		},
 		"Complete incomplete column": {
@@ -428,6 +440,131 @@ func TestProject_CompleteColumn(t *testing.T) {
 						Range: lsp.Range{
 							Start: lsp.Position{Line: 1, Character: 14},
 							End:   lsp.Position{Line: 1, Character: 14},
+						},
+					},
+				},
+			},
+		},
+		"Complete column with table alias": {
+			files: map[string]string{
+				"file1.sql": "SELECT t.| FROM `project.dataset.table` AS t",
+			},
+			supportSunippet: true,
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Description: "id description",
+							Type:        bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []lsp.CompletionItem{
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKField,
+					Label:            "id",
+					Detail:           "INTEGER\nid description",
+					TextEdit: &lsp.TextEdit{
+						NewText: "id",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 0, Character: 9},
+							End:   lsp.Position{Line: 0, Character: 9},
+						},
+					},
+				},
+			},
+		},
+		"Complete column with with table": {
+			files: map[string]string{
+				"file1.sql": "WITH data AS (SELECT * FROM `project.dataset.table`)\nSELECT data.| FROM data",
+			},
+			supportSunippet: true,
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Description: "id description",
+							Type:        bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []lsp.CompletionItem{
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKField,
+					Label:            "id",
+					Detail:           "INT64",
+					TextEdit: &lsp.TextEdit{
+						NewText: "id",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 1, Character: 12},
+							End:   lsp.Position{Line: 1, Character: 12},
+						},
+					},
+				},
+			},
+		},
+		"Complete table alias": {
+			files: map[string]string{
+				"file1.sql": "SELECT t| FROM `project.dataset.table` AS table",
+			},
+			supportSunippet: true,
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []lsp.CompletionItem{
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKField,
+					Label:            "table",
+					Detail:           "project.dataset.table",
+					TextEdit: &lsp.TextEdit{
+						NewText: "table",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 0, Character: 7},
+							End:   lsp.Position{Line: 0, Character: 8},
+						},
+					},
+				},
+			},
+		},
+		"Complete with scan alias": {
+			files: map[string]string{
+				"file1.sql": "WITH data AS (SELECT * FROM `project.dataset.table`)\nSELECT d| FROM data",
+			},
+			supportSunippet: true,
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []lsp.CompletionItem{
+				{
+					InsertTextFormat: lsp.ITFSnippet,
+					Kind:             lsp.CIKField,
+					Label:            "data",
+					TextEdit: &lsp.TextEdit{
+						NewText: "data",
+						Range: lsp.Range{
+							Start: lsp.Position{Line: 1, Character: 7},
+							End:   lsp.Position{Line: 1, Character: 8},
 						},
 					},
 				},
