@@ -7,11 +7,9 @@ import (
 	"strings"
 
 	"cloud.google.com/go/bigquery"
-	"github.com/goccy/go-zetasql"
 	"github.com/goccy/go-zetasql/ast"
 	rast "github.com/goccy/go-zetasql/resolved_ast"
 	"github.com/goccy/go-zetasql/types"
-	"github.com/kitagry/bqls/langserver/internal/cache"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 )
 
@@ -20,32 +18,21 @@ func (p *Project) Complete(ctx context.Context, uri string, position lsp.Positio
 	sql := p.cache.Get(uri)
 	termOffset := positionToByteOffset(sql.RawText, position)
 
-	if hasSelectListEmptyError(sql.Errors) {
-		// inserted text
-		// before:
-		//   SELECT | FROM table_name
-		// after:
-		//   SELECT * FROM table_name
-		rawText := sql.RawText[:termOffset] + "1" + sql.RawText[termOffset:]
-		dummySQL := cache.NewSQL(rawText)
-		if len(dummySQL.Errors) > 0 {
-			return nil, nil
-		}
-		sql = dummySQL
-	}
+	parsedFile := p.ParseFile(uri, sql.RawText)
 
 	// cursor is on table name
-	if node, ok := searchAstNode[*ast.TablePathExpressionNode](sql.Node, termOffset); ok {
+	if node, ok := searchAstNode[*ast.TablePathExpressionNode](parsedFile.Node, termOffset); ok {
 		return p.completeTablePath(ctx, node, position, supportSnippet)
 	}
 
-	output, incompleteColumnName, err := p.forceAnalyzeStatement(sql, termOffset)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+	output, ok := parsedFile.findTargetAnalyzeOutput(termOffset)
+	if !ok {
+		fmt.Fprintln(os.Stderr, "not found analyze output")
 		return nil, nil
 	}
+	incompleteColumnName := parsedFile.findIncompleteColumnName(position)
 
-	node, ok := searchResolvedAstNode[*rast.ProjectScanNode]([]*zetasql.AnalyzerOutput{output}, termOffset)
+	node, ok := searchResolvedAstNode[*rast.ProjectScanNode](output, termOffset)
 	if !ok {
 		// In some case, *rast.ProjectScanNode.ParseLocationRange() returns nil.
 		// So, if we cannot find *rast.ProjectScanNode, we search *rast.ProjectScanNode which ParseLocationRange returns nil.
@@ -369,156 +356,6 @@ func (p *Project) completeTableForTablePath(ctx context.Context, param tablePath
 	}
 
 	return result, nil
-}
-
-func (p *Project) forceAnalyzeStatement(sql *cache.SQL, termOffset int) (output *zetasql.AnalyzerOutput, incompleteColumnName string, err error) {
-	// Find like e.x. SELECT item. FROM table
-	//
-	// zetasql returns odd error.
-	// e.x.)
-	// panic: INVALID_ARGUMENT: Unrecognized name: param [at 1:8]
-	// SELECT param.id, param. FROM `project.dataset.table`
-	//        ^
-	if loc := lastDotRegex.FindIndex([]byte(sql.RawText)); len(loc) == 2 {
-		// sql.Rawtext[loc[1]] is a space.
-		targetWord := sql.RawText[loc[0] : loc[1]-1]
-		replacedSQL := sql.RawText[:loc[0]] + "1," + sql.RawText[loc[1]-1:]
-		sql = cache.NewSQL(replacedSQL)
-		stmt, ok := findTargetStatement(sql, termOffset)
-		if !ok {
-			return nil, "", fmt.Errorf("failed to find target statementNode")
-		}
-		output, err = p.analyzeStatement(sql.RawText, stmt)
-		if err != nil {
-			return nil, "", fmt.Errorf("Failed to analyze statement: %w", err)
-		}
-		return output, targetWord, nil
-	}
-
-	statementNode, ok := findTargetStatement(sql, termOffset)
-	if !ok {
-		return nil, "", fmt.Errorf("failed to find target statementNode")
-	}
-
-	output, err = p.analyzeStatement(sql.RawText, statementNode)
-	if err == nil {
-		return output, "", nil
-	}
-
-	parsedErr := parseZetaSQLError(err)
-	if strings.Contains(parsedErr.Msg, "Unrecognized name: ") {
-		return p.forceAnalyzeUnrecognizedNameStatement(sql, parsedErr)
-	}
-
-	if strings.Contains(parsedErr.Msg, "does not exist in STRUCT") {
-		// if record errror, we should return incompleteColumnName which contains record name.
-		node, ok := searchAstNode[*ast.IdentifierNode](sql.Node, termOffset)
-		if !ok {
-			return nil, "", fmt.Errorf("failed to search ast node")
-		}
-		incompleteNode, ok := lookupNode[*ast.PathExpressionNode](node)
-		if !ok {
-			return nil, "", fmt.Errorf("failed to lookup node")
-		}
-
-		output, _, err := p.forceAnalyzeFieldDoesNotExitInStructStatement(sql, parsedErr)
-		if err != nil {
-			return nil, "", fmt.Errorf("failed to forceAnalyzeFieldDoesNotExitInStructStatement: %w", err)
-		}
-		names := make([]string, 0)
-		for _, n := range incompleteNode.Names() {
-			names = append(names, n.Name())
-		}
-		return output, strings.Join(names, "."), nil
-	}
-
-	return nil, "", fmt.Errorf("Failed to analyze statement: %w", err)
-}
-
-// When the error is "Unrecognized name: ", we should complete the name.
-// But it can't be analyzed by zetasql, we should replace the name to '1,'
-// Error message example is `INVALID_ARGUMENT: Unrecognized name: i [at 1:8]`
-func (p *Project) forceAnalyzeUnrecognizedNameStatement(sql *cache.SQL, parsedErr Error) (output *zetasql.AnalyzerOutput, incompleteColumnName string, err error) {
-	ind := strings.Index(parsedErr.Msg, "Unrecognized name: ")
-
-	incompleteColumnName = strings.TrimSpace(parsedErr.Msg[ind+len("Unrecognized name: "):])
-	errOffset := positionToByteOffset(sql.RawText, parsedErr.Position)
-	if errOffset == 0 || errOffset == len(sql.RawText) {
-		return nil, "", fmt.Errorf("Failed to analyze statement: %w", parsedErr)
-	}
-
-	if sql.RawText[errOffset+len(incompleteColumnName)] == '.' {
-		incompleteColumnName += "."
-	}
-
-	replacedSQL := sql.RawText[:errOffset] + "1," + sql.RawText[errOffset+len(incompleteColumnName):]
-	sql = cache.NewSQL(replacedSQL)
-	stmt, ok := findTargetStatement(sql, errOffset)
-	if !ok {
-		return nil, "", fmt.Errorf("failed to find target statementNode")
-	}
-	output, err = p.analyzeStatement(sql.RawText, stmt)
-	if err != nil {
-		return nil, "", fmt.Errorf("Failed to analyze statement: %w", err)
-	}
-	return output, incompleteColumnName, nil
-}
-
-func (p *Project) forceAnalyzeFieldDoesNotExitInStructStatement(sql *cache.SQL, parsedErr Error) (output *zetasql.AnalyzerOutput, incompleteColumnName string, err error) {
-	ind := strings.Index(parsedErr.Msg, "Field name ")
-	if ind == -1 {
-		return nil, "", parsedErr
-	}
-	incompleteColumnName = parsedErr.Msg[ind+len("Field name "):]
-	incompleteColumnName = incompleteColumnName[:strings.Index(incompleteColumnName, " ")]
-
-	errOffset := positionToByteOffset(sql.RawText, parsedErr.Position)
-	if errOffset == 0 || errOffset == len(sql.RawText) {
-		return nil, "", fmt.Errorf("Failed to analyze statement: %w", parsedErr)
-	}
-
-	replacedSQL := sql.RawText[:errOffset] + "*" + sql.RawText[errOffset+len(incompleteColumnName):]
-	sql = cache.NewSQL(replacedSQL)
-	stmt, ok := findTargetStatement(sql, errOffset)
-	if !ok {
-		return nil, "", fmt.Errorf("failed to find target statementNode")
-	}
-	output, err = p.analyzeStatement(sql.RawText, stmt)
-	if err != nil {
-		return nil, "", fmt.Errorf("Failed to analyze statement: %w", err)
-	}
-
-	return output, incompleteColumnName, nil
-}
-
-func findTargetStatement(sql *cache.SQL, termOffset int) (ast.StatementNode, bool) {
-	stmts := sql.GetStatementNodes()
-	if len(stmts) == 1 {
-		return stmts[0], true
-	}
-
-	for _, stmt := range stmts {
-		loc := stmt.ParseLocationRange()
-		if loc == nil {
-			continue
-		}
-		startOffset := loc.Start().ByteOffset()
-		endOffset := loc.End().ByteOffset()
-		if startOffset <= termOffset && termOffset <= endOffset {
-			return stmt, true
-		}
-	}
-
-	return nil, false
-}
-
-func hasSelectListEmptyError(errs []error) bool {
-	for _, err := range errs {
-		if strings.Contains(err.Error(), "Syntax error: SELECT list must not be empty") {
-			return true
-		}
-	}
-	return false
 }
 
 func (p *Project) createCompletionItemFromColumn(ctx context.Context, incompleteColumnName string, column *rast.Column, cursorPosition lsp.Position, supportSnippet bool) (lsp.CompletionItem, bool) {

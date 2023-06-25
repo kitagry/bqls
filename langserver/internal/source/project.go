@@ -94,18 +94,6 @@ func (p *Project) GetErrors(path string) map[string][]Error {
 	return map[string][]Error{path: nil}
 }
 
-func (p *Project) analyzeStatements(sql *cache.SQL) ([]*zetasql.AnalyzerOutput, error) {
-	var results []*zetasql.AnalyzerOutput
-	for _, stmt := range sql.GetStatementNodes() {
-		output, err := p.analyzeStatement(sql.RawText, stmt)
-		if err != nil {
-			return nil, fmt.Errorf("failed to analyze statement: %w", err)
-		}
-		results = append(results, output)
-	}
-	return results, nil
-}
-
 func (p *Project) analyzeStatement(rawText string, stmt ast.StatementNode) (*zetasql.AnalyzerOutput, error) {
 	langOpt := zetasql.NewLanguageOptions()
 	langOpt.SetNameResolutionMode(zetasql.NameResolutionDefault)

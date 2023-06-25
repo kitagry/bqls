@@ -17,18 +17,105 @@ type ParsedFile struct {
 	URI string
 	Src string
 
-	Node  ast.ScriptNode
-	RNode map[ast.StatementNode]*zetasql.AnalyzerOutput
+	Node ast.ScriptNode
+	// index is Node's statement order
+	RNode []*zetasql.AnalyzerOutput
 
 	Fixed  bool
 	Errors []Error
+}
+
+func (p ParsedFile) FindTargetStatementNode(termOffset int) (ast.StatementNode, bool) {
+	stmts := make([]ast.StatementNode, 0)
+	ast.Walk(p.Node, func(n ast.Node) error {
+		if n == nil {
+			return nil
+		}
+		if n.IsStatement() {
+			stmts = append(stmts, n)
+		}
+		return nil
+	})
+
+	if len(stmts) == 1 {
+		return stmts[0], true
+	}
+
+	for _, stmt := range stmts {
+		loc := stmt.ParseLocationRange()
+		if loc == nil {
+			continue
+		}
+		startOffset := loc.Start().ByteOffset()
+		endOffset := loc.End().ByteOffset()
+		if startOffset <= termOffset && termOffset <= endOffset {
+			return stmt, true
+		}
+	}
+
+	return nil, false
+}
+
+func (p ParsedFile) findTargetStatementNodeIndex(termOffset int) (int, bool) {
+	stmts := make([]ast.StatementNode, 0)
+	ast.Walk(p.Node, func(n ast.Node) error {
+		if n == nil {
+			return nil
+		}
+		if n.IsStatement() {
+			stmts = append(stmts, n)
+		}
+		return nil
+	})
+
+	if len(stmts) == 1 {
+		return 0, true
+	}
+
+	for i, stmt := range stmts {
+		loc := stmt.ParseLocationRange()
+		if loc == nil {
+			continue
+		}
+		startOffset := loc.Start().ByteOffset()
+		endOffset := loc.End().ByteOffset()
+		if startOffset <= termOffset && termOffset <= endOffset {
+			return i, true
+		}
+	}
+
+	return -1, false
+}
+
+func (p *ParsedFile) findTargetAnalyzeOutput(termOffset int) (*zetasql.AnalyzerOutput, bool) {
+	index, ok := p.findTargetStatementNodeIndex(termOffset)
+	if !ok {
+		return nil, false
+	}
+
+	if index >= len(p.RNode) {
+		return nil, false
+	}
+
+	return p.RNode[index], true
+}
+
+func (p *ParsedFile) findIncompleteColumnName(pos lsp.Position) string {
+	for _, err := range p.Errors {
+		startIn := err.Position.Line > pos.Line || (err.Position.Line == pos.Line && err.Position.Character >= pos.Character)
+		endIn := err.Position.Line < pos.Line || (err.Position.Line == pos.Line && err.Position.Character <= pos.Character)
+		if startIn && endIn {
+			return err.incompleteColumnName
+		}
+	}
+	return ""
 }
 
 func (p *Project) ParseFile(uri string, src string) ParsedFile {
 	fixedSrc, errs, dotFixed := fixDot(src)
 
 	var node ast.ScriptNode
-	rnode := make(map[ast.StatementNode]*zetasql.AnalyzerOutput)
+	rnode := make([]*zetasql.AnalyzerOutput, 0)
 	var analyzeErrFixed bool
 	for _retry := 0; _retry < 10; _retry++ {
 		var err error
@@ -60,8 +147,8 @@ func (p *Project) ParseFile(uri string, src string) ParsedFile {
 		for _, s := range stmts {
 			output, err := p.analyzeStatement(fixedSrc, s)
 			if err == nil {
-				rnode[s] = output
-				break
+				rnode = append(rnode, output)
+				continue
 			}
 
 			pErr := parseZetaSQLError(err)
@@ -94,9 +181,10 @@ func (p *Project) ParseFile(uri string, src string) ParsedFile {
 }
 
 type Error struct {
-	Msg        string
-	Position   lsp.Position
-	TermLength int
+	Msg                  string
+	Position             lsp.Position
+	TermLength           int
+	incompleteColumnName string
 }
 
 func (e Error) Error() string {
@@ -141,9 +229,10 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixed bool) {
 		src = src[:loc[0]] + strings.Repeat("1", len(targetWord)-1) + "," + src[loc[1]-1:]
 		pos, _ := byteOffsetToPosition(src, loc[0])
 		errs = append(errs, Error{
-			Msg:        fmt.Sprintf("INVALID_ARGUMENT: Unrecognized name: %s", targetWord),
-			Position:   pos,
-			TermLength: len(targetWord),
+			Msg:                  fmt.Sprintf("INVALID_ARGUMENT: Unrecognized name: %s", targetWord),
+			Position:             pos,
+			TermLength:           len(targetWord),
+			incompleteColumnName: targetWord,
 		})
 
 		loc = lastDotRegex.FindIndex([]byte(src))
@@ -181,6 +270,7 @@ func fixUnrecognizedNameStatement(src string, parsedErr Error) (fixedSrc string,
 
 	fixedSrc = src[:errOffset] + strings.Repeat("1", len(unrecognizedName)) + src[errOffset+len(unrecognizedName):]
 	parsedErr.TermLength = len(unrecognizedName)
+	parsedErr.incompleteColumnName = unrecognizedName
 
 	return fixedSrc, parsedErr, true
 }
@@ -212,6 +302,8 @@ func fixFieldDoesNotExistInStructStatement(src string, parsedErr Error) (fixedSr
 		fixedSrc = src[:errOffset] + "*," + src[errOffset+len(notExistColumn):]
 		return fixedSrc, parsedErr, true
 	}
+	// struct.uneixst_column
+	parsedErr.incompleteColumnName = src[firstIndex : errOffset+len(notExistColumn)]
 	structLen := len(src[firstIndex:errOffset])
 	fixedSrc = src[:firstIndex] + strings.Repeat("1", structLen+len(notExistColumn)) + src[errOffset+len(notExistColumn):]
 
@@ -245,6 +337,7 @@ func fixNotFoundIndsideTableStatement(src string, parsedErr Error) (fixedSrc str
 		fixedSrc = src[:errOffset] + "*," + src[errOffset+len(notExistColumn):]
 		return fixedSrc, parsedErr, true
 	}
+	parsedErr.incompleteColumnName = src[firstIndex : errOffset+len(notExistColumn)]
 	structLen := len(src[firstIndex:errOffset])
 	fixedSrc = src[:firstIndex] + strings.Repeat("1", structLen+len(notExistColumn)) + src[errOffset+len(notExistColumn):]
 
