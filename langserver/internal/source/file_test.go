@@ -1,6 +1,7 @@
 package source_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/bigquery/mock_bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source"
@@ -62,7 +64,32 @@ func TestProject_ParseFile(t *testing.T) {
 						Line:      0,
 						Character: 7,
 					},
-					TermLength: 14,
+					TermLength:           14,
+					IncompleteColumnName: "unexist_column",
+				},
+			},
+		},
+		"parse unrecognized file with recommend": {
+			file: "SELECT timestam FROM `project.dataset.table`",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "timestamp",
+							Type: bq.TimestampFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []source.Error{
+				{
+					Msg: "INVALID_ARGUMENT: Unrecognized name: timestam; Did you mean timestamp?",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 7,
+					},
+					TermLength:           8,
+					IncompleteColumnName: "timestam",
 				},
 			},
 		},
@@ -91,7 +118,8 @@ func TestProject_ParseFile(t *testing.T) {
 						Line:      0,
 						Character: 13,
 					},
-					TermLength: 14,
+					TermLength:           14,
+					IncompleteColumnName: "param.unexist_column",
 				},
 			},
 		},
@@ -120,7 +148,8 @@ func TestProject_ParseFile(t *testing.T) {
 						Line:      0,
 						Character: 13,
 					},
-					TermLength: 14,
+					TermLength:           14,
+					IncompleteColumnName: "param.unexist_column",
 				},
 			},
 		},
@@ -143,7 +172,8 @@ func TestProject_ParseFile(t *testing.T) {
 						Line:      0,
 						Character: 9,
 					},
-					TermLength: 14,
+					TermLength:           14,
+					IncompleteColumnName: "t.unexist_column",
 				},
 			},
 		},
@@ -166,7 +196,8 @@ func TestProject_ParseFile(t *testing.T) {
 						Line:      0,
 						Character: 9,
 					},
-					TermLength: 14,
+					TermLength:           14,
+					IncompleteColumnName: "t.unexist_column",
 				},
 			},
 		},
@@ -189,7 +220,8 @@ func TestProject_ParseFile(t *testing.T) {
 						Line:      0,
 						Character: 7,
 					},
-					TermLength: 2,
+					TermLength:           2,
+					IncompleteColumnName: "t.",
 				},
 			},
 		},
@@ -215,6 +247,48 @@ func TestProject_ParseFile(t *testing.T) {
 
 			if len(got.RNode) == 0 {
 				t.Errorf("failed to parse")
+			}
+		})
+	}
+}
+
+func TestProject_ParseFileWithIncompleteTable(t *testing.T) {
+	tests := map[string]struct {
+		file                   string
+		bigqueryClientMockFunc func(t *testing.T) bigquery.Client
+
+		expectedErrs []source.Error
+	}{
+		"Parse with incomplete table name": {
+			file: "SELECT * FROM `project.dataset.`",
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found"))
+				return bqClient
+			},
+			expectedErrs: []source.Error{
+				{
+					Msg: "INVALID_ARGUMENT: Table not found: `project.dataset.`",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 14,
+					},
+					TermLength:           18,
+					IncompleteColumnName: "`project.dataset.`",
+				},
+			},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			bqClient := tt.bigqueryClientMockFunc(t)
+			p := source.NewProjectWithBQClient("/", bqClient)
+
+			got := p.ParseFile("uri", tt.file)
+			if diff := cmp.Diff(tt.expectedErrs, got.Errors, cmpopts.IgnoreUnexported()); diff != "" {
+				t.Errorf("ParseFile result diff (-expect, +got)\n%s", diff)
 			}
 		})
 	}

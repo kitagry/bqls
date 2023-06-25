@@ -69,7 +69,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 			return nil, fmt.Errorf("failed to find term: %v", term)
 		}
 
-		tableMetadata, err := p.getTableMetadataFromPath(ctx, column.TableNameID())
+		tableMetadata, err := p.getTableMetadataFromPath(ctx, column.TableName())
 		if err != nil {
 			// cannot find table metadata
 			return []lsp.MarkedString{
@@ -103,7 +103,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 			return nil, fmt.Errorf("failed to find column: %v", c)
 		}
 
-		tableMetadata, err := p.getTableMetadataFromPath(ctx, column.TableNameID())
+		tableMetadata, err := p.getTableMetadataFromPath(ctx, column.TableName())
 		if err != nil {
 			return nil, fmt.Errorf("failed to get table metadata: %w", err)
 		}

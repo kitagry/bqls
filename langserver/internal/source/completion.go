@@ -359,7 +359,7 @@ func (p *Project) completeTableForTablePath(ctx context.Context, param tablePath
 }
 
 func (p *Project) createCompletionItemFromColumn(ctx context.Context, incompleteColumnName string, column *rast.Column, cursorPosition lsp.Position, supportSnippet bool) (lsp.CompletionItem, bool) {
-	tableMetadata, err := p.getTableMetadataFromPath(ctx, column.TableNameID())
+	tableMetadata, err := p.getTableMetadataFromPath(ctx, column.TableName())
 	if err != nil {
 		// cannot find table metadata
 		return createCompletionItemFromColumn(column, cursorPosition, supportSnippet, len(incompleteColumnName)), true
@@ -385,7 +385,7 @@ func (p *Project) createCompletionItemForRecordType(ctx context.Context, incompl
 	}
 	afterRecord := splittedIncompleteColumnName[1]
 
-	tableMetadata, err := p.getTableMetadataFromPath(ctx, column.TableNameID())
+	tableMetadata, err := p.getTableMetadataFromPath(ctx, column.TableName())
 	items := make([]lsp.CompletionItem, 0)
 	if err != nil {
 		fields := column.Type().AsStruct().Fields()
