@@ -15,7 +15,6 @@ import (
 	"github.com/goccy/go-zetasql/types"
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/cache"
-	"github.com/kitagry/bqls/langserver/internal/lsp"
 )
 
 type Project struct {
@@ -87,32 +86,12 @@ func (p *Project) GetErrors(path string) map[string][]Error {
 		return nil
 	}
 
-	if len(sql.Errors) > 0 {
-		errs := make([]Error, len(sql.Errors))
-		for i, e := range sql.Errors {
-			errs[i] = parseZetaSQLError(e)
-		}
-		return map[string][]Error{path: errs}
-	}
-
-	_, err := p.analyzeStatements(sql)
-	if err != nil {
-		return map[string][]Error{path: {parseZetaSQLError(err)}}
+	parsedFile := p.ParseFile(path, sql.RawText)
+	if len(parsedFile.Errors) > 0 {
+		return map[string][]Error{path: parsedFile.Errors}
 	}
 
 	return map[string][]Error{path: nil}
-}
-
-func (p *Project) analyzeStatements(sql *cache.SQL) ([]*zetasql.AnalyzerOutput, error) {
-	var results []*zetasql.AnalyzerOutput
-	for _, stmt := range sql.GetStatementNodes() {
-		output, err := p.analyzeStatement(sql.RawText, stmt)
-		if err != nil {
-			return nil, fmt.Errorf("failed to analyze statement: %w", err)
-		}
-		results = append(results, output)
-	}
-	return results, nil
 }
 
 func (p *Project) analyzeStatement(rawText string, stmt ast.StatementNode) (*zetasql.AnalyzerOutput, error) {
@@ -250,32 +229,4 @@ func (p *Project) listLatestSuffixTables(ctx context.Context, projectID, dataset
 	})
 
 	return filteredTables, nil
-}
-
-type Error struct {
-	Msg      string
-	Position lsp.Position
-}
-
-func (e Error) Error() string {
-	return fmt.Sprintf("%d:%d: %s", e.Position.Line, e.Position.Character, e.Msg)
-}
-
-func parseZetaSQLError(err error) Error {
-	errStr := err.Error()
-	if !strings.Contains(errStr, "[at ") {
-		return Error{Msg: errStr}
-	}
-
-	// extract position information like "... [at 1:28]"
-	positionInd := strings.Index(errStr, "[at ")
-	location := errStr[positionInd+4 : len(errStr)-1]
-	locationSep := strings.Split(location, ":")
-	line, _ := strconv.Atoi(locationSep[0])
-	col, _ := strconv.Atoi(locationSep[1])
-	pos := lsp.Position{Line: line - 1, Character: col - 1}
-
-	// Trim position information
-	errStr = strings.TrimSpace(errStr[:positionInd])
-	return Error{Msg: errStr, Position: pos}
 }

@@ -689,6 +689,7 @@ func TestProject_CompleteFromClause(t *testing.T) {
 						TableID:   "table20230622",
 					},
 				}, nil)
+				bqClient.EXPECT().GetDefaultProject().Return("").MinTimes(0)
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
 				return bqClient
 			},
@@ -727,6 +728,7 @@ func TestProject_CompleteFromClause(t *testing.T) {
 						DatasetID: "dataset2",
 					},
 				}, nil)
+				bqClient.EXPECT().GetDefaultProject().Return("").MinTimes(0)
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
 				return bqClient
 			},

@@ -56,10 +56,12 @@ func (h *Handler) diagnose(ctx context.Context, uri lsp.DocumentURI) (map[lsp.Do
 func convertErrorsToDiagnostics(errs []source.Error) []lsp.Diagnostic {
 	result := make([]lsp.Diagnostic, len(errs))
 	for i, err := range errs {
+		endPosition := err.Position
+		endPosition.Character += err.TermLength
 		result[i] = lsp.Diagnostic{
 			Range: lsp.Range{
 				Start: err.Position,
-				End:   err.Position,
+				End:   endPosition,
 			},
 			Message: err.Msg,
 		}
