@@ -237,6 +237,25 @@ func positionToByteOffset(sql string, position lsp.Position) int {
 	return offset
 }
 
+func byteOffsetToPosition(sql string, offset int) (lsp.Position, bool) {
+	lines := strings.Split(sql, "\n")
+
+	line := 0
+	for _, l := range lines {
+		if offset < len(l)+1 {
+			return lsp.Position{
+				Line:      line,
+				Character: offset,
+			}, true
+		}
+
+		line++
+		offset -= len(l) + 1
+	}
+
+	return lsp.Position{}, false
+}
+
 type locationRangeNode interface {
 	ParseLocationRange() *types.ParseLocationRange
 }

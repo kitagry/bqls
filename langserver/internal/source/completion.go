@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
 
 	"cloud.google.com/go/bigquery"
@@ -15,8 +14,6 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/cache"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 )
-
-var lastDotRegex = regexp.MustCompile(`\w+\.\s`)
 
 func (p *Project) Complete(ctx context.Context, uri string, position lsp.Position, supportSnippet bool) ([]lsp.CompletionItem, error) {
 	result := make([]lsp.CompletionItem, 0)
