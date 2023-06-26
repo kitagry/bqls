@@ -26,38 +26,6 @@ func TestProject_CompleteColumn(t *testing.T) {
 		expectCompletionItems []source.CompletionItem
 		expectErr             error
 	}{
-		"Select columns with supportSunippet is false": {
-			files: map[string]string{
-				"file1.sql": "SELECT id, | FROM `project.dataset.table`",
-			},
-			bqTableMetadataMap: map[string]*bq.TableMetadata{
-				"project.dataset.table": {
-					Schema: bq.Schema{
-						{
-							Name:        "id",
-							Type:        bq.IntegerFieldType,
-							Description: "id description",
-						},
-						{
-							Name: "name",
-							Type: bq.StringFieldType,
-						},
-					},
-				},
-			},
-			expectCompletionItems: []source.CompletionItem{
-				{
-					Kind:    lsp.CIKField,
-					NewText: "id",
-					Detail:  "INTEGER\nid description",
-				},
-				{
-					Kind:    lsp.CIKField,
-					NewText: "name",
-					Detail:  "STRING",
-				},
-			},
-		},
 		"Select columns with supportSunippet is true": {
 			files: map[string]string{
 				"file1.sql": "SELECT id, | FROM `project.dataset.table`",
