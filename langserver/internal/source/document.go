@@ -22,6 +22,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 	termOffset := positionToByteOffset(sql.RawText, position)
 	targetNode, ok := searchAstNode[*ast.PathExpressionNode](parsedFile.Node, termOffset)
 	if !ok {
+		p.logger.Debug("not found target node")
 		return nil, nil
 	}
 

@@ -4,17 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source"
+	"github.com/sirupsen/logrus"
 	"github.com/sourcegraph/jsonrpc2"
 )
 
 type Handler struct {
 	conn   *jsonrpc2.Conn
-	logger *log.Logger
+	logger *logrus.Logger
 
 	project *source.Project
 
@@ -24,9 +24,17 @@ type Handler struct {
 
 var _ jsonrpc2.Handler = (*Handler)(nil)
 
-func NewHandler() *Handler {
+func NewHandler(isDebug bool) *Handler {
+	logger := logrus.New()
+	logger.Out = os.Stderr
+	if isDebug {
+		logger.SetLevel(logrus.DebugLevel)
+	} else {
+		logger.SetLevel(logrus.InfoLevel)
+	}
+
 	handler := &Handler{
-		logger:            log.New(os.Stderr, "", log.LstdFlags),
+		logger:            logger,
 		diagnosticRequest: make(chan lsp.DocumentURI, 3),
 	}
 	go handler.diagnostic()
@@ -39,8 +47,12 @@ func (h *Handler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2
 
 func (h *Handler) Close() error {
 	var errs []error
-	errs = append(errs, h.conn.Close())
-	errs = append(errs, h.project.Close())
+	if h.conn != nil {
+		errs = append(errs, h.conn.Close())
+	}
+	if h.project != nil {
+		errs = append(errs, h.project.Close())
+	}
 	close(h.diagnosticRequest)
 	return errors.Join(errs...)
 }

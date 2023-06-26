@@ -3,7 +3,6 @@ package source
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"cloud.google.com/go/bigquery"
@@ -61,7 +60,7 @@ func (p *Project) Complete(ctx context.Context, uri string, position lsp.Positio
 
 	output, ok := parsedFile.findTargetAnalyzeOutput(termOffset)
 	if !ok {
-		fmt.Fprintln(os.Stderr, "not found analyze output")
+		p.logger.Debug("not found analyze output")
 		return nil, nil
 	}
 	incompleteColumnName := parsedFile.findIncompleteColumnName(position)
