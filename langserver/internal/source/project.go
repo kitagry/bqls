@@ -15,10 +15,12 @@ import (
 	"github.com/goccy/go-zetasql/types"
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/cache"
+	"github.com/sirupsen/logrus"
 )
 
 type Project struct {
 	rootPath string
+	logger   *logrus.Logger
 	cache    *cache.GlobalCache
 	bqClient bigquery.Client
 	catalog  types.Catalog
@@ -29,7 +31,7 @@ type File struct {
 	Version int
 }
 
-func NewProject(ctx context.Context, rootPath string) (*Project, error) {
+func NewProject(ctx context.Context, rootPath string, logger *logrus.Logger) (*Project, error) {
 	cache := cache.NewGlobalCache()
 
 	bqClient, err := bigquery.New(ctx, true)
@@ -41,6 +43,7 @@ func NewProject(ctx context.Context, rootPath string) (*Project, error) {
 
 	return &Project{
 		rootPath: rootPath,
+		logger:   logger,
 		cache:    cache,
 		bqClient: bqClient,
 		catalog:  catalog,
@@ -163,6 +166,14 @@ func (p *Project) analyzeStatement(rawText string, stmt ast.StatementNode) (*zet
 
 func (p *Project) getTableMetadataFromPath(ctx context.Context, path string) (*bq.TableMetadata, error) {
 	splitNode := strings.Split(path, ".")
+
+	// validate id
+	for _, id := range splitNode {
+		if id == "" {
+			return nil, fmt.Errorf("invalid path: %s", path)
+		}
+	}
+
 	switch len(splitNode) {
 	case 3:
 		return p.bqClient.GetTableMetadata(ctx, splitNode[0], splitNode[1], splitNode[2])

@@ -46,8 +46,8 @@ You can use your favorite lsp client.
 		fs.PrintDefaults()
 	}
 
-	var showVersion bool
-	fs.BoolVar(&showVersion, "version", false, "print version")
+	showVersion := fs.Bool("version", false, "print version")
+	isDebug := fs.Bool("debug", false, "log debug")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return exitCodeOK
@@ -55,12 +55,12 @@ You can use your favorite lsp client.
 		return exitCodeErr
 	}
 
-	if showVersion {
+	if *showVersion {
 		fmt.Printf("%s %s (rev: %s/%s)\n", name, version, getRevision(), runtime.Version())
 		return exitCodeOK
 	}
 
-	handler := langserver.NewHandler()
+	handler := langserver.NewHandler(*isDebug)
 	defer handler.Close()
 	<-jsonrpc2.NewConn(context.Background(), jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}), handler).DisconnectNotify()
 	return exitCodeOK
