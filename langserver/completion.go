@@ -18,12 +18,17 @@ func (h *Handler) handleTextDocumentCompletion(ctx context.Context, conn *jsonrp
 		return nil, err
 	}
 
-	items, err := h.project.Complete(ctx, documentURIToURI(params.TextDocument.URI), params.Position, h.clientSupportSnippets())
+	items, err := h.project.Complete(ctx, documentURIToURI(params.TextDocument.URI), params.Position)
 	if err != nil {
 		return nil, err
 	}
 
-	return items, nil
+	completionItems := make([]lsp.CompletionItem, len(items))
+	for i, item := range items {
+		completionItems[i] = item.ToLspCompletionItem(params.Position, h.clientSupportSnippets())
+	}
+
+	return completionItems, nil
 }
 
 func (h *Handler) clientSupportSnippets() bool {
