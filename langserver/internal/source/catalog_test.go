@@ -50,6 +50,23 @@ func TestCatalog_AddTable(t *testing.T) {
 
 			expectError: dummyErr,
 		},
+		"Wildcard table": {
+			path: []string{"project.dataset.table*"},
+			createMockBigQuery: func(ctrl *gomock.Controller) bigquery.Client {
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table*").Return(&bq.TableMetadata{
+					Schema: bq.Schema{
+						{
+							Name: "name",
+							Type: bq.StringFieldType,
+						},
+					},
+				}, nil)
+				return bqClient
+			},
+			expectTableName:   "project.dataset.table*",
+			expectColumnNames: []string{"name", "_TABLE_SUFFIX"},
+		},
 	}
 
 	for n, tt := range tests {

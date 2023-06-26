@@ -83,6 +83,10 @@ func (c *Catalog) addTable(path []string) error {
 		columns[i] = types.NewSimpleColumn(tableName, field.Name, typ)
 	}
 
+	if isWildCardTable(path) {
+		columns = append(columns, types.NewSimpleColumn(tableName, "_TABLE_SUFFIX", types.StringType()))
+	}
+
 	table := types.NewSimpleTable(tableName, columns)
 	c.catalog.AddTable(table)
 	c.tableMetaMap[tableName] = metadata
@@ -153,6 +157,14 @@ func literalBigqueryTypeToZetaSQLType(typ bq.FieldType, schema bq.Schema) (types
 	default:
 		return nil, fmt.Errorf("unsupported type: %v", typ)
 	}
+}
+
+func isWildCardTable(path []string) bool {
+	if len(path) == 0 {
+		return false
+	}
+
+	return strings.HasSuffix(path[len(path)-1], "*")
 }
 
 func (c *Catalog) FindModel(path []string) (types.Model, error) { return c.catalog.FindModel(path) }
