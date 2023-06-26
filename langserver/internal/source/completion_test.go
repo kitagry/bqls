@@ -21,17 +21,15 @@ import (
 func TestProject_CompleteColumn(t *testing.T) {
 	tests := map[string]struct {
 		files              map[string]string
-		supportSunippet    bool
 		bqTableMetadataMap map[string]*bq.TableMetadata
 
-		expectCompletionItems []lsp.CompletionItem
+		expectCompletionItems []source.CompletionItem
 		expectErr             error
 	}{
 		"Select columns with supportSunippet is false": {
 			files: map[string]string{
 				"file1.sql": "SELECT id, | FROM `project.dataset.table`",
 			},
-			supportSunippet: false,
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
 				"project.dataset.table": {
 					Schema: bq.Schema{
@@ -47,18 +45,16 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []lsp.CompletionItem{
+			expectCompletionItems: []source.CompletionItem{
 				{
-					InsertTextFormat: lsp.ITFPlainText,
-					Kind:             lsp.CIKField,
-					Label:            "id",
-					Detail:           "INTEGER\nid description",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INTEGER\nid description",
 				},
 				{
-					InsertTextFormat: lsp.ITFPlainText,
-					Kind:             lsp.CIKField,
-					Label:            "name",
-					Detail:           "STRING",
+					Kind:    lsp.CIKField,
+					NewText: "name",
+					Detail:  "STRING",
 				},
 			},
 		},
@@ -66,7 +62,6 @@ func TestProject_CompleteColumn(t *testing.T) {
 			files: map[string]string{
 				"file1.sql": "SELECT id, | FROM `project.dataset.table`",
 			},
-			supportSunippet: true,
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
 				"project.dataset.table": {
 					Schema: bq.Schema{
@@ -82,32 +77,16 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []lsp.CompletionItem{
+			expectCompletionItems: []source.CompletionItem{
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKField,
-					Label:            "id",
-					Detail:           "INTEGER\nid description",
-					TextEdit: &lsp.TextEdit{
-						NewText: "id",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 0, Character: 11},
-							End:   lsp.Position{Line: 0, Character: 11},
-						},
-					},
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INTEGER\nid description",
 				},
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKField,
-					Label:            "name",
-					Detail:           "STRING",
-					TextEdit: &lsp.TextEdit{
-						NewText: "name",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 0, Character: 11},
-							End:   lsp.Position{Line: 0, Character: 11},
-						},
-					},
+					Kind:    lsp.CIKField,
+					NewText: "name",
+					Detail:  "STRING",
 				},
 			},
 		},
@@ -115,7 +94,6 @@ func TestProject_CompleteColumn(t *testing.T) {
 			files: map[string]string{
 				"file1.sql": "SELECT | FROM `project.dataset.table`",
 			},
-			supportSunippet: true,
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
 				"project.dataset.table": {
 					Schema: bq.Schema{
@@ -127,28 +105,19 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []lsp.CompletionItem{
+			expectCompletionItems: []source.CompletionItem{
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKField,
-					Label:            "id",
-					Detail:           "INTEGER\nid description",
-					TextEdit: &lsp.TextEdit{
-						NewText: "id",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 0, Character: 7},
-							End:   lsp.Position{Line: 0, Character: 7},
-						},
-					},
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INTEGER\nid description",
 				},
 			},
 		},
 		"Consider selectable table": {
 			files: map[string]string{
 				"file1.sql": "SELECT * FROM `project.dataset.table`;\n" +
-					"SELECT *| FROM `project.dataset.table2`;",
+					"SELECT | FROM `project.dataset.table2`;",
 			},
-			supportSunippet: true,
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
 				"project.dataset.table": {
 					Schema: bq.Schema{
@@ -168,19 +137,11 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []lsp.CompletionItem{
+			expectCompletionItems: []source.CompletionItem{
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKField,
-					Label:            "name",
-					Detail:           "STRING",
-					TextEdit: &lsp.TextEdit{
-						NewText: "name",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 1, Character: 8},
-							End:   lsp.Position{Line: 1, Character: 8},
-						},
-					},
+					Kind:    lsp.CIKField,
+					NewText: "name",
+					Detail:  "STRING",
 				},
 			},
 		},
@@ -189,7 +150,6 @@ func TestProject_CompleteColumn(t *testing.T) {
 				"file1.sql": "WITH data AS (SELECT id FROM `project.dataset.table`)\n" +
 					"SELECT | FROM data;",
 			},
-			supportSunippet: true,
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
 				"project.dataset.table": {
 					Schema: bq.Schema{
@@ -201,31 +161,15 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []lsp.CompletionItem{
+			expectCompletionItems: []source.CompletionItem{
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKField,
-					Label:            "id",
-					Detail:           "INT64",
-					TextEdit: &lsp.TextEdit{
-						NewText: "id",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 1, Character: 7},
-							End:   lsp.Position{Line: 1, Character: 7},
-						},
-					},
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
 				},
 				{ // TODO: Refactoring test
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKField,
-					Label:            "data",
-					TextEdit: &lsp.TextEdit{
-						NewText: "data",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 1, Character: 7},
-							End:   lsp.Position{Line: 1, Character: 7},
-						},
-					},
+					Kind:    lsp.CIKField,
+					NewText: "data",
 				},
 			},
 		},
@@ -233,7 +177,6 @@ func TestProject_CompleteColumn(t *testing.T) {
 			files: map[string]string{
 				"file1.sql": "SELECT i| FROM `project.dataset.table`",
 			},
-			supportSunippet: true,
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
 				"project.dataset.table": {
 					Schema: bq.Schema{
@@ -245,19 +188,12 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []lsp.CompletionItem{
+			expectCompletionItems: []source.CompletionItem{
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKField,
-					Label:            "id",
-					Detail:           "INTEGER\nid description",
-					TextEdit: &lsp.TextEdit{
-						NewText: "id",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 0, Character: 7},
-							End:   lsp.Position{Line: 0, Character: 8},
-						},
-					},
+					Kind:        lsp.CIKField,
+					NewText:     "id",
+					Detail:      "INTEGER\nid description",
+					TypedPrefix: "i",
 				},
 			},
 		},
@@ -265,7 +201,6 @@ func TestProject_CompleteColumn(t *testing.T) {
 			files: map[string]string{
 				"file1.sql": "SELECT id, i| id FROM `project.dataset.table`",
 			},
-			supportSunippet: true,
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
 				"project.dataset.table": {
 					Schema: bq.Schema{
@@ -277,19 +212,12 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []lsp.CompletionItem{
+			expectCompletionItems: []source.CompletionItem{
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKField,
-					Label:            "id",
-					Detail:           "INTEGER\nid description",
-					TextEdit: &lsp.TextEdit{
-						NewText: "id",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 0, Character: 11},
-							End:   lsp.Position{Line: 0, Character: 12},
-						},
-					},
+					Kind:        lsp.CIKField,
+					NewText:     "id",
+					Detail:      "INTEGER\nid description",
+					TypedPrefix: "i",
 				},
 			},
 		},
@@ -297,7 +225,6 @@ func TestProject_CompleteColumn(t *testing.T) {
 			files: map[string]string{
 				"file1.sql": "SELECT record.| FROM `project.dataset.table`",
 			},
-			supportSunippet: true,
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
 				"project.dataset.table": {
 					Schema: bq.Schema{
@@ -315,19 +242,11 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []lsp.CompletionItem{
+			expectCompletionItems: []source.CompletionItem{
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKField,
-					Label:            "id",
-					Detail:           "INTEGER\nid description",
-					TextEdit: &lsp.TextEdit{
-						NewText: "id",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 0, Character: 14},
-							End:   lsp.Position{Line: 0, Character: 14},
-						},
-					},
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INTEGER\nid description",
 				},
 			},
 		},
@@ -335,7 +254,6 @@ func TestProject_CompleteColumn(t *testing.T) {
 			files: map[string]string{
 				"file1.sql": "SELECT record.i| FROM `project.dataset.table`",
 			},
-			supportSunippet: true,
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
 				"project.dataset.table": {
 					Schema: bq.Schema{
@@ -353,19 +271,12 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []lsp.CompletionItem{
+			expectCompletionItems: []source.CompletionItem{
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKField,
-					Label:            "id",
-					Detail:           "INTEGER\nid description",
-					TextEdit: &lsp.TextEdit{
-						NewText: "id",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 0, Character: 14},
-							End:   lsp.Position{Line: 0, Character: 15},
-						},
-					},
+					Kind:        lsp.CIKField,
+					NewText:     "id",
+					Detail:      "INTEGER\nid description",
+					TypedPrefix: "i",
 				},
 			},
 		},
@@ -373,7 +284,6 @@ func TestProject_CompleteColumn(t *testing.T) {
 			files: map[string]string{
 				"file1.sql": "SELECT record.id, record.| FROM `project.dataset.table`",
 			},
-			supportSunippet: true,
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
 				"project.dataset.table": {
 					Schema: bq.Schema{
@@ -391,19 +301,11 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []lsp.CompletionItem{
+			expectCompletionItems: []source.CompletionItem{
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKField,
-					Label:            "id",
-					Detail:           "INTEGER\nid description",
-					TextEdit: &lsp.TextEdit{
-						NewText: "id",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 0, Character: 25},
-							End:   lsp.Position{Line: 0, Character: 25},
-						},
-					},
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INTEGER\nid description",
 				},
 			},
 		},
@@ -411,7 +313,6 @@ func TestProject_CompleteColumn(t *testing.T) {
 			files: map[string]string{
 				"file1.sql": "WITH data AS (SELECT * FROM `project.dataset.table`)\n" + "SELECT record.| FROM data",
 			},
-			supportSunippet: true,
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
 				"project.dataset.table": {
 					Schema: bq.Schema{
@@ -429,19 +330,11 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []lsp.CompletionItem{
+			expectCompletionItems: []source.CompletionItem{
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKField,
-					Label:            "id",
-					Detail:           "INT64",
-					TextEdit: &lsp.TextEdit{
-						NewText: "id",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 1, Character: 14},
-							End:   lsp.Position{Line: 1, Character: 14},
-						},
-					},
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
 				},
 			},
 		},
@@ -449,7 +342,6 @@ func TestProject_CompleteColumn(t *testing.T) {
 			files: map[string]string{
 				"file1.sql": "SELECT t.| FROM `project.dataset.table` AS t",
 			},
-			supportSunippet: true,
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
 				"project.dataset.table": {
 					Schema: bq.Schema{
@@ -461,19 +353,11 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []lsp.CompletionItem{
+			expectCompletionItems: []source.CompletionItem{
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKField,
-					Label:            "id",
-					Detail:           "INTEGER\nid description",
-					TextEdit: &lsp.TextEdit{
-						NewText: "id",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 0, Character: 9},
-							End:   lsp.Position{Line: 0, Character: 9},
-						},
-					},
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INTEGER\nid description",
 				},
 			},
 		},
@@ -481,7 +365,6 @@ func TestProject_CompleteColumn(t *testing.T) {
 			files: map[string]string{
 				"file1.sql": "WITH data AS (SELECT * FROM `project.dataset.table`)\nSELECT data.| FROM data",
 			},
-			supportSunippet: true,
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
 				"project.dataset.table": {
 					Schema: bq.Schema{
@@ -493,19 +376,11 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []lsp.CompletionItem{
+			expectCompletionItems: []source.CompletionItem{
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKField,
-					Label:            "id",
-					Detail:           "INT64",
-					TextEdit: &lsp.TextEdit{
-						NewText: "id",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 1, Character: 12},
-							End:   lsp.Position{Line: 1, Character: 12},
-						},
-					},
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
 				},
 			},
 		},
@@ -513,7 +388,6 @@ func TestProject_CompleteColumn(t *testing.T) {
 			files: map[string]string{
 				"file1.sql": "SELECT t| FROM `project.dataset.table` AS table",
 			},
-			supportSunippet: true,
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
 				"project.dataset.table": {
 					Schema: bq.Schema{
@@ -524,19 +398,12 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []lsp.CompletionItem{
+			expectCompletionItems: []source.CompletionItem{
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKField,
-					Label:            "table",
-					Detail:           "project.dataset.table",
-					TextEdit: &lsp.TextEdit{
-						NewText: "table",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 0, Character: 7},
-							End:   lsp.Position{Line: 0, Character: 8},
-						},
-					},
+					Kind:        lsp.CIKField,
+					NewText:     "table",
+					Detail:      "project.dataset.table",
+					TypedPrefix: "t",
 				},
 			},
 		},
@@ -544,7 +411,6 @@ func TestProject_CompleteColumn(t *testing.T) {
 			files: map[string]string{
 				"file1.sql": "WITH data AS (SELECT * FROM `project.dataset.table`)\nSELECT d| FROM data",
 			},
-			supportSunippet: true,
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
 				"project.dataset.table": {
 					Schema: bq.Schema{
@@ -555,18 +421,11 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []lsp.CompletionItem{
+			expectCompletionItems: []source.CompletionItem{
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKField,
-					Label:            "data",
-					TextEdit: &lsp.TextEdit{
-						NewText: "data",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 1, Character: 7},
-							End:   lsp.Position{Line: 1, Character: 8},
-						},
-					},
+					Kind:        lsp.CIKField,
+					NewText:     "data",
+					TypedPrefix: "d",
 				},
 			},
 		},
@@ -594,7 +453,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 				p.UpdateFile(uri, content, 1)
 			}
 
-			got, err := p.Complete(context.Background(), path, position, tt.supportSunippet)
+			got, err := p.Complete(context.Background(), path, position)
 			if !errors.Is(err, tt.expectErr) {
 				t.Fatalf("got error %v, but want %v", err, tt.expectErr)
 			}
@@ -609,17 +468,15 @@ func TestProject_CompleteColumn(t *testing.T) {
 func TestProject_CompleteFromClause(t *testing.T) {
 	tests := map[string]struct {
 		files                  map[string]string
-		supportSnippet         bool
 		bigqueryClientMockFunc func(t *testing.T) bigquery.Client
 
-		expectCompletionItems []lsp.CompletionItem
+		expectCompletionItems []source.CompletionItem
 		expectErr             error
 	}{
 		"list table": {
 			files: map[string]string{
 				"file1.sql": "SELECT * FROM `project.dataset.|`",
 			},
-			supportSnippet: true,
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
 				ctrl := gomock.NewController(t)
 				bqClient := mock_bigquery.NewMockClient(ctrl)
@@ -639,32 +496,16 @@ func TestProject_CompleteFromClause(t *testing.T) {
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
 				return bqClient
 			},
-			expectCompletionItems: []lsp.CompletionItem{
+			expectCompletionItems: []source.CompletionItem{
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKFile,
-					Label:            "1table",
-					Detail:           "project.dataset.1table",
-					TextEdit: &lsp.TextEdit{
-						NewText: "1table",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 0, Character: 31},
-							End:   lsp.Position{Line: 0, Character: 31},
-						},
-					},
+					Kind:    lsp.CIKModule,
+					NewText: "1table",
+					Detail:  "project.dataset.1table",
 				},
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKFile,
-					Label:            "2table",
-					Detail:           "project.dataset.2table",
-					TextEdit: &lsp.TextEdit{
-						NewText: "2table",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 0, Character: 31},
-							End:   lsp.Position{Line: 0, Character: 31},
-						},
-					},
+					Kind:    lsp.CIKModule,
+					NewText: "2table",
+					Detail:  "project.dataset.2table",
 				},
 			},
 		},
@@ -672,7 +513,6 @@ func TestProject_CompleteFromClause(t *testing.T) {
 			files: map[string]string{
 				"file1.sql": "SELECT * FROM `project.dataset.|`",
 			},
-			supportSnippet: true,
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
 				ctrl := gomock.NewController(t)
 				bqClient := mock_bigquery.NewMockClient(ctrl)
@@ -693,19 +533,11 @@ func TestProject_CompleteFromClause(t *testing.T) {
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
 				return bqClient
 			},
-			expectCompletionItems: []lsp.CompletionItem{
+			expectCompletionItems: []source.CompletionItem{
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKFile,
-					Label:            "table20230622",
-					Detail:           "project.dataset.table20230622",
-					TextEdit: &lsp.TextEdit{
-						NewText: "table20230622",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 0, Character: 31},
-							End:   lsp.Position{Line: 0, Character: 31},
-						},
-					},
+					Kind:    lsp.CIKModule,
+					NewText: "table20230622",
+					Detail:  "project.dataset.table20230622",
 				},
 			},
 		},
@@ -713,7 +545,6 @@ func TestProject_CompleteFromClause(t *testing.T) {
 			files: map[string]string{
 				"file1.sql": "SELECT * FROM `project.|`",
 			},
-			supportSnippet: true,
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
 				ctrl := gomock.NewController(t)
 				bqClient := mock_bigquery.NewMockClient(ctrl)
@@ -732,32 +563,16 @@ func TestProject_CompleteFromClause(t *testing.T) {
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
 				return bqClient
 			},
-			expectCompletionItems: []lsp.CompletionItem{
+			expectCompletionItems: []source.CompletionItem{
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKFile,
-					Label:            "dataset1",
-					Detail:           "project.dataset1",
-					TextEdit: &lsp.TextEdit{
-						NewText: "dataset1",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 0, Character: 23},
-							End:   lsp.Position{Line: 0, Character: 23},
-						},
-					},
+					Kind:    lsp.CIKModule,
+					NewText: "dataset1",
+					Detail:  "project.dataset1",
 				},
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKFile,
-					Label:            "dataset2",
-					Detail:           "project.dataset2",
-					TextEdit: &lsp.TextEdit{
-						NewText: "dataset2",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 0, Character: 23},
-							End:   lsp.Position{Line: 0, Character: 23},
-						},
-					},
+					Kind:    lsp.CIKModule,
+					NewText: "dataset2",
+					Detail:  "project.dataset2",
 				},
 			},
 		},
@@ -765,7 +580,6 @@ func TestProject_CompleteFromClause(t *testing.T) {
 			files: map[string]string{
 				"file1.sql": "SELECT * FROM `p|`",
 			},
-			supportSnippet: true,
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
 				ctrl := gomock.NewController(t)
 				bqClient := mock_bigquery.NewMockClient(ctrl)
@@ -783,32 +597,18 @@ func TestProject_CompleteFromClause(t *testing.T) {
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
 				return bqClient
 			},
-			expectCompletionItems: []lsp.CompletionItem{
+			expectCompletionItems: []source.CompletionItem{
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKFile,
-					Label:            "project1",
-					Detail:           "project name",
-					TextEdit: &lsp.TextEdit{
-						NewText: "project1",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 0, Character: 15},
-							End:   lsp.Position{Line: 0, Character: 16},
-						},
-					},
+					Kind:        lsp.CIKModule,
+					NewText:     "project1",
+					Detail:      "project name",
+					TypedPrefix: "p",
 				},
 				{
-					InsertTextFormat: lsp.ITFSnippet,
-					Kind:             lsp.CIKFile,
-					Label:            "project2",
-					Detail:           "project name",
-					TextEdit: &lsp.TextEdit{
-						NewText: "project2",
-						Range: lsp.Range{
-							Start: lsp.Position{Line: 0, Character: 15},
-							End:   lsp.Position{Line: 0, Character: 16},
-						},
-					},
+					Kind:        lsp.CIKModule,
+					NewText:     "project2",
+					Detail:      "project name",
+					TypedPrefix: "p",
 				},
 			},
 		},
@@ -828,7 +628,7 @@ func TestProject_CompleteFromClause(t *testing.T) {
 				p.UpdateFile(uri, content, 1)
 			}
 
-			got, err := p.Complete(context.Background(), path, position, tt.supportSnippet)
+			got, err := p.Complete(context.Background(), path, position)
 			if !errors.Is(err, tt.expectErr) {
 				t.Fatalf("got error %v, but want %v", err, tt.expectErr)
 			}
