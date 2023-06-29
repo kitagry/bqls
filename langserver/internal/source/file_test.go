@@ -45,6 +45,29 @@ func TestProject_ParseFile(t *testing.T) {
 				},
 			},
 		},
+		"parse Unexpected end of script error file": {
+			file: "SELECT * FROM `project.dataset.table` WHERE ",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []source.Error{
+				{
+					Msg: "INVALID_ARGUMENT: Syntax error: Unexpected end of script",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 43,
+					},
+					TermLength: 0,
+				},
+			},
+		},
 		"parse unrecognized file": {
 			file: "SELECT unexist_column FROM `project.dataset.table`",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{

@@ -128,6 +128,9 @@ func (p *Project) ParseFile(uri string, src string) ParsedFile {
 			if strings.Contains(pErr.Msg, "SELECT list must not be empty") {
 				fixedSrc, pErr, fixed = fixSelectListMustNotBeEmptyStatement(fixedSrc, pErr)
 			}
+			if strings.Contains(pErr.Msg, "Unexpected end of script") {
+				fixedSrc, pErr, fixed = fixUnexpectedEndOfScript(fixedSrc, pErr)
+			}
 			errs = append(errs, pErr)
 			if fixed {
 				// retry
@@ -257,6 +260,17 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixed bool) {
 func fixSelectListMustNotBeEmptyStatement(src string, parsedErr Error) (fixedSrc string, err Error, fixed bool) {
 	errOffset := positionToByteOffset(src, parsedErr.Position)
 	return src[:errOffset] + "1 " + src[errOffset:], parsedErr, true
+}
+
+func fixUnexpectedEndOfScript(src string, parsedErr Error) (fixedSrc string, err Error, fixed bool) {
+	errOffset := positionToByteOffset(src, parsedErr.Position)
+	lastSpace := strings.LastIndex(src[:errOffset], " ")
+	if lastSpace == -1 {
+		return src, parsedErr, false
+	}
+
+	fixedSrc = src[:lastSpace]
+	return fixedSrc, parsedErr, true
 }
 
 // fix Unrecognized name: <name> error.
