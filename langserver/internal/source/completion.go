@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/goccy/go-zetasql"
 	"github.com/goccy/go-zetasql/ast"
 	rast "github.com/goccy/go-zetasql/resolved_ast"
 	"github.com/goccy/go-zetasql/types"
@@ -67,28 +68,23 @@ func (p *Project) Complete(ctx context.Context, uri string, position lsp.Positio
 	}
 	incompleteColumnName := parsedFile.FindIncompleteColumnName(position)
 
-	node, ok := searchResolvedAstNode[*rast.ProjectScanNode](output, termOffset)
-	if !ok {
-		// In some case, *rast.ProjectScanNode.ParseLocationRange() returns nil.
-		// So, if we cannot find *rast.ProjectScanNode, we search *rast.ProjectScanNode which ParseLocationRange returns nil.
-		rast.Walk(output.Statement(), func(n rast.Node) error {
-			sNode, ok := n.(*rast.ProjectScanNode)
-			if !ok {
-				return nil
-			}
-			lRange := sNode.ParseLocationRange()
-			if lRange == nil {
-				node = sNode
-			}
-			return nil
-		})
-		if node == nil {
-			p.logger.Debug("not found project scan node")
-			return nil, nil
-		}
+	node, ok := findScanNode(output, termOffset)
+	if node == nil {
+		p.logger.Debug("not found project scan node")
+		return nil, nil
 	}
 
-	columns := node.InputScan().ColumnList()
+	if pScanNode, ok := node.(*rast.ProjectScanNode); ok {
+		node = pScanNode.InputScan()
+	}
+	if oScanNode, ok := node.(*rast.OrderByScanNode); ok {
+		node = oScanNode.InputScan()
+	}
+	if aScanNode, ok := node.(*rast.AggregateScanNode); ok {
+		node = aScanNode.InputScan()
+	}
+
+	columns := node.ColumnList()
 	for _, column := range columns {
 		if !strings.HasPrefix(column.Name(), incompleteColumnName) {
 			continue
@@ -112,9 +108,49 @@ func (p *Project) Complete(ctx context.Context, uri string, position lsp.Positio
 	}
 
 	// for table alias completion
-	result = append(result, p.completeScanField(ctx, node.InputScan(), incompleteColumnName)...)
+	result = append(result, p.completeScanField(ctx, node, incompleteColumnName)...)
 
 	return result, nil
+}
+
+func findScanNode(output *zetasql.AnalyzerOutput, termOffset int) (node rast.ScanNode, ok bool) {
+	node, ok = searchResolvedAstNode[*rast.ProjectScanNode](output, termOffset)
+	if ok {
+		return node, true
+	}
+
+	node, ok = searchResolvedAstNode[*rast.OrderByScanNode](output, termOffset)
+	if ok {
+		return node, true
+	}
+
+	// In some case, *rast.ProjectScanNode.ParseLocationRange() returns nil.
+	// So, if we cannot find *rast.ProjectScanNode, we search *rast.ProjectScanNode which ParseLocationRange returns nil.
+	rast.Walk(output.Statement(), func(n rast.Node) error {
+		if !n.IsScan() {
+			return nil
+		}
+
+		sNode := n.(rast.ScanNode)
+
+		lRange := n.ParseLocationRange()
+		if lRange == nil {
+			node = sNode
+			return nil
+		}
+		// if the cursor is on the end of the node, the cursor is out of the node
+		// So, we need to permit the some offset.
+		if lRange.End().ByteOffset() < termOffset+5 {
+			node = sNode
+			return nil
+		}
+		return nil
+	})
+
+	if node == nil {
+		return nil, false
+	}
+	return node, true
 }
 
 type tablePathParams struct {

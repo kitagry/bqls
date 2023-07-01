@@ -70,7 +70,7 @@ func TestProject_ParseFile(t *testing.T) {
 				},
 			},
 		},
-		"parse Unexpected end of script error file": {
+		"parse Unexpected end of script error with WHERE file": {
 			file: "SELECT * FROM `project.dataset.table` WHERE ",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
 				"project.dataset.table": {
@@ -88,6 +88,29 @@ func TestProject_ParseFile(t *testing.T) {
 					Position: lsp.Position{
 						Line:      0,
 						Character: 43,
+					},
+					TermLength: 0,
+				},
+			},
+		},
+		"parse Unexpected end of script error with GROUP BY file": {
+			file: "SELECT * FROM `project.dataset.table` GROUP BY",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []source.Error{
+				{
+					Msg: "INVALID_ARGUMENT: Syntax error: Unexpected end of script",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 46,
 					},
 					TermLength: 0,
 				},
@@ -159,6 +182,30 @@ func TestProject_ParseFile(t *testing.T) {
 					Position: lsp.Position{
 						Line:      0,
 						Character: 45,
+					},
+					TermLength:           14,
+					IncompleteColumnName: "unexist_column",
+				},
+			},
+		},
+		"parse unrecognized name in GROUP BY clause": {
+			file: "SELECT * FROM `project.dataset.table` GROUP BY unexist_column",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []source.Error{
+				{
+					Msg: "INVALID_ARGUMENT: Unrecognized name: unexist_column",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 47,
 					},
 					TermLength:           14,
 					IncompleteColumnName: "unexist_column",

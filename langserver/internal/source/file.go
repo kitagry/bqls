@@ -111,12 +111,13 @@ func (p *ParsedFile) FindTargetAnalyzeOutput(termOffset int) (*zetasql.AnalyzerO
 }
 
 func (p *ParsedFile) FindIncompleteColumnName(pos lsp.Position) string {
+	targetTerm := positionToByteOffset(p.Src, pos)
+	targetTerm = p.fixTermOffsetForNode(targetTerm)
+
 	for _, err := range p.Errors {
-		line := pos.Line
-		character := pos.Character - len(err.IncompleteColumnName)
-		startIn := err.Position.Line > line || (err.Position.Line == line && err.Position.Character >= character)
-		endIn := err.Position.Line < line || (err.Position.Line == line && err.Position.Character >= character)
-		if startIn && endIn {
+		startOffset := positionToByteOffset(p.Src, err.Position)
+		startOffset = p.fixTermOffsetForNode(startOffset)
+		if startOffset <= targetTerm && targetTerm <= startOffset+err.TermLength {
 			return err.IncompleteColumnName
 		}
 	}
@@ -174,10 +175,16 @@ func (p *Project) ParseFile(uri string, src string) ParsedFile {
 				errTermOffset := positionToByteOffset(fixedSrc, pErr.Position)
 				pErr = addInformationToUnrecognizedNameError(fixedSrc, pErr)
 				if _, ok := searchAstNode[*ast.SelectListNode](node, errTermOffset); ok {
-					fixedSrc, fo = fixUnrecognizedNameForSelectStatement(fixedSrc, pErr)
+					fixedSrc, fo = fixUnrecognizedNameToLiteral(fixedSrc, pErr)
 				}
 				if _, ok := searchAstNode[*ast.WhereClauseNode](node, errTermOffset); ok {
 					fixedSrc, fo = fixUnrecognizedNameForWhereStatement(fixedSrc, s, pErr)
+				}
+				if _, ok := searchAstNode[*ast.GroupByNode](node, errTermOffset); ok {
+					fixedSrc, fo = fixUnrecognizedNameToLiteral(fixedSrc, pErr)
+				}
+				if _, ok := searchAstNode[*ast.OrderByNode](node, errTermOffset); ok {
+					fixedSrc, fo = fixUnrecognizedNameToLiteral(fixedSrc, pErr)
 				}
 			case strings.Contains(pErr.Msg, "does not exist in STRUCT"):
 				fixedSrc, pErr, fo = fixFieldDoesNotExistInStructStatement(fixedSrc, pErr)
@@ -301,17 +308,33 @@ func fixSelectListMustNotBeEmptyStatement(src string, parsedErr Error) (fixedSrc
 //
 //	SELECT * FROM table
 func fixUnexpectedEndOfScript(src string, parsedErr Error) (fixedSrc string, err Error, fixOffsets []FixOffset) {
+	targetUnexpectedEndKeyword := []string{"WHERE", "GROUP BY", "ORDER BY"}
 	errOffset := positionToByteOffset(src, parsedErr.Position)
-	lastSpace := strings.LastIndex(src[:errOffset], " ")
-	if lastSpace == -1 {
+
+	oneLineSrc := strings.Join(strings.Fields(src), " ")
+	targetIndex := -1
+	for i, keyword := range targetUnexpectedEndKeyword {
+		if strings.HasSuffix(oneLineSrc, keyword) {
+			targetIndex = i
+			break
+		}
+	}
+
+	if targetIndex == -1 {
 		return src, parsedErr, nil
 	}
 
-	fixedSrc = src[:lastSpace]
+	targetKeyword := targetUnexpectedEndKeyword[targetIndex]
+	targetOffset := strings.LastIndex(src[:errOffset], strings.Split(targetKeyword, " ")[0])
+	if targetOffset == -1 {
+		return src, parsedErr, nil
+	}
+
+	fixedSrc = strings.TrimSpace(src[:targetOffset])
 	return fixedSrc, parsedErr, []FixOffset{
 		{
 			Offset: errOffset,
-			Length: -(errOffset - lastSpace + 2),
+			Length: -(errOffset - len(fixedSrc)),
 		},
 	}
 }
@@ -337,23 +360,19 @@ func addInformationToUnrecognizedNameError(src string, parsedErr Error) Error {
 //
 // becomes
 //
-//	SELECT "111111111111" FROM table
-func fixUnrecognizedNameForSelectStatement(src string, parsedErr Error) (fixedSrc string, fixOffsets []FixOffset) {
+//	SELECT 1 FROM table
+func fixUnrecognizedNameToLiteral(src string, parsedErr Error) (fixedSrc string, fixOffsets []FixOffset) {
 	errOffset := positionToByteOffset(src, parsedErr.Position)
 	if errOffset == 0 || errOffset == len(src) {
 		return src, nil
 	}
 
 	unrecognizedName := parsedErr.IncompleteColumnName
-	if len(unrecognizedName) < 2 {
-		fixedSrc = src[:errOffset] + strings.Repeat("1", len(unrecognizedName)) + src[errOffset+len(unrecognizedName):]
-	} else {
-		fixedSrc = src[:errOffset] + `"` + strings.Repeat("1", len(unrecognizedName)-2) + `"` + src[errOffset+len(unrecognizedName):]
-	}
+	fixedSrc = src[:errOffset] + "1" + src[errOffset+len(unrecognizedName):]
 
 	fixOffsets = append(fixOffsets, FixOffset{
 		Offset: errOffset,
-		Length: 0,
+		Length: -len(unrecognizedName) + len("1"),
 	})
 	return fixedSrc, fixOffsets
 }

@@ -421,6 +421,77 @@ func TestProject_CompleteColumn(t *testing.T) {
 				},
 			},
 		},
+		"Complete column in group by clause": {
+			files: map[string]string{
+				"file1.sql": "SELECT * FROM `project.dataset.table` GROUP BY |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Description: "id description",
+							Type:        bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []source.CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INTEGER\nid description",
+				},
+			},
+		},
+		"Complete incomplete column in group by clause": {
+			files: map[string]string{
+				"file1.sql": "SELECT * FROM `project.dataset.table` GROUP BY i|",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Description: "id description",
+							Type:        bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []source.CompletionItem{
+				{
+					Kind:        lsp.CIKField,
+					NewText:     "id",
+					Detail:      "INTEGER\nid description",
+					TypedPrefix: "i",
+				},
+			},
+		},
+		"Complete incomplete column in order by clause": {
+			files: map[string]string{
+				"file1.sql": "SELECT * FROM `project.dataset.table` ORDER BY i|",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Description: "id description",
+							Type:        bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []source.CompletionItem{
+				{
+					Kind:        lsp.CIKField,
+					NewText:     "id",
+					Detail:      "INTEGER\nid description",
+					TypedPrefix: "i",
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {
