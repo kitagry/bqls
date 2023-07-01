@@ -344,6 +344,54 @@ func TestProject_ParseFile(t *testing.T) {
 				},
 			},
 		},
+		"parse not found inside table error file in where clause": {
+			file: "SELECT * FROM `project.dataset.table` t\nWHERE t.unexist_column",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []source.Error{
+				{
+					Msg: "INVALID_ARGUMENT: Name unexist_column not found inside t",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 8,
+					},
+					TermLength:           14,
+					IncompleteColumnName: "t.unexist_column",
+				},
+			},
+		},
+		"parse not found inside table error file in where clause2": {
+			file: "SELECT * FROM `project.dataset.table` t\nWHERE t.unexist_column",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []source.Error{
+				{
+					Msg: "INVALID_ARGUMENT: Name unexist_column not found inside t",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 8,
+					},
+					TermLength:           14,
+					IncompleteColumnName: "t.unexist_column",
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {

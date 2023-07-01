@@ -165,6 +165,12 @@ func (p *Project) completeScanField(ctx context.Context, node rast.ScanNode, inc
 		return p.completeTableScanField(ctx, n, incompleteColumnName)
 	case *rast.WithRefScanNode:
 		return p.completeWithScanField(ctx, n, incompleteColumnName)
+	case *rast.JoinScanNode:
+		leftResult := p.completeScanField(ctx, n.LeftScan(), incompleteColumnName)
+		rightResult := p.completeScanField(ctx, n.RightScan(), incompleteColumnName)
+		return append(leftResult, rightResult...)
+	case *rast.FilterScanNode:
+		return p.completeScanField(ctx, n.InputScan(), incompleteColumnName)
 	}
 	return nil
 }
