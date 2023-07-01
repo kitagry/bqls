@@ -52,18 +52,20 @@ func (p *Project) Complete(ctx context.Context, uri string, position lsp.Positio
 	termOffset := positionToByteOffset(sql.RawText, position)
 
 	parsedFile := p.ParseFile(uri, sql.RawText)
+	termOffset = parsedFile.fixTermOffsetForNode(termOffset)
 
 	// cursor is on table name
-	if node, ok := searchAstNode[*ast.TablePathExpressionNode](parsedFile.Node, termOffset); ok {
-		return p.completeTablePath(ctx, node)
+	tablePathNode, ok := searchAstNode[*ast.TablePathExpressionNode](parsedFile.Node, termOffset)
+	if ok && tablePathNode.ParseLocationRange().End().ByteOffset() != termOffset {
+		return p.completeTablePath(ctx, tablePathNode)
 	}
 
-	output, ok := parsedFile.findTargetAnalyzeOutput(termOffset)
+	output, ok := parsedFile.FindTargetAnalyzeOutput(termOffset)
 	if !ok {
 		p.logger.Debug("not found analyze output")
 		return nil, nil
 	}
-	incompleteColumnName := parsedFile.findIncompleteColumnName(position)
+	incompleteColumnName := parsedFile.FindIncompleteColumnName(position)
 
 	node, ok := searchResolvedAstNode[*rast.ProjectScanNode](output, termOffset)
 	if !ok {
@@ -81,6 +83,7 @@ func (p *Project) Complete(ctx context.Context, uri string, position lsp.Positio
 			return nil
 		})
 		if node == nil {
+			p.logger.Debug("not found project scan node")
 			return nil, nil
 		}
 	}

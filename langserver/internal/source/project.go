@@ -50,11 +50,12 @@ func NewProject(ctx context.Context, rootPath string, logger *logrus.Logger) (*P
 	}, nil
 }
 
-func NewProjectWithBQClient(rootPath string, bqClient bigquery.Client) *Project {
+func NewProjectWithBQClient(rootPath string, bqClient bigquery.Client, logger *logrus.Logger) *Project {
 	cache := cache.NewGlobalCache()
 	catalog := NewCatalog(bqClient)
 	return &Project{
 		rootPath: rootPath,
+		logger:   logger,
 		cache:    cache,
 		bqClient: bqClient,
 		catalog:  catalog,
