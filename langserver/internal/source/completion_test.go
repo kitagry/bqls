@@ -15,6 +15,7 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source"
 	"github.com/kitagry/bqls/langserver/internal/source/helper"
+	"github.com/sirupsen/logrus"
 	"google.golang.org/api/cloudresourcemanager/v1"
 )
 
@@ -397,6 +398,100 @@ func TestProject_CompleteColumn(t *testing.T) {
 				},
 			},
 		},
+		"Complete column in where clause": {
+			files: map[string]string{
+				"file1.sql": "SELECT * FROM `project.dataset.table` WHERE |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Description: "id description",
+							Type:        bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []source.CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INTEGER\nid description",
+				},
+			},
+		},
+		"Complete column in group by clause": {
+			files: map[string]string{
+				"file1.sql": "SELECT * FROM `project.dataset.table` GROUP BY |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Description: "id description",
+							Type:        bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []source.CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INTEGER\nid description",
+				},
+			},
+		},
+		"Complete incomplete column in group by clause": {
+			files: map[string]string{
+				"file1.sql": "SELECT * FROM `project.dataset.table` GROUP BY i|",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Description: "id description",
+							Type:        bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []source.CompletionItem{
+				{
+					Kind:        lsp.CIKField,
+					NewText:     "id",
+					Detail:      "INTEGER\nid description",
+					TypedPrefix: "i",
+				},
+			},
+		},
+		"Complete incomplete column in order by clause": {
+			files: map[string]string{
+				"file1.sql": "SELECT * FROM `project.dataset.table` ORDER BY i|",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Description: "id description",
+							Type:        bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []source.CompletionItem{
+				{
+					Kind:        lsp.CIKField,
+					NewText:     "id",
+					Detail:      "INTEGER\nid description",
+					TypedPrefix: "i",
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {
@@ -410,7 +505,10 @@ func TestProject_CompleteColumn(t *testing.T) {
 				}
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), tablePathSplitted[0], tablePathSplitted[1], tablePathSplitted[2]).Return(schema, nil).MinTimes(0)
 			}
-			p := source.NewProjectWithBQClient("/", bqClient)
+			bqClient.EXPECT().ListTables(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).MinTimes(0)
+			logger := logrus.New()
+			logger.SetLevel(logrus.DebugLevel)
+			p := source.NewProjectWithBQClient("/", bqClient, logger)
 
 			files, path, position, err := helper.GetLspPosition(tt.files)
 			if err != nil {
@@ -585,7 +683,7 @@ func TestProject_CompleteFromClause(t *testing.T) {
 	for n, tt := range tests {
 		t.Run(n, func(t *testing.T) {
 			bqClient := tt.bigqueryClientMockFunc(t)
-			p := source.NewProjectWithBQClient("/", bqClient)
+			p := source.NewProjectWithBQClient("/", bqClient, logrus.New())
 
 			files, path, position, err := helper.GetLspPosition(tt.files)
 			if err != nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/bigquery/mock_bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source"
+	"github.com/sirupsen/logrus"
 )
 
 func TestProject_ParseFile(t *testing.T) {
@@ -22,6 +23,30 @@ func TestProject_ParseFile(t *testing.T) {
 
 		expectedErrs []source.Error
 	}{
+		"parse dot file": {
+			file: "SELECT t. FROM `project.dataset.table` t",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []source.Error{
+				{
+					Msg: "INVALID_ARGUMENT: Unrecognized name: t.",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 7,
+					},
+					TermLength:           2,
+					IncompleteColumnName: "t.",
+				},
+			},
+		},
 		"parse SELECT list must not be empty error file": {
 			file: "SELECT FROM `project.dataset.table`",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -45,7 +70,53 @@ func TestProject_ParseFile(t *testing.T) {
 				},
 			},
 		},
-		"parse unrecognized file": {
+		"parse Unexpected end of script error with WHERE file": {
+			file: "SELECT * FROM `project.dataset.table` WHERE ",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []source.Error{
+				{
+					Msg: "INVALID_ARGUMENT: Syntax error: Unexpected end of script",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 43,
+					},
+					TermLength: 0,
+				},
+			},
+		},
+		"parse Unexpected end of script error with GROUP BY file": {
+			file: "SELECT * FROM `project.dataset.table` GROUP BY",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []source.Error{
+				{
+					Msg: "INVALID_ARGUMENT: Syntax error: Unexpected end of script",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 46,
+					},
+					TermLength: 0,
+				},
+			},
+		},
+		"parse unrecognized name in select clause": {
 			file: "SELECT unexist_column FROM `project.dataset.table`",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
 				"project.dataset.table": {
@@ -63,6 +134,78 @@ func TestProject_ParseFile(t *testing.T) {
 					Position: lsp.Position{
 						Line:      0,
 						Character: 7,
+					},
+					TermLength:           14,
+					IncompleteColumnName: "unexist_column",
+				},
+			},
+		},
+		"parse only unrecognized name in where clause": {
+			file: "SELECT id FROM `project.dataset.table` WHERE unexist_column",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []source.Error{
+				{
+					Msg: "INVALID_ARGUMENT: Unrecognized name: unexist_column",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 45,
+					},
+					TermLength:           14,
+					IncompleteColumnName: "unexist_column",
+				},
+			},
+		},
+		"parse unrecognized name with binary expression in where clause": {
+			file: "SELECT id FROM `project.dataset.table` WHERE unexist_column = 1",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []source.Error{
+				{
+					Msg: "INVALID_ARGUMENT: Unrecognized name: unexist_column",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 45,
+					},
+					TermLength:           14,
+					IncompleteColumnName: "unexist_column",
+				},
+			},
+		},
+		"parse unrecognized name in GROUP BY clause": {
+			file: "SELECT * FROM `project.dataset.table` GROUP BY unexist_column",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []source.Error{
+				{
+					Msg: "INVALID_ARGUMENT: Unrecognized name: unexist_column",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 47,
 					},
 					TermLength:           14,
 					IncompleteColumnName: "unexist_column",
@@ -201,30 +344,6 @@ func TestProject_ParseFile(t *testing.T) {
 				},
 			},
 		},
-		"parse dot file": {
-			file: "SELECT t. FROM `project.dataset.table` t",
-			bqTableMetadataMap: map[string]*bq.TableMetadata{
-				"project.dataset.table": {
-					Schema: bq.Schema{
-						{
-							Name: "id",
-							Type: bq.IntegerFieldType,
-						},
-					},
-				},
-			},
-			expectedErrs: []source.Error{
-				{
-					Msg: "INVALID_ARGUMENT: Unrecognized name: t.",
-					Position: lsp.Position{
-						Line:      0,
-						Character: 7,
-					},
-					TermLength:           2,
-					IncompleteColumnName: "t.",
-				},
-			},
-		},
 	}
 
 	for n, tt := range tests {
@@ -238,7 +357,7 @@ func TestProject_ParseFile(t *testing.T) {
 				}
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), tablePathSplitted[0], tablePathSplitted[1], tablePathSplitted[2]).Return(schema, nil).MinTimes(0)
 			}
-			p := source.NewProjectWithBQClient("/", bqClient)
+			p := source.NewProjectWithBQClient("/", bqClient, logrus.New())
 
 			got := p.ParseFile("uri", tt.file)
 			if diff := cmp.Diff(tt.expectedErrs, got.Errors, cmpopts.IgnoreUnexported()); diff != "" {
@@ -284,7 +403,7 @@ func TestProject_ParseFileWithIncompleteTable(t *testing.T) {
 	for n, tt := range tests {
 		t.Run(n, func(t *testing.T) {
 			bqClient := tt.bigqueryClientMockFunc(t)
-			p := source.NewProjectWithBQClient("/", bqClient)
+			p := source.NewProjectWithBQClient("/", bqClient, logrus.New())
 
 			got := p.ParseFile("uri", tt.file)
 			if diff := cmp.Diff(tt.expectedErrs, got.Errors, cmpopts.IgnoreUnexported()); diff != "" {

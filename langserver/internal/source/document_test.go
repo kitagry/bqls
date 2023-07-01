@@ -13,6 +13,7 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source"
 	"github.com/kitagry/bqls/langserver/internal/source/helper"
+	"github.com/sirupsen/logrus"
 )
 
 func TestProject_TermDocument(t *testing.T) {
@@ -347,7 +348,7 @@ json description`,
 			ctrl := gomock.NewController(t)
 			bqClient := mock_bigquery.NewMockClient(ctrl)
 			bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.bqTableMetadata, nil).MinTimes(0)
-			p := source.NewProjectWithBQClient("/", bqClient)
+			p := source.NewProjectWithBQClient("/", bqClient, logrus.New())
 
 			files, path, position, err := helper.GetLspPosition(tt.files)
 			if err != nil {

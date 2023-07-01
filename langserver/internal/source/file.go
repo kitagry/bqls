@@ -21,8 +21,18 @@ type ParsedFile struct {
 	// index is Node's statement order
 	RNode []*zetasql.AnalyzerOutput
 
-	Fixed  bool
-	Errors []Error
+	Fixed      bool
+	FixOffsets []FixOffset
+	Errors     []Error
+}
+
+func (p ParsedFile) fixTermOffsetForNode(termOffset int) int {
+	for _, fo := range p.FixOffsets {
+		if termOffset > fo.Offset+fo.Length {
+			termOffset += fo.Length
+		}
+	}
+	return termOffset
 }
 
 func (p ParsedFile) FindTargetStatementNode(termOffset int) (ast.StatementNode, bool) {
@@ -87,7 +97,7 @@ func (p ParsedFile) findTargetStatementNodeIndex(termOffset int) (int, bool) {
 	return -1, false
 }
 
-func (p *ParsedFile) findTargetAnalyzeOutput(termOffset int) (*zetasql.AnalyzerOutput, bool) {
+func (p *ParsedFile) FindTargetAnalyzeOutput(termOffset int) (*zetasql.AnalyzerOutput, bool) {
 	index, ok := p.findTargetStatementNodeIndex(termOffset)
 	if !ok {
 		return nil, false
@@ -100,13 +110,14 @@ func (p *ParsedFile) findTargetAnalyzeOutput(termOffset int) (*zetasql.AnalyzerO
 	return p.RNode[index], true
 }
 
-func (p *ParsedFile) findIncompleteColumnName(pos lsp.Position) string {
+func (p *ParsedFile) FindIncompleteColumnName(pos lsp.Position) string {
+	targetTerm := positionToByteOffset(p.Src, pos)
+	targetTerm = p.fixTermOffsetForNode(targetTerm)
+
 	for _, err := range p.Errors {
-		line := pos.Line
-		character := pos.Character - len(err.IncompleteColumnName)
-		startIn := err.Position.Line > line || (err.Position.Line == line && err.Position.Character >= character)
-		endIn := err.Position.Line < line || (err.Position.Line == line && err.Position.Character >= character)
-		if startIn && endIn {
+		startOffset := positionToByteOffset(p.Src, err.Position)
+		startOffset = p.fixTermOffsetForNode(startOffset)
+		if startOffset <= targetTerm && targetTerm <= startOffset+err.TermLength {
 			return err.IncompleteColumnName
 		}
 	}
@@ -118,19 +129,24 @@ func (p *Project) ParseFile(uri string, src string) ParsedFile {
 
 	var node ast.ScriptNode
 	rnode := make([]*zetasql.AnalyzerOutput, 0)
+	fixOffsets := make([]FixOffset, 0)
 	var analyzeErrFixed bool
 	for _retry := 0; _retry < 10; _retry++ {
 		var err error
-		var fixed bool
+		var fo []FixOffset
 		node, err = zetasql.ParseScript(fixedSrc, zetasql.NewParserOptions(), zetasql.ErrorMessageOneLine)
 		if err != nil {
 			pErr := parseZetaSQLError(err)
 			if strings.Contains(pErr.Msg, "SELECT list must not be empty") {
-				fixedSrc, pErr, fixed = fixSelectListMustNotBeEmptyStatement(fixedSrc, pErr)
+				fixedSrc, pErr, fo = fixSelectListMustNotBeEmptyStatement(fixedSrc, pErr)
+			}
+			if strings.Contains(pErr.Msg, "Unexpected end of script") {
+				fixedSrc, pErr, fo = fixUnexpectedEndOfScript(fixedSrc, pErr)
 			}
 			errs = append(errs, pErr)
-			if fixed {
+			if len(fo) > 0 {
 				// retry
+				fixOffsets = append(fixOffsets, fo...)
 				continue
 			}
 		}
@@ -156,11 +172,24 @@ func (p *Project) ParseFile(uri string, src string) ParsedFile {
 			pErr := parseZetaSQLError(err)
 			switch {
 			case strings.Contains(pErr.Msg, "Unrecognized name: "):
-				fixedSrc, pErr, fixed = fixUnrecognizedNameStatement(fixedSrc, pErr)
+				errTermOffset := positionToByteOffset(fixedSrc, pErr.Position)
+				pErr = addInformationToUnrecognizedNameError(fixedSrc, pErr)
+				if _, ok := searchAstNode[*ast.SelectListNode](node, errTermOffset); ok {
+					fixedSrc, fo = fixUnrecognizedNameToLiteral(fixedSrc, pErr)
+				}
+				if _, ok := searchAstNode[*ast.WhereClauseNode](node, errTermOffset); ok {
+					fixedSrc, fo = fixUnrecognizedNameForWhereStatement(fixedSrc, s, pErr)
+				}
+				if _, ok := searchAstNode[*ast.GroupByNode](node, errTermOffset); ok {
+					fixedSrc, fo = fixUnrecognizedNameToLiteral(fixedSrc, pErr)
+				}
+				if _, ok := searchAstNode[*ast.OrderByNode](node, errTermOffset); ok {
+					fixedSrc, fo = fixUnrecognizedNameToLiteral(fixedSrc, pErr)
+				}
 			case strings.Contains(pErr.Msg, "does not exist in STRUCT"):
-				fixedSrc, pErr, fixed = fixFieldDoesNotExistInStructStatement(fixedSrc, pErr)
+				fixedSrc, pErr, fo = fixFieldDoesNotExistInStructStatement(fixedSrc, pErr)
 			case strings.Contains(pErr.Msg, "not found inside"):
-				fixedSrc, pErr, fixed = fixNotFoundIndsideTableStatement(fixedSrc, pErr)
+				fixedSrc, pErr, fo = fixNotFoundIndsideTableStatement(fixedSrc, pErr)
 			case strings.Contains(pErr.Msg, "Table not found: "):
 				ind := strings.Index(pErr.Msg, "Table not found: ")
 				table := strings.TrimSpace(pErr.Msg[ind+len("Table not found: "):])
@@ -168,8 +197,9 @@ func (p *Project) ParseFile(uri string, src string) ParsedFile {
 				pErr.IncompleteColumnName = table
 			}
 			errs = append(errs, pErr)
-			if fixed {
+			if len(fo) > 0 {
 				analyzeErrFixed = true
+				fixOffsets = append(fixOffsets, fo...)
 				goto retry
 			}
 		}
@@ -178,13 +208,19 @@ func (p *Project) ParseFile(uri string, src string) ParsedFile {
 	}
 
 	return ParsedFile{
-		URI:    uri,
-		Src:    src,
-		Node:   node,
-		RNode:  rnode,
-		Fixed:  dotFixed || analyzeErrFixed,
-		Errors: errs,
+		URI:        uri,
+		Src:        src,
+		Node:       node,
+		RNode:      rnode,
+		Fixed:      dotFixed || analyzeErrFixed,
+		FixOffsets: fixOffsets,
+		Errors:     errs,
 	}
+}
+
+type FixOffset struct {
+	Offset int
+	Length int
 }
 
 type Error struct {
@@ -254,9 +290,91 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixed bool) {
 // becomes
 //
 //	SELECT 1 FROM table
-func fixSelectListMustNotBeEmptyStatement(src string, parsedErr Error) (fixedSrc string, err Error, fixed bool) {
+func fixSelectListMustNotBeEmptyStatement(src string, parsedErr Error) (fixedSrc string, err Error, fixOffsets []FixOffset) {
 	errOffset := positionToByteOffset(src, parsedErr.Position)
-	return src[:errOffset] + "1 " + src[errOffset:], parsedErr, true
+	return src[:errOffset] + "1 " + src[errOffset:], parsedErr, []FixOffset{
+		{
+			Offset: errOffset,
+			Length: len("1 "),
+		},
+	}
+}
+
+// fix Unexpected end of script
+//
+//	SELECT * FROM table WHERE
+//
+// becomes
+//
+//	SELECT * FROM table
+func fixUnexpectedEndOfScript(src string, parsedErr Error) (fixedSrc string, err Error, fixOffsets []FixOffset) {
+	targetUnexpectedEndKeyword := []string{"WHERE", "GROUP BY", "ORDER BY"}
+	errOffset := positionToByteOffset(src, parsedErr.Position)
+
+	oneLineSrc := strings.Join(strings.Fields(src), " ")
+	targetIndex := -1
+	for i, keyword := range targetUnexpectedEndKeyword {
+		if strings.HasSuffix(oneLineSrc, keyword) {
+			targetIndex = i
+			break
+		}
+	}
+
+	if targetIndex == -1 {
+		return src, parsedErr, nil
+	}
+
+	targetKeyword := targetUnexpectedEndKeyword[targetIndex]
+	targetOffset := strings.LastIndex(src[:errOffset], strings.Split(targetKeyword, " ")[0])
+	if targetOffset == -1 {
+		return src, parsedErr, nil
+	}
+
+	fixedSrc = strings.TrimSpace(src[:targetOffset])
+	return fixedSrc, parsedErr, []FixOffset{
+		{
+			Offset: errOffset,
+			Length: -(errOffset - len(fixedSrc)),
+		},
+	}
+}
+
+func addInformationToUnrecognizedNameError(src string, parsedErr Error) Error {
+	ind := strings.Index(parsedErr.Msg, "Unrecognized name: ")
+	unrecognizedName := strings.TrimSpace(parsedErr.Msg[ind+len("Unrecognized name: "):])
+
+	// For the folowing error message:
+	// 	INVALID_ARGUMENT: Unrecognized name: invalid_column; Did you mean valid_column?
+	if ind := strings.Index(unrecognizedName, ";"); ind != -1 {
+		unrecognizedName = unrecognizedName[:ind]
+	}
+
+	parsedErr.TermLength = len(unrecognizedName)
+	parsedErr.IncompleteColumnName = unrecognizedName
+	return parsedErr
+}
+
+// fix Unrecognized name: <name> error.
+//
+//	SELECT unexist_column FROM table
+//
+// becomes
+//
+//	SELECT 1 FROM table
+func fixUnrecognizedNameToLiteral(src string, parsedErr Error) (fixedSrc string, fixOffsets []FixOffset) {
+	errOffset := positionToByteOffset(src, parsedErr.Position)
+	if errOffset == 0 || errOffset == len(src) {
+		return src, nil
+	}
+
+	unrecognizedName := parsedErr.IncompleteColumnName
+	fixedSrc = src[:errOffset] + "1" + src[errOffset+len(unrecognizedName):]
+
+	fixOffsets = append(fixOffsets, FixOffset{
+		Offset: errOffset,
+		Length: -len(unrecognizedName) + len("1"),
+	})
+	return fixedSrc, fixOffsets
 }
 
 // fix Unrecognized name: <name> error.
@@ -266,31 +384,37 @@ func fixSelectListMustNotBeEmptyStatement(src string, parsedErr Error) (fixedSrc
 // becomes
 //
 //	SELECT "111111111111" FROM table
-func fixUnrecognizedNameStatement(src string, parsedErr Error) (fixedSrc string, err Error, fixed bool) {
-	ind := strings.Index(parsedErr.Msg, "Unrecognized name: ")
-
-	unrecognizedName := strings.TrimSpace(parsedErr.Msg[ind+len("Unrecognized name: "):])
-
-	// For the folowing error message:
-	// 	INVALID_ARGUMENT: Unrecognized name: invalid_column; Did you mean valid_column?
-	if ind := strings.Index(unrecognizedName, ";"); ind != -1 {
-		unrecognizedName = unrecognizedName[:ind]
-	}
-
+func fixUnrecognizedNameForWhereStatement(src string, node ast.StatementNode, parsedErr Error) (fixedSrc string, fixOffsets []FixOffset) {
 	errOffset := positionToByteOffset(src, parsedErr.Position)
 	if errOffset == 0 || errOffset == len(src) {
-		return src, parsedErr, false
+		return src, nil
 	}
 
-	if len(unrecognizedName) < 2 {
-		fixedSrc = src[:errOffset] + strings.Repeat("1", len(unrecognizedName)) + src[errOffset+len(unrecognizedName):]
+	fixOffset := FixOffset{Offset: errOffset, Length: 0}
+	if node, ok := searchAstNode[*ast.BinaryExpressionNode](node, errOffset); ok {
+		// e.x.) SELECT * FROM table WHERE unexist_column = 1
+		loc := node.ParseLocationRange()
+		startOffset := loc.Start().ByteOffset()
+		endOffset := loc.End().ByteOffset()
+		length := endOffset - startOffset
+		if length < 4 {
+			fixedSrc = src[:startOffset] + "true" + src[endOffset:]
+			fixOffset.Length = len("true") - length
+		} else {
+			fixedSrc = src[:startOffset] + "true" + strings.Repeat(" ", length-4) + src[endOffset:]
+		}
 	} else {
-		fixedSrc = src[:errOffset] + `"` + strings.Repeat("1", len(unrecognizedName)-2) + `"` + src[errOffset+len(unrecognizedName):]
+		// e.x.) SELECT * FROM table WHERE unexist_column
+		unrecognizedName := parsedErr.IncompleteColumnName
+		if len(unrecognizedName) < 4 {
+			fixedSrc = src[:errOffset] + "true" + src[errOffset+len(unrecognizedName):]
+			fixOffset.Length = len("true") - len(unrecognizedName)
+		} else {
+			fixedSrc = src[:errOffset] + "true" + strings.Repeat(" ", len(unrecognizedName)-4) + src[errOffset+len(unrecognizedName):]
+		}
 	}
-	parsedErr.TermLength = len(unrecognizedName)
-	parsedErr.IncompleteColumnName = unrecognizedName
 
-	return fixedSrc, parsedErr, true
+	return fixedSrc, []FixOffset{fixOffset}
 }
 
 // fix field name <name> error.
@@ -300,32 +424,34 @@ func fixUnrecognizedNameStatement(src string, parsedErr Error) (fixedSrc string,
 // becomes
 //
 //	SELECT "1111111111111111111" FROM table
-func fixFieldDoesNotExistInStructStatement(src string, parsedErr Error) (fixedSrc string, err Error, fixed bool) {
+func fixFieldDoesNotExistInStructStatement(src string, parsedErr Error) (fixedSrc string, err Error, fixOffsets []FixOffset) {
 	ind := strings.Index(parsedErr.Msg, "Field name ")
 	if ind == -1 {
-		return src, parsedErr, false
+		return src, parsedErr, nil
 	}
 	notExistColumn := parsedErr.Msg[ind+len("Field name "):]
 	notExistColumn = notExistColumn[:strings.Index(notExistColumn, " ")]
 
 	errOffset := positionToByteOffset(src, parsedErr.Position)
 	if errOffset == 0 || errOffset == len(src) {
-		return src, parsedErr, false
+		return src, parsedErr, nil
 	}
 
+	fixOffset := FixOffset{Offset: errOffset, Length: 0}
 	parsedErr.TermLength = len(notExistColumn)
 
 	firstIndex := strings.LastIndex(src[:errOffset], " ") + 1
 	if firstIndex == 0 {
 		fixedSrc = src[:errOffset] + "*," + src[errOffset+len(notExistColumn):]
-		return fixedSrc, parsedErr, true
+		fixOffset.Length = len(notExistColumn) - len("*,")
+		return fixedSrc, parsedErr, []FixOffset{fixOffset}
 	}
 	// struct.uneixst_column
 	parsedErr.IncompleteColumnName = src[firstIndex : errOffset+len(notExistColumn)]
 	structLen := len(src[firstIndex:errOffset])
 	fixedSrc = src[:firstIndex] + `"` + strings.Repeat("1", structLen+len(notExistColumn)-2) + `"` + src[errOffset+len(notExistColumn):]
 
-	return fixedSrc, parsedErr, true
+	return fixedSrc, parsedErr, []FixOffset{fixOffset}
 }
 
 // fix field name <name> error.
@@ -335,29 +461,31 @@ func fixFieldDoesNotExistInStructStatement(src string, parsedErr Error) (fixedSr
 // becomes
 //
 //	SELECT "11111111111111" FROM table AS t
-func fixNotFoundIndsideTableStatement(src string, parsedErr Error) (fixedSrc string, err Error, fixed bool) {
+func fixNotFoundIndsideTableStatement(src string, parsedErr Error) (fixedSrc string, err Error, fixOffsets []FixOffset) {
 	ind := strings.Index(parsedErr.Msg, "INVALID_ARGUMENT: Name ")
 	if ind == -1 {
-		return src, parsedErr, false
+		return src, parsedErr, nil
 	}
 	notExistColumn := parsedErr.Msg[ind+len("INVALID_ARGUMENT: Name "):]
 	notExistColumn = notExistColumn[:strings.Index(notExistColumn, " ")]
 
 	errOffset := positionToByteOffset(src, parsedErr.Position)
 	if errOffset == 0 || errOffset == len(src) {
-		return src, parsedErr, false
+		return src, parsedErr, nil
 	}
 
+	fixOffset := FixOffset{Offset: errOffset, Length: 0}
 	parsedErr.TermLength = len(notExistColumn)
 
 	firstIndex := strings.LastIndex(src[:errOffset], " ") + 1
 	if firstIndex == 0 {
 		fixedSrc = src[:errOffset] + "*," + src[errOffset+len(notExistColumn):]
-		return fixedSrc, parsedErr, true
+		fixOffset.Length = len(notExistColumn) - len("*,")
+		return fixedSrc, parsedErr, []FixOffset{fixOffset}
 	}
 	parsedErr.IncompleteColumnName = src[firstIndex : errOffset+len(notExistColumn)]
 	structLen := len(src[firstIndex:errOffset])
 	fixedSrc = src[:firstIndex] + `"` + strings.Repeat("1", structLen+len(notExistColumn)-2) + `"` + src[errOffset+len(notExistColumn):]
 
-	return fixedSrc, parsedErr, true
+	return fixedSrc, parsedErr, []FixOffset{fixOffset}
 }

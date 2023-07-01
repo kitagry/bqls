@@ -31,7 +31,7 @@ func indexToPosition(file string, index int) lsp.Position {
 	col, row := 0, 0
 	lines := strings.Split(file, "\n")
 	for _, line := range lines {
-		if index < len(line) {
+		if index <= len(line) {
 			col = index
 			break
 		}
