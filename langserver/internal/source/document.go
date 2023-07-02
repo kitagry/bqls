@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	"cloud.google.com/go/bigquery"
@@ -62,7 +63,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 		return []lsp.MarkedString{
 			{
 				Language: "markdown",
-				Value:    node.Type().DebugString(false),
+				Value:    node.Type().TypeName(types.ProductExternal),
 			},
 		}, nil
 	}
@@ -79,7 +80,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 			return []lsp.MarkedString{
 				{
 					Language: "markdown",
-					Value:    fmt.Sprintf("%s: %s", column.Name(), column.Type()),
+					Value:    fmt.Sprintf("%s: %s", column.Name(), column.Type().TypeName(types.ProductExternal)),
 				},
 			}, nil
 		}
@@ -97,19 +98,19 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 	}
 
 	if selectColumnNode, ok := lookupNode[*ast.SelectColumnNode](targetNode); ok {
-		c, err := p.getSelectColumnNodeToAnalyzedOutputCoumnNode(output, selectColumnNode, termOffset)
+		column, err := p.getSelectColumnNodeToAnalyzedOutputCoumnNode(output, selectColumnNode, termOffset)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get column info: %w", err)
 		}
 
-		column := c.Column()
-		if column == nil {
-			return nil, fmt.Errorf("failed to find column: %v", c)
-		}
-
 		tableMetadata, err := p.getTableMetadataFromPath(ctx, column.TableName())
 		if err != nil {
-			return nil, fmt.Errorf("failed to get table metadata: %w", err)
+			return []lsp.MarkedString{
+				{
+					Language: "markdown",
+					Value:    fmt.Sprintf("%s: %s", column.Name(), column.Type().TypeName(types.ProductExternal)),
+				},
+			}, nil
 		}
 
 		for _, c := range tableMetadata.Schema {
@@ -145,48 +146,80 @@ func (p *Project) createTableMarkedString(ctx context.Context, node *ast.TablePa
 	return buildBigQueryTableMetadataMarkedString(targetTable)
 }
 
-func (p *Project) getSelectColumnNodeToAnalyzedOutputCoumnNode(output *zetasql.AnalyzerOutput, column *ast.SelectColumnNode, termOffset int) (*rast.OutputColumnNode, error) {
-	children := output.Statement().ChildNodes()
-	var tables []*rast.TableScanNode
+func (p *Project) getSelectColumnNodeToAnalyzedOutputCoumnNode(output *zetasql.AnalyzerOutput, column *ast.SelectColumnNode, termOffset int) (*rast.Column, error) {
+	scanNodes := make([]rast.ScanNode, 0)
 	rast.Walk(output.Statement(), func(n rast.Node) error {
-		t, ok := n.(*rast.TableScanNode)
+		t, ok := n.(rast.ScanNode)
 		if !ok {
 			return nil
 		}
-		tables = append(tables, t)
+		scanNodes = append(scanNodes, t)
 		return nil
 	})
 
-	for _, child := range children {
-		outputColumn, ok := child.(*rast.OutputColumnNode)
-		if !ok {
+	mostNarrowWidth := math.MaxInt
+	var targetScanNode rast.ScanNode
+	for _, node := range scanNodes {
+		lrange := node.ParseLocationRange()
+		if lrange == nil {
 			continue
 		}
 
-		columnName, ok := getSelectColumnName(column)
-		if !ok {
-			continue
+		width := lrange.End().ByteOffset() - lrange.Start().ByteOffset()
+		if width < mostNarrowWidth {
+			targetScanNode = node
 		}
+	}
 
-		for _, t := range tables {
-			if strings.HasPrefix(columnName, fmt.Sprintf("%s.", t.Alias())) {
-				columnName = strings.TrimLeft(columnName, fmt.Sprintf("%s.", t.Alias()))
+	refNames := make([]string, 0)
+	tmpScanNode := targetScanNode
+	for tmpScanNode != nil {
+		fmt.Printf("%T\n", tmpScanNode)
+		switch n := tmpScanNode.(type) {
+		case *rast.ProjectScanNode:
+			tmpScanNode = n.InputScan()
+		case *rast.WithScanNode:
+			tmpScanNode = n.Query()
+		case *rast.OrderByScanNode:
+			tmpScanNode = n.InputScan()
+		case *rast.TableScanNode:
+			if n.Alias() != "" {
+				refNames = append(refNames, n.Alias())
 			}
+			tmpScanNode = nil
+		case *rast.WithRefScanNode:
+			refNames = append(refNames, n.WithQueryName())
+			tmpScanNode = nil
+		default:
+			p.logger.Debugf("Unsupported type: %T", n)
+			tmpScanNode = nil
 		}
+	}
 
-		if outputColumn.Name() == columnName {
-			return outputColumn, nil
+	columnName, ok := getSelectColumnName(column)
+	if !ok {
+		return nil, fmt.Errorf("failed getSelectColumnName: %s", column.DebugString(0))
+	}
+
+	fmt.Println(refNames)
+	// remove table prefix
+	for _, refName := range refNames {
+		tablePrefix := fmt.Sprintf("%s.", refName)
+		if strings.HasPrefix(columnName, tablePrefix) {
+			columnName = strings.TrimPrefix(columnName, tablePrefix)
+		}
+	}
+
+	for _, c := range targetScanNode.ColumnList() {
+		fmt.Println(columnName, c.Name())
+		if c.Name() == columnName {
+			return c, nil
 		}
 	}
 	return nil, fmt.Errorf("failed to find column info")
 }
 
 func getSelectColumnName(targetNode *ast.SelectColumnNode) (string, bool) {
-	alias := targetNode.Alias()
-	if alias != nil {
-		return alias.Name(), true
-	}
-
 	path, ok := targetNode.Expression().(*ast.PathExpressionNode)
 	if !ok {
 		return "", false

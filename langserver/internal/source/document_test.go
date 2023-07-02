@@ -177,14 +177,12 @@ last modified at 2023-06-17 00:00:00`,
 				},
 			},
 		},
-		"hover column with table_alias": {
+		"hover column with table alias": {
 			files: map[string]string{
 				"file1.sql": "SELECT a.|name FROM `project.dataset.table` AS a",
 			},
 			bqTableMetadata: &bq.TableMetadata{
-				FullID:           "project.dataset.table",
-				CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
-				LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+				FullID: "project.dataset.table",
 				Schema: bq.Schema{
 					{
 						Name:        "name",
@@ -332,6 +330,48 @@ json description`,
 				},
 			},
 		},
+		"hover with WITH clause": {
+			files: map[string]string{
+				"file1.sql": "WITH data AS (SELECT id FROM `project.dataset.table`)\nSELECT id| FROM data",
+			},
+			bqTableMetadata: &bq.TableMetadata{
+				FullID: "project.dataset.table",
+				Schema: bq.Schema{
+					{
+						Name: "id",
+						Type: bq.IntegerFieldType,
+					},
+				},
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{
+					Language: "markdown",
+					Value:    "id: INTEGER\n",
+				},
+			},
+		},
+		"hover in WITH clause": {
+			files: map[string]string{
+				"file1.sql": "WITH data AS (SELECT id| FROM `project.dataset.table`)\nSELECT id FROM data",
+			},
+			bqTableMetadata: &bq.TableMetadata{
+				FullID: "project.dataset.table",
+				Schema: bq.Schema{
+					{
+						Name:        "id",
+						Type:        bq.IntegerFieldType,
+						Description: "id description",
+					},
+				},
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{
+					Language: "markdown",
+					Value: `id: INTEGER
+id description`,
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {
@@ -339,7 +379,9 @@ json description`,
 			ctrl := gomock.NewController(t)
 			bqClient := mock_bigquery.NewMockClient(ctrl)
 			bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.bqTableMetadata, nil).MinTimes(0)
-			p := source.NewProjectWithBQClient("/", bqClient, logrus.New())
+			logger := logrus.New()
+			logger.SetLevel(logrus.DebugLevel)
+			p := source.NewProjectWithBQClient("/", bqClient, logger)
 
 			files, path, position, err := helper.GetLspPosition(tt.files)
 			if err != nil {

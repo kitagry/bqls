@@ -411,7 +411,7 @@ func createCompletionItemFromColumn(column columnInterface, incompleteColumnName
 	return CompletionItem{
 		Kind:        lsp.CIKField,
 		NewText:     column.Name(),
-		Detail:      column.Type().Kind().String(),
+		Detail:      column.Type().TypeName(types.ProductExternal),
 		TypedPrefix: incompleteColumnName,
 	}
 }
