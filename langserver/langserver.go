@@ -20,7 +20,7 @@ type Handler struct {
 
 	diagnosticRequest chan lsp.DocumentURI
 	dryrunRequest     chan lsp.DocumentURI
-	initializeParams  lsp.InitializeParams
+	initializeParams  lsp.InitializeParams[InitializeOption]
 }
 
 var _ jsonrpc2.Handler = (*Handler)(nil)

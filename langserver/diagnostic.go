@@ -74,7 +74,7 @@ func (h *Handler) runDryrun() {
 					Diagnostics: d,
 				})
 				if err != nil {
-					h.logger.Debugf(`failed to send "textDocument/publishDiagnostics" for %s: %w`, uri, err)
+					h.logger.Debugf(`failed to send "textDocument/publishDiagnostics" for %s: %v`, uri, err)
 				}
 			}
 			err = h.conn.Notify(ctx, "window/showMessage", lsp.ShowMessageParams{
@@ -82,7 +82,7 @@ func (h *Handler) runDryrun() {
 				Message: fmt.Sprintf("This query will process %s when run.", totalProcessed),
 			})
 			if err != nil {
-				h.logger.Debugf(`failed to send "window/showMessageRequest": %w`, err)
+				h.logger.Debugf(`failed to send "window/showMessageRequest": %v`, err)
 			}
 		}()
 	}

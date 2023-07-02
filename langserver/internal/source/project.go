@@ -3,6 +3,7 @@ package source
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,10 +32,23 @@ type File struct {
 	Version int
 }
 
-func NewProject(ctx context.Context, rootPath string, logger *logrus.Logger) (*Project, error) {
+func NewProject(ctx context.Context, rootPath string, projectID string, logger *logrus.Logger) (*Project, error) {
 	cache := cache.NewGlobalCache()
 
-	bqClient, err := bigquery.New(ctx, true)
+	if projectID == "" {
+		out, err := exec.CommandContext(ctx, "gcloud", "config", "get", "project").Output()
+		if err != nil {
+			return nil, fmt.Errorf("You don't set Bigquery projectID. And fallback to run `gcloud config get project`, but got error: %w", err)
+		}
+		fields := strings.Fields(string(out))
+		if len(fields) == 0 {
+			return nil, fmt.Errorf("You don't set Bigquery projectID. And fallback to run `gcloud config get project`, but got empty output")
+		}
+		projectID = fields[0]
+		logger.Infof("You don't set Bigquery projectID. And fallback to run `gcloud config get project`. set projectID: %s", projectID)
+	}
+
+	bqClient, err := bigquery.New(ctx, projectID, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create bigquery client: %w", err)
 	}

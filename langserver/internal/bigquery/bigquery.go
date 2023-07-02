@@ -5,9 +5,7 @@ import (
 	"fmt"
 
 	"cloud.google.com/go/bigquery"
-	"golang.org/x/oauth2/google"
 	"google.golang.org/api/cloudresourcemanager/v1"
-	"google.golang.org/api/compute/v1"
 	"google.golang.org/api/iterator"
 )
 
@@ -38,18 +36,13 @@ type client struct {
 	cloudresourcemanagerService *cloudresourcemanager.Service
 }
 
-func New(ctx context.Context, withCache bool) (Client, error) {
+func New(ctx context.Context, projectID string, withCache bool) (Client, error) {
 	cloudresourcemanagerService, err := cloudresourcemanager.NewService(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("cloudresourcemanager.NewService: %w", err)
 	}
 
-	credentials, err := google.FindDefaultCredentials(ctx, compute.ComputeScope)
-	if err != nil {
-		return nil, fmt.Errorf("google.FindDefaultCredentials: %w", err)
-	}
-
-	bqClient, err := bigquery.NewClient(ctx, credentials.ProjectID)
+	bqClient, err := bigquery.NewClient(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("bigquery.NewClient: %w", err)
 	}
