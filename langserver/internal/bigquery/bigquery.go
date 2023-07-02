@@ -28,6 +28,9 @@ type Client interface {
 
 	// GetTableMetadata returns the metadata of the specified table.
 	GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.TableMetadata, error)
+
+	// Run runs the specified query.
+	Run(ctx context.Context, q string, dryrun bool) (BigqueryJob, error)
 }
 
 type client struct {
@@ -138,4 +141,21 @@ func (c *client) GetTableMetadata(ctx context.Context, projectID, datasetID, tab
 	}
 
 	return md, nil
+}
+
+type BigqueryJob interface {
+	Read(context.Context) (*bigquery.RowIterator, error)
+	LastStatus() *bigquery.JobStatus
+}
+
+func (c *client) Run(ctx context.Context, q string, dryrun bool) (BigqueryJob, error) {
+	query := c.bqClient.Query(q)
+	query.DryRun = dryrun
+	query.UseLegacySQL = false
+	job, err := query.Run(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("fail to run query: %w", err)
+	}
+
+	return job, nil
 }

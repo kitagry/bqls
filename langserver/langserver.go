@@ -19,6 +19,7 @@ type Handler struct {
 	project *source.Project
 
 	diagnosticRequest chan lsp.DocumentURI
+	dryrunRequest     chan lsp.DocumentURI
 	initializeParams  lsp.InitializeParams
 }
 
@@ -36,8 +37,10 @@ func NewHandler(isDebug bool) *Handler {
 	handler := &Handler{
 		logger:            logger,
 		diagnosticRequest: make(chan lsp.DocumentURI, 3),
+		dryrunRequest:     make(chan lsp.DocumentURI, 3),
 	}
 	go handler.diagnostic()
+	go handler.runDryrun()
 	return handler
 }
 
@@ -54,6 +57,7 @@ func (h *Handler) Close() error {
 		errs = append(errs, h.project.Close())
 	}
 	close(h.diagnosticRequest)
+	close(h.dryrunRequest)
 	return errors.Join(errs...)
 }
 

@@ -98,6 +98,21 @@ func (p *Project) GetErrors(path string) map[string][]Error {
 	return map[string][]Error{path: nil}
 }
 
+func (p *Project) Dryrun(ctx context.Context, path string) (*bq.JobStatus, error) {
+	sql := p.cache.Get(path)
+	if sql == nil {
+		return nil, nil
+	}
+
+	dryrun := true
+	result, err := p.bqClient.Run(ctx, sql.RawText, dryrun)
+	if err != nil {
+		return nil, err
+	}
+
+	return result.LastStatus(), nil
+}
+
 func (p *Project) analyzeStatement(rawText string, stmt ast.StatementNode) (*zetasql.AnalyzerOutput, error) {
 	langOpt := zetasql.NewLanguageOptions()
 	langOpt.SetNameResolutionMode(zetasql.NameResolutionDefault)

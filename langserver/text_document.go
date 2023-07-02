@@ -64,6 +64,7 @@ func (h *Handler) handleTextDocumentDidSave(ctx context.Context, conn *jsonrpc2.
 	}
 
 	h.diagnosticRequest <- params.TextDocument.URI
+	h.dryrunRequest <- params.TextDocument.URI
 
 	return nil, nil
 }
