@@ -52,14 +52,11 @@ created at 2023-06-17 00:00:00
 last modified at 2023-06-17 00:00:00`,
 				},
 				{
-					Language: "json",
-					Value: `[
- {
-  "description": "name description",
-  "name": "name",
-  "type": "STRING"
- }
-]`,
+					Language: "yaml",
+					Value: `- name: name
+  type: STRING
+  description: name description
+`,
 				},
 			},
 		},
@@ -89,14 +86,11 @@ created at 2023-06-17 00:00:00
 last modified at 2023-06-17 00:00:00`,
 				},
 				{
-					Language: "json",
-					Value: `[
- {
-  "description": "name description",
-  "name": "name",
-  "type": "STRING"
- }
-]`,
+					Language: "yaml",
+					Value: `- name: name
+  type: STRING
+  description: name description
+`,
 				},
 			},
 		},
@@ -124,14 +118,11 @@ created at 2023-06-17 00:00:00
 last modified at 2023-06-17 00:00:00`,
 				},
 				{
-					Language: "json",
-					Value: `[
- {
-  "description": "name description",
-  "name": "name",
-  "type": "STRING"
- }
-]`,
+					Language: "yaml",
+					Value: `- name: name
+  type: STRING
+  description: name description
+`,
 				},
 			},
 		},

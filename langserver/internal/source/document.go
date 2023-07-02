@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/goccy/go-json"
+	"github.com/goccy/go-yaml"
 	"github.com/goccy/go-zetasql"
 	"github.com/goccy/go-zetasql/ast"
 	rast "github.com/goccy/go-zetasql/resolved_ast"
@@ -197,6 +199,14 @@ func getSelectColumnName(targetNode *ast.SelectColumnNode) (string, bool) {
 	return strings.Join(names, "."), true
 }
 
+type Schema struct {
+	Name        string   `json:"name" yaml:"name"`
+	Type        string   `json:"type" yaml:"type"`
+	Mode        string   `json:"mode" yaml:"mode,omitempty"`
+	Description string   `json:"description" yaml:"description,omitempty"`
+	Fields      []Schema `json:"fields" yaml:"fields,omitempty"`
+}
+
 func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([]lsp.MarkedString, error) {
 	resultStr := fmt.Sprintf("## %s", metadata.FullID)
 
@@ -213,14 +223,25 @@ func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([
 		return nil, fmt.Errorf("failed to convert schema to json: %w", err)
 	}
 
+	var result []Schema
+	err = json.Unmarshal(schemaJson, &result)
+	if err != nil {
+		fmt.Println(string(schemaJson))
+		return nil, fmt.Errorf("failed to unmarshal json: %w", err)
+	}
+	schemaYaml, err := yaml.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal yaml: %w", err)
+	}
+
 	return []lsp.MarkedString{
 		{
 			Language: "markdown",
 			Value:    resultStr,
 		},
 		{
-			Language: "json",
-			Value:    string(schemaJson),
+			Language: "yaml",
+			Value:    string(schemaYaml),
 		},
 	}, nil
 }
