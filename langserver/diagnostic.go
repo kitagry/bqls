@@ -11,7 +11,7 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/source"
 )
 
-func (h *Handler) diagnostic() {
+func (h *Handler) scheduleDiagnostics() {
 	running := make(map[lsp.DocumentURI]context.CancelFunc)
 
 	for {
@@ -45,7 +45,7 @@ func (h *Handler) diagnostic() {
 	}
 }
 
-func (h *Handler) runDryrun() {
+func (h *Handler) scheduleDryRun() {
 	running := make(map[lsp.DocumentURI]context.CancelFunc)
 
 	for {

@@ -39,8 +39,8 @@ func NewHandler(isDebug bool) *Handler {
 		diagnosticRequest: make(chan lsp.DocumentURI, 3),
 		dryrunRequest:     make(chan lsp.DocumentURI, 3),
 	}
-	go handler.diagnostic()
-	go handler.runDryrun()
+	go handler.scheduleDiagnostics()
+	go handler.scheduleDryRun()
 	return handler
 }
 
