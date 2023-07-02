@@ -750,9 +750,9 @@ type MessageType int
 
 const (
 	MTError   MessageType = 1
-	MTWarning             = 2
-	Info                  = 3
-	Log                   = 4
+	MTWarning MessageType = 2
+	Info      MessageType = 3
+	Log       MessageType = 4
 )
 
 type ShowMessageParams struct {

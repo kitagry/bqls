@@ -2,6 +2,7 @@ package langserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -35,10 +36,10 @@ func (h *Handler) diagnostic() {
 			}
 
 			for uri, d := range diagnostics {
-				h.conn.Notify(ctx, "textDocument/publishDiagnostics", lsp.PublishDiagnosticsParams{
-					URI:         uri,
-					Diagnostics: d,
-				})
+				err := h.publishDiagnostics(ctx, uri, d)
+				if err != nil {
+					h.logger.Errorf(`failed to send "textDocument/publishDiagnostics" for %s: %v`, uri, err)
+				}
 			}
 		}()
 	}
@@ -64,28 +65,39 @@ func (h *Handler) runDryrun() {
 		go func() {
 			diagnostics, totalProcessed, err := h.dryrun(ctx, uri)
 			if err != nil {
-				h.logger.Println(err)
+				sendErr := h.showMessage(ctx, lsp.MTError, errors.Unwrap(err).Error())
+				if sendErr != nil {
+					h.logger.Errorf("failed to dryrun: %v", err)
+				}
 				return
 			}
 
 			for uri, d := range diagnostics {
-				err := h.conn.Notify(ctx, "textDocument/publishDiagnostics", lsp.PublishDiagnosticsParams{
-					URI:         uri,
-					Diagnostics: d,
-				})
+				err := h.publishDiagnostics(ctx, uri, d)
 				if err != nil {
 					h.logger.Debugf(`failed to send "textDocument/publishDiagnostics" for %s: %v`, uri, err)
 				}
 			}
-			err = h.conn.Notify(ctx, "window/showMessage", lsp.ShowMessageParams{
-				Type:    lsp.Info,
-				Message: fmt.Sprintf("This query will process %s when run.", totalProcessed),
-			})
+			err = h.showMessage(ctx, lsp.Info, fmt.Sprintf("This query will process %s when run.", totalProcessed))
 			if err != nil {
 				h.logger.Debugf(`failed to send "window/showMessageRequest": %v`, err)
 			}
 		}()
 	}
+}
+
+func (h *Handler) publishDiagnostics(ctx context.Context, uri lsp.DocumentURI, diagnostics []lsp.Diagnostic) error {
+	return h.conn.Notify(ctx, "textDocument/publishDiagnostics", lsp.PublishDiagnosticsParams{
+		URI:         uri,
+		Diagnostics: diagnostics,
+	})
+}
+
+func (h *Handler) showMessage(ctx context.Context, level lsp.MessageType, message string) error {
+	return h.conn.Notify(ctx, "window/showMessage", lsp.ShowMessageParams{
+		Type:    level,
+		Message: message,
+	})
 }
 
 func (h *Handler) diagnose(ctx context.Context, uri lsp.DocumentURI) (map[lsp.DocumentURI][]lsp.Diagnostic, error) {
