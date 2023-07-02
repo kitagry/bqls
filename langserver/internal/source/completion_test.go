@@ -330,6 +330,53 @@ func TestProject_CompleteColumn(t *testing.T) {
 				},
 			},
 		},
+		"Complete column with table alias with join": {
+			files: map[string]string{
+				"file1.sql": "SELECT t1.| FROM `project.dataset.table` AS t1 JOIN `project.dataset.table` AS t2 ON t1.id = t2.id",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Description: "id description",
+							Type:        bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []source.CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INTEGER\nid description",
+				},
+			},
+		},
+		"Complete incomplete column with table alias with join": {
+			files: map[string]string{
+				"file1.sql": "SELECT t1.i| FROM `project.dataset.table` AS t1 JOIN `project.dataset.table` AS t2 ON t1.id = t2.id WHERE t1.id = 1",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Description: "id description",
+							Type:        bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []source.CompletionItem{
+				{
+					Kind:        lsp.CIKField,
+					NewText:     "id",
+					Detail:      "INTEGER\nid description",
+					TypedPrefix: "i",
+				},
+			},
+		},
 		"Complete column with with table": {
 			files: map[string]string{
 				"file1.sql": "WITH data AS (SELECT * FROM `project.dataset.table`)\nSELECT data.| FROM data",
