@@ -137,3 +137,7 @@ func (c *cache) GetTableMetadata(ctx context.Context, projectID, datasetID, tabl
 	}
 	return result, nil
 }
+
+func (c *cache) Run(ctx context.Context, q string, dryrun bool) (BigqueryJob, error) {
+	return c.bqClient.Run(ctx, q, dryrun)
+}

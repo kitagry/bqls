@@ -15,7 +15,7 @@ import (
 
 type None struct{}
 
-type InitializeParams struct {
+type InitializeParams[T any] struct {
 	ProcessID int `json:"processId,omitempty"`
 
 	// RootPath is DEPRECATED in favor of the RootURI field.
@@ -24,14 +24,14 @@ type InitializeParams struct {
 	RootURI               DocumentURI        `json:"rootUri,omitempty"`
 	ClientInfo            ClientInfo         `json:"clientInfo,omitempty"`
 	Trace                 Trace              `json:"trace,omitempty"`
-	InitializationOptions interface{}        `json:"initializationOptions,omitempty"`
+	InitializationOptions T                  `json:"initializationOptions,omitempty"`
 	Capabilities          ClientCapabilities `json:"capabilities"`
 
 	WorkDoneToken string `json:"workDoneToken,omitempty"`
 }
 
 // Root returns the RootURI if set, or otherwise the RootPath with 'file://' prepended.
-func (p *InitializeParams) Root() DocumentURI {
+func (p *InitializeParams[T]) Root() DocumentURI {
 	if p.RootURI != "" {
 		return p.RootURI
 	}
@@ -750,9 +750,9 @@ type MessageType int
 
 const (
 	MTError   MessageType = 1
-	MTWarning             = 2
-	Info                  = 3
-	Log                   = 4
+	MTWarning MessageType = 2
+	Info      MessageType = 3
+	Log       MessageType = 4
 )
 
 type ShowMessageParams struct {

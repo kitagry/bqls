@@ -9,6 +9,10 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 )
 
+type InitializeOption struct {
+	ProjectID string `json:"project_id"`
+}
+
 func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result interface{}, err error) {
 	if req.Params == nil {
 		return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams}
@@ -16,13 +20,13 @@ func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req
 
 	h.conn = conn
 
-	var params lsp.InitializeParams
+	var params lsp.InitializeParams[InitializeOption]
 	if err := json.Unmarshal(*req.Params, &params); err != nil {
 		return nil, err
 	}
 	h.initializeParams = params
 
-	p, err := source.NewProject(context.Background(), params.RootPath, h.logger)
+	p, err := source.NewProject(context.Background(), params.RootPath, params.InitializationOptions.ProjectID, h.logger)
 	if err != nil {
 		return nil, err
 	}

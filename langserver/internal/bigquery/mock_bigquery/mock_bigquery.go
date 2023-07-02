@@ -10,6 +10,7 @@ import (
 
 	bigquery "cloud.google.com/go/bigquery"
 	gomock "github.com/golang/mock/gomock"
+	bigquery0 "github.com/kitagry/bqls/langserver/internal/bigquery"
 	cloudresourcemanager "google.golang.org/api/cloudresourcemanager/v1"
 )
 
@@ -122,4 +123,71 @@ func (m *MockClient) ListTables(ctx context.Context, projectID, datasetID string
 func (mr *MockClientMockRecorder) ListTables(ctx, projectID, datasetID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTables", reflect.TypeOf((*MockClient)(nil).ListTables), ctx, projectID, datasetID)
+}
+
+// Run mocks base method.
+func (m *MockClient) Run(ctx context.Context, q string, dryrun bool) (bigquery0.BigqueryJob, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Run", ctx, q, dryrun)
+	ret0, _ := ret[0].(bigquery0.BigqueryJob)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Run indicates an expected call of Run.
+func (mr *MockClientMockRecorder) Run(ctx, q, dryrun interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Run", reflect.TypeOf((*MockClient)(nil).Run), ctx, q, dryrun)
+}
+
+// MockBigqueryJob is a mock of BigqueryJob interface.
+type MockBigqueryJob struct {
+	ctrl     *gomock.Controller
+	recorder *MockBigqueryJobMockRecorder
+}
+
+// MockBigqueryJobMockRecorder is the mock recorder for MockBigqueryJob.
+type MockBigqueryJobMockRecorder struct {
+	mock *MockBigqueryJob
+}
+
+// NewMockBigqueryJob creates a new mock instance.
+func NewMockBigqueryJob(ctrl *gomock.Controller) *MockBigqueryJob {
+	mock := &MockBigqueryJob{ctrl: ctrl}
+	mock.recorder = &MockBigqueryJobMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockBigqueryJob) EXPECT() *MockBigqueryJobMockRecorder {
+	return m.recorder
+}
+
+// LastStatus mocks base method.
+func (m *MockBigqueryJob) LastStatus() *bigquery.JobStatus {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LastStatus")
+	ret0, _ := ret[0].(*bigquery.JobStatus)
+	return ret0
+}
+
+// LastStatus indicates an expected call of LastStatus.
+func (mr *MockBigqueryJobMockRecorder) LastStatus() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LastStatus", reflect.TypeOf((*MockBigqueryJob)(nil).LastStatus))
+}
+
+// Read mocks base method.
+func (m *MockBigqueryJob) Read(arg0 context.Context) (*bigquery.RowIterator, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Read", arg0)
+	ret0, _ := ret[0].(*bigquery.RowIterator)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Read indicates an expected call of Read.
+func (mr *MockBigqueryJobMockRecorder) Read(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Read", reflect.TypeOf((*MockBigqueryJob)(nil).Read), arg0)
 }

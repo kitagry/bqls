@@ -5,9 +5,7 @@ import (
 	"fmt"
 
 	"cloud.google.com/go/bigquery"
-	"golang.org/x/oauth2/google"
 	"google.golang.org/api/cloudresourcemanager/v1"
-	"google.golang.org/api/compute/v1"
 	"google.golang.org/api/iterator"
 )
 
@@ -28,6 +26,9 @@ type Client interface {
 
 	// GetTableMetadata returns the metadata of the specified table.
 	GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.TableMetadata, error)
+
+	// Run runs the specified query.
+	Run(ctx context.Context, q string, dryrun bool) (BigqueryJob, error)
 }
 
 type client struct {
@@ -35,18 +36,13 @@ type client struct {
 	cloudresourcemanagerService *cloudresourcemanager.Service
 }
 
-func New(ctx context.Context, withCache bool) (Client, error) {
+func New(ctx context.Context, projectID string, withCache bool) (Client, error) {
 	cloudresourcemanagerService, err := cloudresourcemanager.NewService(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("cloudresourcemanager.NewService: %w", err)
 	}
 
-	credentials, err := google.FindDefaultCredentials(ctx, compute.ComputeScope)
-	if err != nil {
-		return nil, fmt.Errorf("google.FindDefaultCredentials: %w", err)
-	}
-
-	bqClient, err := bigquery.NewClient(ctx, credentials.ProjectID)
+	bqClient, err := bigquery.NewClient(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("bigquery.NewClient: %w", err)
 	}
@@ -138,4 +134,21 @@ func (c *client) GetTableMetadata(ctx context.Context, projectID, datasetID, tab
 	}
 
 	return md, nil
+}
+
+type BigqueryJob interface {
+	Read(context.Context) (*bigquery.RowIterator, error)
+	LastStatus() *bigquery.JobStatus
+}
+
+func (c *client) Run(ctx context.Context, q string, dryrun bool) (BigqueryJob, error) {
+	query := c.bqClient.Query(q)
+	query.DryRun = dryrun
+	query.UseLegacySQL = false
+	job, err := query.Run(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("fail to run query: %w", err)
+	}
+
+	return job, nil
 }
