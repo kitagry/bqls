@@ -459,43 +459,6 @@ func addInformationToNotExistInStructError(src string, parsedErr Error) Error {
 	return parsedErr
 }
 
-// fix field name <name> error.
-//
-//	SELECT struct.unexist_column FROM table
-//
-// becomes
-//
-//	SELECT "1111111111111111111" FROM table
-func fixFieldDoesNotExistInStructStatement(src string, parsedErr Error) (fixedSrc string, err Error, fixOffsets []FixOffset) {
-	ind := strings.Index(parsedErr.Msg, "Field name ")
-	if ind == -1 {
-		return src, parsedErr, nil
-	}
-	notExistColumn := parsedErr.Msg[ind+len("Field name "):]
-	notExistColumn = notExistColumn[:strings.Index(notExistColumn, " ")]
-
-	errOffset := positionToByteOffset(src, parsedErr.Position)
-	if errOffset == 0 || errOffset == len(src) {
-		return src, parsedErr, nil
-	}
-
-	fixOffset := FixOffset{Offset: errOffset, Length: 0}
-	parsedErr.TermLength = len(notExistColumn)
-
-	firstIndex := strings.LastIndex(src[:errOffset], " ") + 1
-	if firstIndex == 0 {
-		fixedSrc = src[:errOffset] + "*," + src[errOffset+len(notExistColumn):]
-		fixOffset.Length = len(notExistColumn) - len("*,")
-		return fixedSrc, parsedErr, []FixOffset{fixOffset}
-	}
-	// struct.uneixst_column
-	parsedErr.IncompleteColumnName = src[firstIndex : errOffset+len(notExistColumn)]
-	structLen := len(src[firstIndex:errOffset])
-	fixedSrc = src[:firstIndex] + `"` + strings.Repeat("1", structLen+len(notExistColumn)-2) + `"` + src[errOffset+len(notExistColumn):]
-
-	return fixedSrc, parsedErr, []FixOffset{fixOffset}
-}
-
 func addInformationToNotFoundInsideTableError(src string, parsedErr Error) Error {
 	ind := strings.Index(parsedErr.Msg, "INVALID_ARGUMENT: Name ")
 	if ind == -1 {

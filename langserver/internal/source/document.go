@@ -8,8 +8,6 @@ import (
 	"strings"
 
 	"cloud.google.com/go/bigquery"
-	"github.com/goccy/go-json"
-	"github.com/goccy/go-yaml"
 	"github.com/goccy/go-zetasql"
 	"github.com/goccy/go-zetasql/ast"
 	rast "github.com/goccy/go-zetasql/resolved_ast"
@@ -77,18 +75,18 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 			// cannot find table metadata
 			return []lsp.MarkedString{
 				{
-					Language: "markdown",
-					Value:    fmt.Sprintf("%s: %s", column.Name(), column.Type().TypeName(types.ProductExternal)),
+					Language: "yaml",
+					Value:    createColumnYamlString(column),
 				},
 			}, nil
 		}
 
-		for _, c := range tableMetadata.Schema {
-			if column.Name() == c.Name {
+		for _, f := range tableMetadata.Schema {
+			if column.Name() == f.Name {
 				return []lsp.MarkedString{
 					{
-						Language: "markdown",
-						Value:    fmt.Sprintf("%s: %s\n%s", c.Name, c.Type, c.Description),
+						Language: "yaml",
+						Value:    createBigQueryFieldYamlString(f, 0),
 					},
 				}, nil
 			}
@@ -105,18 +103,18 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 		if err != nil {
 			return []lsp.MarkedString{
 				{
-					Language: "markdown",
-					Value:    fmt.Sprintf("%s: %s", column.Name(), column.Type().TypeName(types.ProductExternal)),
+					Language: "yaml",
+					Value:    createColumnYamlString(column),
 				},
 			}, nil
 		}
 
-		for _, c := range tableMetadata.Schema {
-			if column.Name() == c.Name {
+		for _, f := range tableMetadata.Schema {
+			if column.Name() == f.Name {
 				return []lsp.MarkedString{
 					{
-						Language: "markdown",
-						Value:    fmt.Sprintf("%s: %s\n%s", c.Name, c.Type, c.Description),
+						Language: "yaml",
+						Value:    createBigQueryFieldYamlString(f, 0),
 					},
 				}, nil
 			}
@@ -195,11 +193,6 @@ func (p *Project) createTableMarkedString(ctx context.Context, node *rast.TableS
 		return nil, fmt.Errorf("failed to get table metadata: %w", err)
 	}
 
-	columns := make([]string, len(targetTable.Schema))
-	for i, c := range targetTable.Schema {
-		columns[i] = fmt.Sprintf("* %s: %s %s", c.Name, string(c.Type), c.Description)
-	}
-
 	return buildBigQueryTableMetadataMarkedString(targetTable)
 }
 
@@ -209,33 +202,7 @@ func (p *Project) getSelectColumnNodeToAnalyzedOutputCoumnNode(output *zetasql.A
 		return nil, fmt.Errorf("failed to find scand node")
 	}
 
-	refNames := make([]string, 0)
-	tmpScanNode := targetScanNode
-	for tmpScanNode != nil {
-		switch n := tmpScanNode.(type) {
-		case *rast.ProjectScanNode:
-			tmpScanNode = n.InputScan()
-		case *rast.WithScanNode:
-			tmpScanNode = n.Query()
-		case *rast.OrderByScanNode:
-			tmpScanNode = n.InputScan()
-		case *rast.AggregateScanNode:
-			tmpScanNode = n.InputScan()
-		case *rast.FilterScanNode:
-			tmpScanNode = n.InputScan()
-		case *rast.TableScanNode:
-			if n.Alias() != "" {
-				refNames = append(refNames, n.Alias())
-			}
-			tmpScanNode = nil
-		case *rast.WithRefScanNode:
-			refNames = append(refNames, n.WithQueryName())
-			tmpScanNode = nil
-		default:
-			p.logger.Debugf("Unsupported type: %T", n)
-			tmpScanNode = nil
-		}
-	}
+	refNames := p.listRefNamesForScanNode(targetScanNode)
 
 	columnName, ok := getSelectColumnName(column)
 	if !ok {
@@ -247,6 +214,7 @@ func (p *Project) getSelectColumnNodeToAnalyzedOutputCoumnNode(output *zetasql.A
 		tablePrefix := fmt.Sprintf("%s.", refName)
 		if strings.HasPrefix(columnName, tablePrefix) {
 			columnName = strings.TrimPrefix(columnName, tablePrefix)
+			break
 		}
 	}
 
@@ -379,17 +347,44 @@ func getSelectColumnName(targetNode *ast.SelectColumnNode) (string, bool) {
 func createColumnListYamlString(columnLists []*rast.Column) string {
 	markdownBuilder := &strings.Builder{}
 	for _, column := range columnLists {
-		markdownBuilder.WriteString(fmt.Sprintf("- name: %s\n  type: %s\n", column.Name(), column.Type().TypeName(types.ProductExternal)))
+		markdownBuilder.WriteString(createColumnYamlString(column))
 	}
 	return markdownBuilder.String()
 }
 
-type Schema struct {
-	Name        string   `json:"name" yaml:"name"`
-	Type        string   `json:"type" yaml:"type"`
-	Mode        string   `json:"mode" yaml:"mode,omitempty"`
-	Description string   `json:"description" yaml:"description,omitempty"`
-	Fields      []Schema `json:"fields" yaml:"fields,omitempty"`
+func createColumnYamlString(column *rast.Column) string {
+	return fmt.Sprintf("- name: %s\n  type: %s\n", column.Name(), column.Type().TypeName(types.ProductExternal))
+}
+
+func createBigQuerySchemaYamlString(schema bigquery.Schema, depth int) string {
+	builder := &strings.Builder{}
+	for _, f := range schema {
+		builder.WriteString(createBigQueryFieldYamlString(f, depth))
+	}
+	return builder.String()
+}
+
+func createBigQueryFieldYamlString(field *bigquery.FieldSchema, depth int) string {
+	indent := strings.Repeat("  ", depth)
+	builder := &strings.Builder{}
+	builder.WriteString(fmt.Sprintf("%s- name: %s\n", indent, field.Name))
+	builder.WriteString(fmt.Sprintf("%s  type: %s\n", indent, field.Type))
+
+	if field.Repeated {
+		builder.WriteString(fmt.Sprintf("%s  mode: REPEATED\n", indent))
+	} else if field.Required {
+		builder.WriteString(fmt.Sprintf("%s  mode: REQUIRED\n", indent))
+	}
+
+	if field.Description != "" {
+		builder.WriteString(fmt.Sprintf("%s  description: %s\n", indent, field.Description))
+	}
+
+	if len(field.Schema) > 0 {
+		builder.WriteString(createBigQuerySchemaYamlString(field.Schema, depth+1))
+	}
+
+	return builder.String()
 }
 
 func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([]lsp.MarkedString, error) {
@@ -403,21 +398,6 @@ func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([
 	// If cache the metadata, we should delete last modified time because it is confusing.
 	resultStr += fmt.Sprintf("\nlast modified at %s", metadata.LastModifiedTime.Format("2006-01-02 15:04:05"))
 
-	schemaJson, err := metadata.Schema.ToJSONFields()
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert schema to json: %w", err)
-	}
-
-	var result []Schema
-	err = json.Unmarshal(schemaJson, &result)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal json: %w", err)
-	}
-	schemaYaml, err := yaml.Marshal(result)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal yaml: %w", err)
-	}
-
 	return []lsp.MarkedString{
 		{
 			Language: "markdown",
@@ -425,7 +405,7 @@ func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([
 		},
 		{
 			Language: "yaml",
-			Value:    string(schemaYaml),
+			Value:    createBigQuerySchemaYamlString(metadata.Schema, 0),
 		},
 	}, nil
 }
