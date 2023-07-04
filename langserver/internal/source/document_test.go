@@ -115,8 +115,11 @@ last modified at 2023-06-17 00:00:00`,
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
-					Language: "markdown",
-					Value:    "name: STRING\nname description",
+					Language: "yaml",
+					Value: `- name: name
+  type: STRING
+  description: name description
+`,
 				},
 			},
 		},
@@ -138,8 +141,11 @@ last modified at 2023-06-17 00:00:00`,
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
-					Language: "markdown",
-					Value:    "name: STRING\nname description",
+					Language: "yaml",
+					Value: `- name: name
+  type: STRING
+  description: name description
+`,
 				},
 			},
 		},
@@ -159,8 +165,11 @@ last modified at 2023-06-17 00:00:00`,
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
-					Language: "markdown",
-					Value:    "name: STRING\nname description",
+					Language: "yaml",
+					Value: `- name: name
+  type: STRING
+  description: name description
+`,
 				},
 			},
 		},
@@ -195,7 +204,7 @@ last modified at 2023-06-17 00:00:00`,
 				},
 			},
 		},
-		"hover column in where coluse": {
+		"hover column in where clouse": {
 			files: map[string]string{
 				"file1.sql": "SELECT name AS alias_name FROM `project.dataset.table` WHERE |name = 'test'",
 			},
@@ -213,8 +222,11 @@ last modified at 2023-06-17 00:00:00`,
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
-					Language: "markdown",
-					Value:    "name: STRING\nname description",
+					Language: "yaml",
+					Value: `- name: name
+  type: STRING
+  description: name description
+`,
 				},
 			},
 		},
@@ -245,9 +257,16 @@ last modified at 2023-06-17 00:00:00`,
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
-					Language: "markdown",
-					Value: `params: RECORD
-params description`,
+					Language: "yaml",
+					Value: `- name: params
+  type: RECORD
+  mode: REPEATED
+  description: params description
+  - name: key
+    type: STRING
+  - name: value
+    type: STRING
+`,
 				},
 			},
 		},
@@ -290,9 +309,11 @@ JSON_VALUE(JSON, optional STRING {default_value: "$"}) -> STRING`,
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
-					Language: "markdown",
-					Value: `json: JSON
-json description`,
+					Language: "yaml",
+					Value: `- name: json
+  type: JSON
+  description: json description
+`,
 				},
 			},
 		},
@@ -332,9 +353,11 @@ json description`,
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
-					Language: "markdown",
-					Value: `id: INTEGER
-id description`,
+					Language: "yaml",
+					Value: `- name: id
+  type: INTEGER
+  description: id description
+`,
 				},
 			},
 		},
