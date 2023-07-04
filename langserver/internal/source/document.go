@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	"cloud.google.com/go/bigquery"
@@ -29,20 +30,18 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 		return nil, nil
 	}
 
-	// lookup table metadata
-	if targetNode, ok := lookupNode[*ast.TablePathExpressionNode](targetNode); ok {
-		result, err := p.createTableMarkedString(ctx, targetNode)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create table marked string: %w", err)
-		}
-		if len(result) > 0 {
-			return result, nil
-		}
-	}
-
 	output, ok := parsedFile.FindTargetAnalyzeOutput(termOffset)
 	if !ok {
+		p.logger.Debug("not found target analyze output")
 		return nil, nil
+	}
+
+	// lookup table metadata
+	if targetNode, ok := lookupNode[*ast.TablePathExpressionNode](targetNode); ok {
+		result, ok := p.termDocumentForInputScan(ctx, termOffset, targetNode, output, parsedFile)
+		if ok {
+			return result, nil
+		}
 	}
 
 	if node, ok := searchResolvedAstNode[*rast.FunctionCallNode](output, termOffset); ok {
@@ -62,7 +61,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 		return []lsp.MarkedString{
 			{
 				Language: "markdown",
-				Value:    node.Type().DebugString(false),
+				Value:    node.Type().TypeName(types.ProductExternal),
 			},
 		}, nil
 	}
@@ -79,7 +78,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 			return []lsp.MarkedString{
 				{
 					Language: "markdown",
-					Value:    fmt.Sprintf("%s: %s", column.Name(), column.Type()),
+					Value:    fmt.Sprintf("%s: %s", column.Name(), column.Type().TypeName(types.ProductExternal)),
 				},
 			}, nil
 		}
@@ -97,19 +96,19 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 	}
 
 	if selectColumnNode, ok := lookupNode[*ast.SelectColumnNode](targetNode); ok {
-		c, err := p.getSelectColumnNodeToAnalyzedOutputCoumnNode(output, selectColumnNode, termOffset)
+		column, err := p.getSelectColumnNodeToAnalyzedOutputCoumnNode(output, selectColumnNode, termOffset)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get column info: %w", err)
 		}
 
-		column := c.Column()
-		if column == nil {
-			return nil, fmt.Errorf("failed to find column: %v", c)
-		}
-
 		tableMetadata, err := p.getTableMetadataFromPath(ctx, column.TableName())
 		if err != nil {
-			return nil, fmt.Errorf("failed to get table metadata: %w", err)
+			return []lsp.MarkedString{
+				{
+					Language: "markdown",
+					Value:    fmt.Sprintf("%s: %s", column.Name(), column.Type().TypeName(types.ProductExternal)),
+				},
+			}, nil
 		}
 
 		for _, c := range tableMetadata.Schema {
@@ -127,12 +126,71 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 	return nil, nil
 }
 
-func (p *Project) createTableMarkedString(ctx context.Context, node *ast.TablePathExpressionNode) ([]lsp.MarkedString, error) {
-	tablePath, ok := createTableNameFromTablePathExpressionNode(node)
+func (p *Project) termDocumentForInputScan(ctx context.Context, termOffset int, targetNode *ast.TablePathExpressionNode, output *zetasql.AnalyzerOutput, parsedFile ParsedFile) ([]lsp.MarkedString, bool) {
+	targetScanNode, ok := getMostNarrowScanNode(termOffset, output.Statement())
 	if !ok {
-		return nil, nil
+		return nil, false
 	}
-	targetTable, err := p.getTableMetadataFromPath(ctx, tablePath)
+
+	name, ok := createTableNameFromTablePathExpressionNode(targetNode)
+	if !ok {
+		p.logger.Debug("not found table name")
+		return nil, false
+	}
+
+	scanNode, ok := p.findInputScan(name, targetScanNode)
+	if !ok {
+		p.logger.Debug("not found scan node")
+		return nil, false
+	}
+
+	switch node := scanNode.(type) {
+	case *rast.TableScanNode:
+		result, err := p.createTableMarkedString(ctx, node)
+		if err != nil {
+			return nil, false
+		}
+		if len(result) > 0 {
+			return result, true
+		}
+	case *rast.WithRefScanNode:
+		withEntries := listResolvedAstNode[*rast.WithEntryNode](output)
+		if len(withEntries) == 0 {
+			p.logger.Debug("not found with entries")
+			return nil, false
+		}
+
+		result := []lsp.MarkedString{
+			{
+				Language: "yaml",
+				Value:    createColumnListYamlString(node.ColumnList()),
+			},
+		}
+		for _, entry := range withEntries {
+			if entry.WithQueryName() == name {
+				subQuery := entry.WithSubquery()
+				switch n := subQuery.(type) {
+				case *rast.ProjectScanNode:
+					sql, ok := parsedFile.ExtractSQL(n.ParseLocationRange())
+					if !ok {
+						break
+					}
+
+					sql = fmt.Sprintf("WITH %s AS (\n%s\n)", entry.WithQueryName(), sql)
+					result = append(result, lsp.MarkedString{
+						Language: "sql",
+						Value:    sql,
+					})
+				}
+			}
+		}
+		return result, true
+	}
+	return nil, false
+}
+
+func (p *Project) createTableMarkedString(ctx context.Context, node *rast.TableScanNode) ([]lsp.MarkedString, error) {
+	targetTable, err := p.getTableMetadataFromPath(ctx, node.Table().Name())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get table metadata: %w", err)
 	}
@@ -145,48 +203,167 @@ func (p *Project) createTableMarkedString(ctx context.Context, node *ast.TablePa
 	return buildBigQueryTableMetadataMarkedString(targetTable)
 }
 
-func (p *Project) getSelectColumnNodeToAnalyzedOutputCoumnNode(output *zetasql.AnalyzerOutput, column *ast.SelectColumnNode, termOffset int) (*rast.OutputColumnNode, error) {
-	children := output.Statement().ChildNodes()
-	var tables []*rast.TableScanNode
-	rast.Walk(output.Statement(), func(n rast.Node) error {
-		t, ok := n.(*rast.TableScanNode)
-		if !ok {
-			return nil
-		}
-		tables = append(tables, t)
-		return nil
-	})
+func (p *Project) getSelectColumnNodeToAnalyzedOutputCoumnNode(output *zetasql.AnalyzerOutput, column *ast.SelectColumnNode, termOffset int) (*rast.Column, error) {
+	targetScanNode, ok := getMostNarrowScanNode(termOffset, output.Statement())
+	if !ok {
+		return nil, fmt.Errorf("failed to find scand node")
+	}
 
-	for _, child := range children {
-		outputColumn, ok := child.(*rast.OutputColumnNode)
-		if !ok {
-			continue
-		}
-
-		columnName, ok := getSelectColumnName(column)
-		if !ok {
-			continue
-		}
-
-		for _, t := range tables {
-			if strings.HasPrefix(columnName, fmt.Sprintf("%s.", t.Alias())) {
-				columnName = strings.TrimLeft(columnName, fmt.Sprintf("%s.", t.Alias()))
+	refNames := make([]string, 0)
+	tmpScanNode := targetScanNode
+	for tmpScanNode != nil {
+		switch n := tmpScanNode.(type) {
+		case *rast.ProjectScanNode:
+			tmpScanNode = n.InputScan()
+		case *rast.WithScanNode:
+			tmpScanNode = n.Query()
+		case *rast.OrderByScanNode:
+			tmpScanNode = n.InputScan()
+		case *rast.AggregateScanNode:
+			tmpScanNode = n.InputScan()
+		case *rast.FilterScanNode:
+			tmpScanNode = n.InputScan()
+		case *rast.TableScanNode:
+			if n.Alias() != "" {
+				refNames = append(refNames, n.Alias())
 			}
+			tmpScanNode = nil
+		case *rast.WithRefScanNode:
+			refNames = append(refNames, n.WithQueryName())
+			tmpScanNode = nil
+		default:
+			p.logger.Debugf("Unsupported type: %T", n)
+			tmpScanNode = nil
 		}
+	}
 
-		if outputColumn.Name() == columnName {
-			return outputColumn, nil
+	columnName, ok := getSelectColumnName(column)
+	if !ok {
+		return nil, fmt.Errorf("failed getSelectColumnName: %s", column.DebugString(0))
+	}
+
+	// remove table prefix
+	for _, refName := range refNames {
+		tablePrefix := fmt.Sprintf("%s.", refName)
+		if strings.HasPrefix(columnName, tablePrefix) {
+			columnName = strings.TrimPrefix(columnName, tablePrefix)
+		}
+	}
+
+	for _, c := range targetScanNode.ColumnList() {
+		if c.Name() == columnName {
+			return c, nil
 		}
 	}
 	return nil, fmt.Errorf("failed to find column info")
 }
 
-func getSelectColumnName(targetNode *ast.SelectColumnNode) (string, bool) {
-	alias := targetNode.Alias()
-	if alias != nil {
-		return alias.Name(), true
+func (p *Project) listRefNamesForScanNode(scanNode rast.ScanNode) []string {
+	switch n := scanNode.(type) {
+	case *rast.ProjectScanNode:
+		return p.listRefNamesForScanNode(n.InputScan())
+	case *rast.WithScanNode:
+		return p.listRefNamesForScanNode(n.Query())
+	case *rast.OrderByScanNode:
+		return p.listRefNamesForScanNode(n.InputScan())
+	case *rast.AggregateScanNode:
+		return p.listRefNamesForScanNode(n.InputScan())
+	case *rast.FilterScanNode:
+		return p.listRefNamesForScanNode(n.InputScan())
+	case *rast.JoinScanNode:
+		return append(p.listRefNamesForScanNode(n.LeftScan()), p.listRefNamesForScanNode(n.RightScan())...)
+	case *rast.TableScanNode:
+		if n.Alias() != "" {
+			return []string{n.Alias()}
+		}
+		return nil
+	case *rast.WithRefScanNode:
+		return []string{n.WithQueryName()}
+	default:
+		p.logger.Debugf("Unsupported type: %T", n)
+		return nil
+	}
+}
+
+func (p *Project) findInputScan(name string, scanNode rast.ScanNode) (rast.ScanNode, bool) {
+	for scanNode != nil {
+		switch n := scanNode.(type) {
+		case *rast.ProjectScanNode:
+			scanNode = n.InputScan()
+		case *rast.WithScanNode:
+			scanNode = n.Query()
+		case *rast.OrderByScanNode:
+			scanNode = n.InputScan()
+		case *rast.AggregateScanNode:
+			scanNode = n.InputScan()
+		case *rast.FilterScanNode:
+			scanNode = n.InputScan()
+		case *rast.JoinScanNode:
+			left, ok := p.findInputScan(name, n.LeftScan())
+			if ok {
+				return left, true
+			}
+			right, ok := p.findInputScan(name, n.RightScan())
+			if ok {
+				return right, true
+			}
+			return nil, false
+		case *rast.TableScanNode:
+			if n.Alias() == name {
+				return n, true
+			}
+			if n.Table().Name() == name {
+				return n, true
+			}
+			return nil, false
+		case *rast.WithRefScanNode:
+			if n.WithQueryName() == name {
+				return n, true
+			}
+			return nil, false
+		default:
+			p.logger.Debugf("Unsupported type: %T", n)
+			return nil, false
+		}
+	}
+	return nil, false
+}
+
+func getMostNarrowScanNode(termOffset int, stmt rast.StatementNode) (rast.ScanNode, bool) {
+	scanNodes := make([]rast.ScanNode, 0)
+	rast.Walk(stmt, func(n rast.Node) error {
+		t, ok := n.(rast.ScanNode)
+		if !ok {
+			return nil
+		}
+		scanNodes = append(scanNodes, t)
+		return nil
+	})
+
+	mostNarrowWidth := math.MaxInt
+	var targetScanNode rast.ScanNode
+	for _, node := range scanNodes {
+		lrange := node.ParseLocationRange()
+		if lrange == nil {
+			continue
+		}
+
+		startOffset := lrange.Start().ByteOffset()
+		endOffset := lrange.End().ByteOffset()
+		if termOffset < startOffset || endOffset < termOffset {
+			continue
+		}
+
+		width := lrange.End().ByteOffset() - lrange.Start().ByteOffset()
+		if width < mostNarrowWidth {
+			targetScanNode = node
+		}
 	}
 
+	return targetScanNode, targetScanNode != nil
+}
+
+func getSelectColumnName(targetNode *ast.SelectColumnNode) (string, bool) {
 	path, ok := targetNode.Expression().(*ast.PathExpressionNode)
 	if !ok {
 		return "", false
@@ -197,6 +374,14 @@ func getSelectColumnName(targetNode *ast.SelectColumnNode) (string, bool) {
 		names[i] = t.Name()
 	}
 	return strings.Join(names, "."), true
+}
+
+func createColumnListYamlString(columnLists []*rast.Column) string {
+	markdownBuilder := &strings.Builder{}
+	for _, column := range columnLists {
+		markdownBuilder.WriteString(fmt.Sprintf("- name: %s\n  type: %s\n", column.Name(), column.Type().TypeName(types.ProductExternal)))
+	}
+	return markdownBuilder.String()
 }
 
 type Schema struct {
@@ -226,7 +411,6 @@ func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([
 	var result []Schema
 	err = json.Unmarshal(schemaJson, &result)
 	if err != nil {
-		fmt.Println(string(schemaJson))
 		return nil, fmt.Errorf("failed to unmarshal json: %w", err)
 	}
 	schemaYaml, err := yaml.Marshal(result)
@@ -330,6 +514,20 @@ func searchResolvedAstNode[T locationRangeNode](output *zetasql.AnalyzerOutput, 
 		return targetNode, found
 	}
 	return targetNode, false
+}
+
+func listResolvedAstNode[T locationRangeNode](output *zetasql.AnalyzerOutput) []T {
+	result := make([]T, 0)
+	rast.Walk(output.Statement(), func(n rast.Node) error {
+		node, ok := n.(T)
+		if !ok {
+			return nil
+		}
+		result = append(result, node)
+		return nil
+	})
+
+	return result
 }
 
 type astNode interface {

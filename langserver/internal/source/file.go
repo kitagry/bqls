@@ -8,6 +8,7 @@ import (
 
 	"github.com/goccy/go-zetasql"
 	"github.com/goccy/go-zetasql/ast"
+	"github.com/goccy/go-zetasql/types"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 )
 
@@ -29,6 +30,26 @@ func (p ParsedFile) fixTermOffsetForNode(termOffset int) int {
 	for _, fo := range p.FixOffsets {
 		if termOffset > fo.Offset+fo.Length {
 			termOffset += fo.Length
+		}
+	}
+	return termOffset
+}
+
+func (p ParsedFile) ExtractSQL(locationRange *types.ParseLocationRange) (string, bool) {
+	if locationRange == nil {
+		return "", false
+	}
+
+	startOffset := p.fixTermOFfsetForSQL(locationRange.Start().ByteOffset())
+	endOffset := p.fixTermOFfsetForSQL(locationRange.End().ByteOffset())
+
+	return p.Src[startOffset:endOffset], true
+}
+
+func (p ParsedFile) fixTermOFfsetForSQL(termOffset int) int {
+	for _, fo := range p.FixOffsets {
+		if termOffset > fo.Offset+fo.Length {
+			termOffset -= fo.Length
 		}
 	}
 	return termOffset
