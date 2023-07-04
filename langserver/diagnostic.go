@@ -65,6 +65,9 @@ func (h *Handler) scheduleDryRun() {
 		go func() {
 			diagnostics, totalProcessed, err := h.dryrun(ctx, uri)
 			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
 				sendErr := h.showMessage(ctx, lsp.MTError, errors.Unwrap(err).Error())
 				if sendErr != nil {
 					h.logger.Errorf("failed to dryrun: %v", err)
@@ -138,7 +141,7 @@ func bytesConvert(bytes int64) string {
 	}
 
 	base := math.Floor(math.Log(float64(bytes)) / math.Log(1024))
-	units := []string{"bytes", "KiB", "MiB", "GiB"}
+	units := []string{"bytes", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB"}
 
 	stringVal := fmt.Sprintf("%.2f", float64(bytes)/math.Pow(1024, base))
 	stringVal = strings.TrimSuffix(stringVal, ".00")

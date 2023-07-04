@@ -7,7 +7,18 @@ import (
 )
 
 func createTableNameFromTablePathExpressionNode(node *ast.TablePathExpressionNode) (string, bool) {
-	pathExpr := node.PathExpr()
+	var pathExpr *ast.PathExpressionNode
+	if unnestExpr := node.UnnestExpr(); unnestExpr != nil {
+		ex, ok := unnestExpr.Expression().(*ast.PathExpressionNode)
+		if ok {
+			pathExpr = ex
+		}
+	}
+
+	if pExpr := node.PathExpr(); pExpr != nil {
+		pathExpr = pExpr
+	}
+
 	if pathExpr == nil {
 		return "", false
 	}

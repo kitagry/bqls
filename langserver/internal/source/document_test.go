@@ -60,43 +60,9 @@ last modified at 2023-06-17 00:00:00`,
 				},
 			},
 		},
-		"hover separated into project, dataset and table": {
-			files: map[string]string{
-				"file1.sql": "SELECT * FROM |`project`.`dataset`.`table`",
-			},
-			bqTableMetadata: &bq.TableMetadata{
-				FullID:           "project.dataset.table",
-				Description:      "table description",
-				CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
-				LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
-				Schema: bq.Schema{
-					{
-						Name:        "name",
-						Type:        bq.StringFieldType,
-						Description: "name description",
-					},
-				},
-			},
-			expectMarkedStrings: []lsp.MarkedString{
-				{
-					Language: "markdown",
-					Value: `## project.dataset.table
-table description
-created at 2023-06-17 00:00:00
-last modified at 2023-06-17 00:00:00`,
-				},
-				{
-					Language: "yaml",
-					Value: `- name: name
-  type: STRING
-  description: name description
-`,
-				},
-			},
-		},
 		"hover joined table": {
 			files: map[string]string{
-				"file1.sql": "SELECT * FROM `project.dataset.dummy_table` JOIN |`project.dataset.table`",
+				"file1.sql": "SELECT * FROM `project.dataset.table` table1 JOIN |`project.dataset.table` table2 ON table1.name = table2.name",
 			},
 			bqTableMetadata: &bq.TableMetadata{
 				FullID:           "project.dataset.table",
@@ -346,7 +312,7 @@ json description`,
 			expectMarkedStrings: []lsp.MarkedString{
 				{
 					Language: "markdown",
-					Value:    "id: INTEGER\n",
+					Value:    "id: INT64",
 				},
 			},
 		},
@@ -369,6 +335,33 @@ json description`,
 					Language: "markdown",
 					Value: `id: INTEGER
 id description`,
+				},
+			},
+		},
+		"hover WITH clause reference name": {
+			files: map[string]string{
+				"file1.sql": "WITH data AS (SELECT id AS hoge FROM `project.dataset.table`)\nSELECT * FROM data|",
+			},
+			bqTableMetadata: &bq.TableMetadata{
+				FullID: "project.dataset.table",
+				Schema: bq.Schema{
+					{
+						Name:        "id",
+						Type:        bq.IntegerFieldType,
+						Description: "id description",
+					},
+				},
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{
+					Language: "yaml",
+					Value: `- name: hoge
+  type: INT64
+`,
+				},
+				{
+					Language: "sql",
+					Value:    "WITH data AS (\nSELECT id AS hoge FROM `project.dataset.table`\n)",
 				},
 			},
 		},
