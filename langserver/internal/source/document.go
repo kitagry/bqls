@@ -214,6 +214,7 @@ func (p *Project) getSelectColumnNodeToAnalyzedOutputCoumnNode(output *zetasql.A
 		tablePrefix := fmt.Sprintf("%s.", refName)
 		if strings.HasPrefix(columnName, tablePrefix) {
 			columnName = strings.TrimPrefix(columnName, tablePrefix)
+			break
 		}
 	}
 

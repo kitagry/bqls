@@ -332,8 +332,10 @@ JSON_VALUE(JSON, optional STRING {default_value: "$"}) -> STRING`,
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
-					Language: "markdown",
-					Value:    "id: INT64",
+					Language: "yaml",
+					Value: `- name: id
+  type: INT64
+`,
 				},
 			},
 		},
