@@ -127,6 +127,21 @@ func (p *Project) Dryrun(ctx context.Context, path string) (*bq.JobStatus, error
 	return result.LastStatus(), nil
 }
 
+func (p *Project) Run(ctx context.Context, path string) (bigquery.BigqueryJob, error) {
+	sql := p.cache.Get(path)
+	if sql == nil {
+		return nil, nil
+	}
+
+	dryrun := false
+	result, err := p.bqClient.Run(ctx, sql.RawText, dryrun)
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
 func (p *Project) analyzeStatement(rawText string, stmt ast.StatementNode) (*zetasql.AnalyzerOutput, error) {
 	langOpt := zetasql.NewLanguageOptions()
 	langOpt.SetNameResolutionMode(zetasql.NameResolutionDefault)

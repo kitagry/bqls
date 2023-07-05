@@ -137,6 +137,7 @@ func (c *client) GetTableMetadata(ctx context.Context, projectID, datasetID, tab
 }
 
 type BigqueryJob interface {
+	ID() string
 	Read(context.Context) (*bigquery.RowIterator, error)
 	LastStatus() *bigquery.JobStatus
 }
