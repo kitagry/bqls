@@ -74,11 +74,20 @@ func (h *Handler) commandExecuteQuery(ctx context.Context, params lsp.ExecuteCom
 
 	path := documentURIToURI(lsp.DocumentURI(uri))
 
+	workDoneToken := lsp.ProgressToken("execute_query")
+	h.workDoneProgressBegin(ctx, workDoneToken, lsp.WorkDoneProgressBegin{
+		Title:   "Execute Query",
+		Message: "Runing query...",
+	})
+	defer h.workDoneProgressEnd(ctx, workDoneToken, lsp.WorkDoneProgressEnd{})
 	job, err := h.project.Run(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 
+	h.workDoneProgressReport(ctx, workDoneToken, lsp.WorkDoneProgressReport{
+		Message: "Fetching query result...",
+	})
 	it, err := job.Read(ctx)
 	if err != nil {
 		return nil, err
