@@ -238,6 +238,10 @@ func (p *Project) listRefNamesForScanNode(scanNode rast.ScanNode) []string {
 		return p.listRefNamesForScanNode(n.InputScan())
 	case *rast.FilterScanNode:
 		return p.listRefNamesForScanNode(n.InputScan())
+	case *rast.ArrayScanNode:
+		return p.listRefNamesForScanNode(n.InputScan())
+	case *rast.AnalyticScanNode:
+		return p.listRefNamesForScanNode(n.InputScan())
 	case *rast.JoinScanNode:
 		return append(p.listRefNamesForScanNode(n.LeftScan()), p.listRefNamesForScanNode(n.RightScan())...)
 	case *rast.TableScanNode:
@@ -248,7 +252,7 @@ func (p *Project) listRefNamesForScanNode(scanNode rast.ScanNode) []string {
 	case *rast.WithRefScanNode:
 		return []string{n.WithQueryName()}
 	default:
-		p.logger.Debugf("Unsupported type: %T", n)
+		p.logger.Debugf("Unsupported type: %T\n%s", n, scanNode.DebugString())
 		return nil
 	}
 }
@@ -276,6 +280,10 @@ func (p *Project) findInputScan(name string, scanNode rast.ScanNode) (rast.ScanN
 				return right, true
 			}
 			return nil, false
+		case *rast.ArrayScanNode:
+			scanNode = n.InputScan()
+		case *rast.AnalyticScanNode:
+			scanNode = n.InputScan()
 		case *rast.TableScanNode:
 			if n.Alias() == name {
 				return n, true
@@ -290,7 +298,7 @@ func (p *Project) findInputScan(name string, scanNode rast.ScanNode) (rast.ScanN
 			}
 			return nil, false
 		default:
-			p.logger.Debugf("Unsupported type: %T", n)
+			p.logger.Debugf("Unsupported type: %T\n%s", n, n.DebugString())
 			return nil, false
 		}
 	}
