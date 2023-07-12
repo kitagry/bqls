@@ -76,12 +76,9 @@ jobs:
         ls -lR ./
         cd ../
 
-    - id: lowerCaseOS
-      run: INPUT=${{ runner.os }} echo "::set-output name=os::${INPUT,,}"
-
-    - uses: goreleaser/goreleaser-action@v2
+    - name: Upload binaries to release
+      uses: svenstaro/upload-release-action@v2
       with:
-        version: latest
-        args: release --config=./.goreleaser-${{ matrix.lower_os }}.yml --clean
-      env:
-        GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+        repo_token: ${{ secrets.ACCESS_TOKEN }}
+        file: ./build/${{ matrix.asset_name }}.zip
+        tag: ${{ github.ref }}
