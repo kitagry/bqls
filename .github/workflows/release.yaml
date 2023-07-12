@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags: ["*"]
+
+jobs:
+  release:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            lower_os: linux
+            asset_name: bqls_linux_amd64
+          - os: macos-latest
+            lower_os: macos
+            asset_name: bqls_darwin_amd64
+    name: Release Go Binary
+    runs-on: ${{ matrix.os }}
+    env:
+      BIN_NAME: bqls
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: setup Go
+      uses: actions/setup-go@v4
+      with:
+        go-version-file: go.mod
+        cache: true
+
+    - name: cache for linux
+      uses: actions/cache@v3
+      if: runner.os == 'Linux'
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: cache for macOS
+      uses: actions/cache@v3
+      if: runner.os == 'macOS'
+      with:
+        path: |
+          ~/Library/Caches/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: download modules
+      run: |
+        go mod download
+
+    - uses: rui314/setup-mold@v1
+
+    - name: Set tag to environment variable
+      id: set-tag
+      run: echo ::set-output name=version::${GITHUB_REF#refs/*/}
+
+    - name: build
+      run: mkdir ./build && go build -o ./build/bqls -ldflags '-s -w -X main.version=${{ steps.set-tag.outputs.version }}' .
+      env:
+        CC: clang
+        CXX: clang++
+
+    - name: Zip binaries
+      run: |
+        cd build
+        zip ${{ matrix.asset_name }}.zip bqls
+        ls -lR ./
+        cd ../
+
+    - id: lowerCaseOS
+      run: INPUT=${{ runner.os }} echo "::set-output name=os::${INPUT,,}"
+
+    - uses: goreleaser/goreleaser-action@v2
+      with:
+        version: latest
+        args: release --config=./.goreleaser-${{ matrix.lower_os }}.yml --clean
+      env:
+        GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
