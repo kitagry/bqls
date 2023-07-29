@@ -12,7 +12,7 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 )
 
-var lastDotRegex = regexp.MustCompile(`\w+\.\s`)
+var lastDotRegex = regexp.MustCompile(`[\w.]+\.\s`)
 
 type ParsedFile struct {
 	URI string

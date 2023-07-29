@@ -219,6 +219,41 @@ func TestProject_CompleteColumn(t *testing.T) {
 				},
 			},
 		},
+		"Complete nested record column": {
+			files: map[string]string{
+				"file1.sql": "SELECT record.record.| FROM `project.dataset.table`",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "record",
+							Type: bq.RecordFieldType,
+							Schema: bq.Schema{
+								{
+									Name: "record",
+									Type: bq.RecordFieldType,
+									Schema: bq.Schema{
+										{
+											Name:        "id",
+											Description: "id description",
+											Type:        bq.IntegerFieldType,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectCompletionItems: []source.CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INTEGER\nid description",
+				},
+			},
+		},
 		"Complete record column with incomplete word": {
 			files: map[string]string{
 				"file1.sql": "SELECT record.i| FROM `project.dataset.table`",
