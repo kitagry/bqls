@@ -368,38 +368,65 @@ func (p *Project) createCompletionItemForRecordType(ctx context.Context, incompl
 	if len(splittedIncompleteColumnName) <= 1 {
 		return nil
 	}
-	afterRecord := splittedIncompleteColumnName[1]
+	afterRecord := strings.Join(splittedIncompleteColumnName[1:], ".")
 
 	tableMetadata, err := p.getTableMetadataFromPath(ctx, column.TableName())
-	items := make([]CompletionItem, 0)
 	if err != nil {
-		fields := column.Type().AsStruct().Fields()
+		return p.createCompletionItemForType(ctx, afterRecord, column.Type())
+	}
+
+	return p.createCompletionItemForBigquerySchema(ctx, incompleteColumnName, tableMetadata.Schema)
+}
+
+func (p *Project) createCompletionItemForType(ctx context.Context, incompleteColumnName string, typ types.Type) []CompletionItem {
+	if !typ.IsStruct() {
+		return nil
+	}
+
+	fields := typ.AsStruct().Fields()
+
+	inCompleteColumns := strings.Split(incompleteColumnName, ".")
+	if len(inCompleteColumns) > 1 {
 		for _, field := range fields {
-			if !strings.HasPrefix(field.Name(), afterRecord) {
-				continue
-			}
-			items = append(items, createCompletionItemFromColumn(field, afterRecord))
-		}
-		return items
-	}
-
-	for _, c := range tableMetadata.Schema {
-		if column.Name() == c.Name {
-			if c.Type != bigquery.RecordFieldType {
-				return nil
-			}
-
-			for _, field := range c.Schema {
-				if !strings.HasPrefix(field.Name, afterRecord) {
-					continue
+			if field.Name() == inCompleteColumns[0] {
+				if !field.Type().IsStruct() {
+					return nil
 				}
-				items = append(items, createCompletionItemFromSchema(field, afterRecord))
+				return p.createCompletionItemForType(ctx, strings.Join(inCompleteColumns[1:], "."), field.Type())
 			}
-			return items
 		}
+		return nil
 	}
 
-	return nil
+	items := make([]CompletionItem, 0)
+	for _, field := range fields {
+		if !strings.HasPrefix(field.Name(), incompleteColumnName) {
+			continue
+		}
+		items = append(items, createCompletionItemFromColumn(field, incompleteColumnName))
+	}
+	return items
+}
+
+func (p *Project) createCompletionItemForBigquerySchema(ctx context.Context, incompleteColumnName string, schema bigquery.Schema) []CompletionItem {
+	inCompleteColumns := strings.Split(incompleteColumnName, ".")
+	if len(inCompleteColumns) > 1 {
+		for _, field := range schema {
+			if field.Name == inCompleteColumns[0] {
+				return p.createCompletionItemForBigquerySchema(ctx, strings.Join(inCompleteColumns[1:], "."), field.Schema)
+			}
+		}
+		return nil
+	}
+
+	items := make([]CompletionItem, 0)
+	for _, field := range schema {
+		if !strings.HasPrefix(field.Name, incompleteColumnName) {
+			continue
+		}
+		items = append(items, createCompletionItemFromSchema(field, incompleteColumnName))
+	}
+	return items
 }
 
 type columnInterface interface {

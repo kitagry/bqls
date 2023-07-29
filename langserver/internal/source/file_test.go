@@ -47,6 +47,36 @@ func TestProject_ParseFile(t *testing.T) {
 				},
 			},
 		},
+		"parse 2 dot file": {
+			file: "SELECT t.record. FROM `project.dataset.table` t",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "record",
+							Type: bq.RecordFieldType,
+							Schema: bq.Schema{
+								{
+									Name: "id",
+									Type: bq.IntegerFieldType,
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedErrs: []source.Error{
+				{
+					Msg: "INVALID_ARGUMENT: Unrecognized name: t.record.",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 7,
+					},
+					TermLength:           9,
+					IncompleteColumnName: "t.record.",
+				},
+			},
+		},
 		"parse SELECT list must not be empty error file": {
 			file: "SELECT FROM `project.dataset.table`",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
