@@ -503,6 +503,29 @@ func TestProject_CompleteColumn(t *testing.T) {
 				},
 			},
 		},
+		"Complete column with table alias in where clause": {
+			files: map[string]string{
+				"file1.sql": "SELECT * FROM `project.dataset.table` t WHERE t.|",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Description: "id description",
+							Type:        bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []source.CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INTEGER\nid description",
+				},
+			},
+		},
 		"Complete column in group by clause": {
 			files: map[string]string{
 				"file1.sql": "SELECT * FROM `project.dataset.table` GROUP BY |",
@@ -571,6 +594,57 @@ func TestProject_CompleteColumn(t *testing.T) {
 					NewText:     "id",
 					Detail:      "INTEGER\nid description",
 					TypedPrefix: "i",
+				},
+			},
+		},
+		"Complete column on join clause": {
+			files: map[string]string{
+				"file1.sql": "SELECT * FROM `project.dataset.table` AS t1\nJOIN `project.dataset.table2` AS t2\nON |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Description: "id description",
+							Type:        bq.IntegerFieldType,
+						},
+					},
+				},
+				"project.dataset.table2": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Description: "id description2",
+							Type:        bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []source.CompletionItem{
+				{
+					Kind:        lsp.CIKField,
+					NewText:     "id",
+					Detail:      "INTEGER\nid description",
+					TypedPrefix: "",
+				},
+				{
+					Kind:        lsp.CIKField,
+					NewText:     "id",
+					Detail:      "INTEGER\nid description2",
+					TypedPrefix: "",
+				},
+				{
+					Kind:        lsp.CIKField,
+					NewText:     "t1",
+					Detail:      "project.dataset.table",
+					TypedPrefix: "",
+				},
+				{
+					Kind:        lsp.CIKField,
+					NewText:     "t2",
+					Detail:      "project.dataset.table2",
+					TypedPrefix: "",
 				},
 			},
 		},

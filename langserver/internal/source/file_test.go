@@ -77,6 +77,30 @@ func TestProject_ParseFile(t *testing.T) {
 				},
 			},
 		},
+		"parse dot in where clause": {
+			file: "SELECT * FROM `project.dataset.table` t\nWHERE t.",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []source.Error{
+				{
+					Msg: "INVALID_ARGUMENT: Unrecognized name: t.",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 6,
+					},
+					TermLength:           2,
+					IncompleteColumnName: "t.",
+				},
+			},
+		},
 		"parse SELECT list must not be empty error file": {
 			file: "SELECT FROM `project.dataset.table`",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -419,6 +443,126 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 					TermLength:           14,
 					IncompleteColumnName: "t.unexist_column",
+				},
+			},
+		},
+		"parse incomplete join columns": {
+			file: "SELECT * FROM `project.dataset.table` t1\nJOIN `project.dataset.table` t2 ON t",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []source.Error{
+				{
+					Msg: "INVALID_ARGUMENT: Unrecognized name: t",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 35,
+					},
+					TermLength:           1,
+					IncompleteColumnName: "t",
+				},
+			},
+		},
+		"parse incomplete join columns2": {
+			file: "SELECT * FROM `project.dataset.table` t1\nJOIN `project.dataset.table` t2 ON t1.i",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []source.Error{
+				{
+					Msg: "INVALID_ARGUMENT: Name i not found inside t1",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 38,
+					},
+					TermLength:           1,
+					IncompleteColumnName: "t1.i",
+				},
+			},
+		},
+		"parse incomplete join columns3": {
+			file: "SELECT * FROM `project.dataset.table` t1\nJOIN `project.dataset.table` t2 ON t1.id = t",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []source.Error{
+				{
+					Msg: "INVALID_ARGUMENT: Unrecognized name: t",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 43,
+					},
+					TermLength:           1,
+					IncompleteColumnName: "t",
+				},
+			},
+		},
+		"parse incomplete join columns4": {
+			file: "SELECT * FROM `project.dataset.table` t1\nJOIN `project.dataset.table` t2 ON t1.id = t2.i",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []source.Error{
+				{
+					Msg: "INVALID_ARGUMENT: Name i not found inside t2",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 46,
+					},
+					TermLength:           1,
+					IncompleteColumnName: "t2.i",
+				},
+			},
+		},
+		"parse incomplete join columns5": {
+			file: "SELECT * FROM `project.dataset.table` t1\nJOIN `project.dataset.table` t2 ON",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []source.Error{
+				{
+					Msg: "INVALID_ARGUMENT: Syntax error: Unexpected end of script",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 34,
+					},
+					TermLength:           0,
+					IncompleteColumnName: "",
 				},
 			},
 		},
