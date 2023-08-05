@@ -225,6 +225,9 @@ func (p *Project) ParseFile(uri string, src string) ParsedFile {
 				if _, ok := searchAstNode[*ast.OrderByNode](node, errTermOffset); ok {
 					fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
 				}
+				if _, ok := searchAstNode[*ast.OnClauseNode](node, errTermOffset); ok {
+					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
+				}
 			}
 
 			if len(fo) > 0 {
@@ -286,9 +289,10 @@ func parseZetaSQLError(err error) Error {
 //
 // becomes
 //
-// SELECT 111, FROM table
+// SELECT true FROM table
 func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) {
-	loc := lastDotRegex.FindIndex([]byte(src))
+	// src is a word that ends with a dot.
+	loc := lastDotRegex.FindIndex([]byte(src + " "))
 	if len(loc) != 2 {
 		return src, nil, nil
 	}
@@ -296,9 +300,9 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) 
 	errs = make([]Error, 0, 1)
 	fixOffsets = make([]FixOffset, 0, 1)
 	for len(loc) == 2 {
-		// sql.Rawtext[loc[1]] is a space.
+		// sql.Rawtext[loc[1]] is a space or end of file.
 		targetWord := src[loc[0] : loc[1]-1]
-		src = src[:loc[0]] + strings.Repeat("1", len(targetWord)) + src[loc[1]-1:]
+		src = src[:loc[0]] + "true" + src[loc[1]-1:]
 		pos, _ := byteOffsetToPosition(src, loc[0])
 		errs = append(errs, Error{
 			Msg:                  fmt.Sprintf("INVALID_ARGUMENT: Unrecognized name: %s", targetWord),
@@ -306,8 +310,16 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) 
 			TermLength:           len(targetWord),
 			IncompleteColumnName: targetWord,
 		})
+		fixOffsets = append(fixOffsets, FixOffset{
+			Offset: loc[0] + len(targetWord),
+			Length: len("true") - len(targetWord),
+		})
 
+		oldLoc := loc
 		loc = lastDotRegex.FindIndex([]byte(src))
+		if len(loc) == 2 && loc[0] == oldLoc[0] {
+			break
+		}
 	}
 	return src, errs, fixOffsets
 }
@@ -329,15 +341,48 @@ func fixSelectListMustNotBeEmptyStatement(src string, parsedErr Error) (fixedSrc
 	}
 }
 
-// fix Unexpected end of script
+func fixUnexpectedEndOfScript(src string, parsedErr Error) (fixedSrc string, err Error, fixOffsets []FixOffset) {
+	targets := []struct {
+		keywords []string
+		fixFunx  func(string, Error) (string, Error, []FixOffset)
+	}{
+		{
+			keywords: []string{"GROUP BY", "ORDER BY"},
+			fixFunx:  fixUnexpectedEndOfScriptWithDeletion,
+		},
+		{
+			keywords: []string{"WHERE", "ON"},
+			fixFunx:  fixUnexpectedEndOfScriptWithCondition,
+		},
+	}
+
+	oneLineSrc := strings.Join(strings.Fields(src), " ")
+	for _, target := range targets {
+		targetIndex := -1
+		for i, keyword := range target.keywords {
+			if strings.HasSuffix(oneLineSrc, keyword) {
+				targetIndex = i
+				break
+			}
+		}
+
+		if targetIndex != -1 {
+			return target.fixFunx(src, parsedErr)
+		}
+	}
+
+	return src, parsedErr, nil
+}
+
+// fix Unexpected end of script with deletion
 //
-//	SELECT * FROM table WHERE
+//	SELECT * FROM table GROUP BY
 //
 // becomes
 //
 //	SELECT * FROM table
-func fixUnexpectedEndOfScript(src string, parsedErr Error) (fixedSrc string, err Error, fixOffsets []FixOffset) {
-	targetUnexpectedEndKeyword := []string{"WHERE", "GROUP BY", "ORDER BY"}
+func fixUnexpectedEndOfScriptWithDeletion(src string, parsedErr Error) (fixedSrc string, err Error, fixOffsets []FixOffset) {
+	targetUnexpectedEndKeyword := []string{"GROUP BY", "ORDER BY"}
 	errOffset := positionToByteOffset(src, parsedErr.Position)
 
 	oneLineSrc := strings.Join(strings.Fields(src), " ")
@@ -364,6 +409,40 @@ func fixUnexpectedEndOfScript(src string, parsedErr Error) (fixedSrc string, err
 		{
 			Offset: errOffset,
 			Length: -(errOffset - len(fixedSrc)),
+		},
+	}
+}
+
+// fix Unexpected end of script with condition
+//
+//	SELECT * FROM table WHERE
+//
+// becomes
+//
+//	SELECT * FROM table WHERE 1=1
+func fixUnexpectedEndOfScriptWithCondition(src string, parsedErr Error) (fixedSrc string, err Error, fixOffsets []FixOffset) {
+	targetUnexpectedEndKeyword := []string{"WHERE", "ON"}
+	errOffset := positionToByteOffset(src, parsedErr.Position)
+
+	oneLineSrc := strings.Join(strings.Fields(src), " ")
+	targetIndex := -1
+	for i, keyword := range targetUnexpectedEndKeyword {
+		if strings.HasSuffix(oneLineSrc, keyword) {
+			targetIndex = i
+			break
+		}
+	}
+
+	if targetIndex == -1 {
+		return src, parsedErr, nil
+	}
+
+	insertStr := " 1=1"
+	fixedSrc = src[:errOffset] + insertStr + src[errOffset:]
+	return fixedSrc, parsedErr, []FixOffset{
+		{
+			Offset: errOffset,
+			Length: len(insertStr),
 		},
 	}
 }
