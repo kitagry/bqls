@@ -344,10 +344,10 @@ func fixSelectListMustNotBeEmptyStatement(src string, parsedErr Error) (fixedSrc
 func fixUnexpectedEndOfScript(src string, parsedErr Error) (fixedSrc string, err Error, fixOffsets []FixOffset) {
 	targets := []struct {
 		keywords []string
-		fixFunx  func(string, Error) (string, Error, []FixOffset)
+		fixFunx  func(src string, err Error, keyword []string) (string, Error, []FixOffset)
 	}{
 		{
-			keywords: []string{"GROUP BY", "ORDER BY"},
+			keywords: []string{"GROUP BY", "ORDER BY", "AND", "OR"},
 			fixFunx:  fixUnexpectedEndOfScriptWithDeletion,
 		},
 		{
@@ -367,7 +367,7 @@ func fixUnexpectedEndOfScript(src string, parsedErr Error) (fixedSrc string, err
 		}
 
 		if targetIndex != -1 {
-			return target.fixFunx(src, parsedErr)
+			return target.fixFunx(src, parsedErr, target.keywords)
 		}
 	}
 
@@ -381,8 +381,7 @@ func fixUnexpectedEndOfScript(src string, parsedErr Error) (fixedSrc string, err
 // becomes
 //
 //	SELECT * FROM table
-func fixUnexpectedEndOfScriptWithDeletion(src string, parsedErr Error) (fixedSrc string, err Error, fixOffsets []FixOffset) {
-	targetUnexpectedEndKeyword := []string{"GROUP BY", "ORDER BY"}
+func fixUnexpectedEndOfScriptWithDeletion(src string, parsedErr Error, targetUnexpectedEndKeyword []string) (fixedSrc string, err Error, fixOffsets []FixOffset) {
 	errOffset := positionToByteOffset(src, parsedErr.Position)
 
 	oneLineSrc := strings.Join(strings.Fields(src), " ")
@@ -420,8 +419,7 @@ func fixUnexpectedEndOfScriptWithDeletion(src string, parsedErr Error) (fixedSrc
 // becomes
 //
 //	SELECT * FROM table WHERE 1=1
-func fixUnexpectedEndOfScriptWithCondition(src string, parsedErr Error) (fixedSrc string, err Error, fixOffsets []FixOffset) {
-	targetUnexpectedEndKeyword := []string{"WHERE", "ON"}
+func fixUnexpectedEndOfScriptWithCondition(src string, parsedErr Error, targetUnexpectedEndKeyword []string) (fixedSrc string, err Error, fixOffsets []FixOffset) {
 	errOffset := positionToByteOffset(src, parsedErr.Position)
 
 	oneLineSrc := strings.Join(strings.Fields(src), " ")

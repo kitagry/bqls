@@ -503,6 +503,29 @@ func TestProject_CompleteColumn(t *testing.T) {
 				},
 			},
 		},
+		"Complete column in where clause after AND": {
+			files: map[string]string{
+				"file1.sql": "SELECT * FROM `project.dataset.table` WHERE id = 1 AND |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Description: "id description",
+							Type:        bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []source.CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INTEGER\nid description",
+				},
+			},
+		},
 		"Complete column with table alias in where clause": {
 			files: map[string]string{
 				"file1.sql": "SELECT * FROM `project.dataset.table` t WHERE t.|",
