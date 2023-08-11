@@ -30,6 +30,13 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 
 	output, ok := parsedFile.FindTargetAnalyzeOutput(termOffset)
 	if !ok {
+		// If not found analyze output, lookup table metadata from ast node.
+		if targetNode, ok := lookupNode[*ast.TablePathExpressionNode](targetNode); ok {
+			result, ok := p.termDocumentFromAstNode(ctx, targetNode)
+			if ok {
+				return result, nil
+			}
+		}
 		p.logger.Debug("not found target analyze output")
 		return nil, nil
 	}
@@ -122,6 +129,24 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 	}
 
 	return nil, nil
+}
+
+func (p *Project) termDocumentFromAstNode(ctx context.Context, targetNode *ast.TablePathExpressionNode) ([]lsp.MarkedString, bool) {
+	name, ok := createTableNameFromTablePathExpressionNode(targetNode)
+	if !ok {
+		return nil, false
+	}
+
+	targetTable, err := p.getTableMetadataFromPath(ctx, name)
+	if err != nil {
+		return nil, false
+	}
+
+	result, err := buildBigQueryTableMetadataMarkedString(targetTable)
+	if err != nil {
+		return nil, false
+	}
+	return result, true
 }
 
 func (p *Project) termDocumentForInputScan(ctx context.Context, termOffset int, targetNode *ast.TablePathExpressionNode, output *zetasql.AnalyzerOutput, parsedFile ParsedFile) ([]lsp.MarkedString, bool) {
