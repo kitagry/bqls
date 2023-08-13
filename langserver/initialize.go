@@ -41,7 +41,7 @@ func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req
 			HoverProvider:              true,
 			CodeActionProvider:         true,
 			CompletionProvider: &lsp.CompletionOptions{
-				ResolveProvider:   true,
+				ResolveProvider:   false,
 				TriggerCharacters: []string{"*", "."},
 			},
 		},
