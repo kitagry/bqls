@@ -14,10 +14,10 @@ import (
 )
 
 type CompletionItem struct {
-	Kind        lsp.CompletionItemKind
-	NewText     string
-	Detail      string
-	TypedPrefix string
+	Kind          lsp.CompletionItemKind
+	NewText       string
+	Documentation string
+	TypedPrefix   string
 }
 
 func (c CompletionItem) ToLspCompletionItem(position lsp.Position, supportSnippet bool) lsp.CompletionItem {
@@ -26,7 +26,7 @@ func (c CompletionItem) ToLspCompletionItem(position lsp.Position, supportSnippe
 			InsertTextFormat: lsp.ITFPlainText,
 			Kind:             c.Kind,
 			Label:            c.NewText,
-			Detail:           c.Detail,
+			Documentation:    c.Documentation,
 		}
 	}
 
@@ -36,7 +36,7 @@ func (c CompletionItem) ToLspCompletionItem(position lsp.Position, supportSnippe
 		InsertTextFormat: lsp.ITFSnippet,
 		Kind:             c.Kind,
 		Label:            c.NewText,
-		Detail:           c.Detail,
+		Documentation:    c.Documentation,
 		TextEdit: &lsp.TextEdit{
 			NewText: c.NewText,
 			Range: lsp.Range{
@@ -183,10 +183,10 @@ func (p *Project) completeTableScanField(ctx context.Context, tableScanNode *ras
 	if strings.HasPrefix(tableScanNode.Alias(), incompleteColumnName) {
 		return []CompletionItem{
 			{
-				Kind:        lsp.CIKField,
-				NewText:     tableScanNode.Alias(),
-				Detail:      tableScanNode.Table().FullName(),
-				TypedPrefix: incompleteColumnName,
+				Kind:          lsp.CIKField,
+				NewText:       tableScanNode.Alias(),
+				Documentation: tableScanNode.Table().FullName(),
+				TypedPrefix:   incompleteColumnName,
 			},
 		}
 	}
@@ -287,10 +287,10 @@ func (p *Project) completeProjectForTablePath(ctx context.Context, param tablePa
 		}
 
 		result = append(result, CompletionItem{
-			Kind:        lsp.CIKModule,
-			NewText:     p.ProjectId,
-			Detail:      p.Name,
-			TypedPrefix: param.ProjectID,
+			Kind:          lsp.CIKModule,
+			NewText:       p.ProjectId,
+			Documentation: p.Name,
+			TypedPrefix:   param.ProjectID,
 		})
 	}
 
@@ -310,10 +310,10 @@ func (p *Project) completeDatasetForTablePath(ctx context.Context, param tablePa
 		}
 
 		result = append(result, CompletionItem{
-			Kind:        lsp.CIKModule,
-			NewText:     d.DatasetID,
-			Detail:      fmt.Sprintf("%s.%s", d.ProjectID, d.DatasetID),
-			TypedPrefix: param.DatasetID,
+			Kind:          lsp.CIKModule,
+			NewText:       d.DatasetID,
+			Documentation: fmt.Sprintf("%s.%s", d.ProjectID, d.DatasetID),
+			TypedPrefix:   param.DatasetID,
 		})
 	}
 
@@ -333,10 +333,10 @@ func (p *Project) completeTableForTablePath(ctx context.Context, param tablePath
 		}
 
 		result = append(result, CompletionItem{
-			Kind:        lsp.CIKModule,
-			NewText:     t.TableID,
-			Detail:      fmt.Sprintf("%s.%s.%s", t.ProjectID, t.DatasetID, t.TableID),
-			TypedPrefix: param.TableID,
+			Kind:          lsp.CIKModule,
+			NewText:       t.TableID,
+			Documentation: fmt.Sprintf("%s.%s.%s", t.ProjectID, t.DatasetID, t.TableID),
+			TypedPrefix:   param.TableID,
 		})
 	}
 
@@ -436,10 +436,10 @@ type columnInterface interface {
 
 func createCompletionItemFromColumn(column columnInterface, incompleteColumnName string) CompletionItem {
 	return CompletionItem{
-		Kind:        lsp.CIKField,
-		NewText:     column.Name(),
-		Detail:      column.Type().TypeName(types.ProductExternal),
-		TypedPrefix: incompleteColumnName,
+		Kind:          lsp.CIKField,
+		NewText:       column.Name(),
+		Documentation: column.Type().TypeName(types.ProductExternal),
+		TypedPrefix:   incompleteColumnName,
 	}
 }
 
@@ -449,9 +449,9 @@ func createCompletionItemFromSchema(schema *bigquery.FieldSchema, incompleteColu
 		detail += "\n" + schema.Description
 	}
 	return CompletionItem{
-		Kind:        lsp.CIKField,
-		NewText:     schema.Name,
-		Detail:      detail,
-		TypedPrefix: incompleteColumnName,
+		Kind:          lsp.CIKField,
+		NewText:       schema.Name,
+		Documentation: detail,
+		TypedPrefix:   incompleteColumnName,
 	}
 }
