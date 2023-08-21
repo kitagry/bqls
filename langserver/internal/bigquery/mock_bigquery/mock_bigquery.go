@@ -163,6 +163,20 @@ func (m *MockBigqueryJob) EXPECT() *MockBigqueryJobMockRecorder {
 	return m.recorder
 }
 
+// ID mocks base method.
+func (m *MockBigqueryJob) ID() string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ID")
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// ID indicates an expected call of ID.
+func (mr *MockBigqueryJobMockRecorder) ID() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ID", reflect.TypeOf((*MockBigqueryJob)(nil).ID))
+}
+
 // LastStatus mocks base method.
 func (m *MockBigqueryJob) LastStatus() *bigquery.JobStatus {
 	m.ctrl.T.Helper()

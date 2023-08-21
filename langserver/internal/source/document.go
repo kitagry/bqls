@@ -12,6 +12,7 @@ import (
 	"github.com/goccy/go-zetasql/ast"
 	rast "github.com/goccy/go-zetasql/resolved_ast"
 	"github.com/goccy/go-zetasql/types"
+	"github.com/kitagry/bqls/langserver/internal/function"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 )
 
@@ -50,16 +51,32 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 	}
 
 	if node, ok := searchResolvedAstNode[*rast.FunctionCallNode](output, termOffset); ok {
-		sigs := make([]string, 0, len(node.Function().Signatures()))
-		for _, sig := range node.Function().Signatures() {
-			sigs = append(sigs, sig.DebugString(node.Function().SQLName(), true))
+		builtinFunction, ok := function.FindBuiltInFunction(node.Function().Name())
+		if !ok {
+			sigs := make([]string, 0, len(node.Function().Signatures()))
+			for _, sig := range node.Function().Signatures() {
+				sigs = append(sigs, sig.DebugString(node.Function().SQLName(), true))
+			}
+			return []lsp.MarkedString{
+				{
+					Language: "markdown",
+					Value:    fmt.Sprintf("## %s\n\n%s", node.Function().SQLName(), strings.Join(sigs, "\n")),
+				},
+			}, nil
 		}
-		return []lsp.MarkedString{
-			{
-				Language: "markdown",
-				Value:    fmt.Sprintf("## %s\n\n%s", node.Function().SQLName(), strings.Join(sigs, "\n")),
-			},
-		}, nil
+
+		result := make([]lsp.MarkedString, 0, len(builtinFunction.ExampleSQLs)+1)
+		result = append(result, lsp.MarkedString{
+			Language: "markdown",
+			Value:    fmt.Sprintf("%s\n\n[bigquery documentation](%s)", builtinFunction.Description, builtinFunction.URL),
+		})
+		for _, sql := range builtinFunction.ExampleSQLs {
+			result = append(result, lsp.MarkedString{
+				Language: "sql",
+				Value:    sql,
+			})
+		}
+		return result, nil
 	}
 
 	if node, ok := searchResolvedAstNode[*rast.GetStructFieldNode](output, termOffset); ok {
