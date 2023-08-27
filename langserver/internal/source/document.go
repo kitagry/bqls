@@ -1,7 +1,6 @@
 package source
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"math"
@@ -23,7 +22,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 	parsedFile := p.analyzer.ParseFile(uri, sql.RawText)
 
 	termOffset := parsedFile.TermOffset(position)
-	targetNode, ok := searchAstNode[*ast.PathExpressionNode](parsedFile.Node, termOffset)
+	targetNode, ok := file.SearchAstNode[*ast.PathExpressionNode](parsedFile.Node, termOffset)
 	if !ok {
 		p.logger.Debug("not found target node")
 		return nil, nil
@@ -32,7 +31,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 	output, ok := parsedFile.FindTargetAnalyzeOutput(termOffset)
 	if !ok {
 		// If not found analyze output, lookup table metadata from ast node.
-		if targetNode, ok := lookupNode[*ast.TablePathExpressionNode](targetNode); ok {
+		if targetNode, ok := file.LookupNode[*ast.TablePathExpressionNode](targetNode); ok {
 			result, ok := p.termDocumentFromAstNode(ctx, targetNode)
 			if ok {
 				return result, nil
@@ -43,14 +42,14 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 	}
 
 	// lookup table metadata
-	if targetNode, ok := lookupNode[*ast.TablePathExpressionNode](targetNode); ok {
+	if targetNode, ok := file.LookupNode[*ast.TablePathExpressionNode](targetNode); ok {
 		result, ok := p.termDocumentForInputScan(ctx, termOffset, targetNode, output, parsedFile)
 		if ok {
 			return result, nil
 		}
 	}
 
-	if node, ok := searchResolvedAstNode[*rast.FunctionCallNode](output, termOffset); ok {
+	if node, ok := file.SearchResolvedAstNode[*rast.FunctionCallNode](output, termOffset); ok {
 		builtinFunction, ok := function.FindBuiltInFunction(node.Function().Name())
 		if !ok {
 			sigs := make([]string, 0, len(node.Function().Signatures()))
@@ -79,7 +78,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 		return result, nil
 	}
 
-	if node, ok := searchResolvedAstNode[*rast.GetStructFieldNode](output, termOffset); ok {
+	if node, ok := file.SearchResolvedAstNode[*rast.GetStructFieldNode](output, termOffset); ok {
 		return []lsp.MarkedString{
 			{
 				Language: "markdown",
@@ -88,7 +87,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 		}, nil
 	}
 
-	if term, ok := searchResolvedAstNode[*rast.ColumnRefNode](output, termOffset); ok {
+	if term, ok := file.SearchResolvedAstNode[*rast.ColumnRefNode](output, termOffset); ok {
 		column := term.Column()
 		if column == nil {
 			return nil, fmt.Errorf("failed to find term: %v", term)
@@ -117,7 +116,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 		}
 	}
 
-	if selectColumnNode, ok := lookupNode[*ast.SelectColumnNode](targetNode); ok {
+	if selectColumnNode, ok := file.LookupNode[*ast.SelectColumnNode](targetNode); ok {
 		column, err := p.getSelectColumnNodeToAnalyzedOutputCoumnNode(output, selectColumnNode, termOffset)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get column info: %w", err)
@@ -149,7 +148,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 }
 
 func (p *Project) termDocumentFromAstNode(ctx context.Context, targetNode *ast.TablePathExpressionNode) ([]lsp.MarkedString, bool) {
-	name, ok := createTableNameFromTablePathExpressionNode(targetNode)
+	name, ok := file.CreateTableNameFromTablePathExpressionNode(targetNode)
 	if !ok {
 		return nil, false
 	}
@@ -172,7 +171,7 @@ func (p *Project) termDocumentForInputScan(ctx context.Context, termOffset int, 
 		return nil, false
 	}
 
-	name, ok := createTableNameFromTablePathExpressionNode(targetNode)
+	name, ok := file.CreateTableNameFromTablePathExpressionNode(targetNode)
 	if !ok {
 		p.logger.Debug("not found table name")
 		return nil, false
@@ -194,7 +193,7 @@ func (p *Project) termDocumentForInputScan(ctx context.Context, termOffset int, 
 			return result, true
 		}
 	case *rast.WithRefScanNode:
-		withEntries := listResolvedAstNode[*rast.WithEntryNode](output)
+		withEntries := file.ListResolvedAstNode[*rast.WithEntryNode](output)
 		if len(withEntries) == 0 {
 			p.logger.Debug("not found with entries")
 			return nil, false
@@ -458,121 +457,4 @@ func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([
 			Value:    createBigQuerySchemaYamlString(metadata.Schema, 0),
 		},
 	}, nil
-}
-
-func positionToByteOffset(sql string, position lsp.Position) int {
-	buf := bufio.NewScanner(strings.NewReader(sql))
-	buf.Split(bufio.ScanLines)
-
-	var offset int
-	for i := 0; i < position.Line; i++ {
-		buf.Scan()
-		offset += len([]byte(buf.Text())) + 1
-	}
-	offset += position.Character
-	return offset
-}
-
-func byteOffsetToPosition(sql string, offset int) (lsp.Position, bool) {
-	lines := strings.Split(sql, "\n")
-
-	line := 0
-	for _, l := range lines {
-		if offset < len(l)+1 {
-			return lsp.Position{
-				Line:      line,
-				Character: offset,
-			}, true
-		}
-
-		line++
-		offset -= len(l) + 1
-	}
-
-	return lsp.Position{}, false
-}
-
-type locationRangeNode interface {
-	ParseLocationRange() *types.ParseLocationRange
-}
-
-func searchAstNode[T locationRangeNode](node ast.Node, termOffset int) (T, bool) {
-	var targetNode T
-	var found bool
-	ast.Walk(node, func(n ast.Node) error {
-		node, ok := n.(T)
-		if !ok {
-			return nil
-		}
-		lRange := node.ParseLocationRange()
-		if lRange == nil {
-			return nil
-		}
-		startOffset := lRange.Start().ByteOffset()
-		endOffset := lRange.End().ByteOffset()
-		if startOffset <= termOffset && termOffset <= endOffset {
-			targetNode = node
-			found = true
-		}
-		return nil
-	})
-	return targetNode, found
-}
-
-func searchResolvedAstNode[T locationRangeNode](output *zetasql.AnalyzerOutput, termOffset int) (T, bool) {
-	var targetNode T
-	var found bool
-	rast.Walk(output.Statement(), func(n rast.Node) error {
-		node, ok := n.(T)
-		if !ok {
-			return nil
-		}
-		lRange := node.ParseLocationRange()
-		if lRange == nil {
-			return nil
-		}
-		startOffset := lRange.Start().ByteOffset()
-		endOffset := lRange.End().ByteOffset()
-		if startOffset <= termOffset && termOffset <= endOffset {
-			targetNode = node
-			found = true
-		}
-		return nil
-	})
-
-	if found {
-		return targetNode, found
-	}
-	return targetNode, false
-}
-
-func listResolvedAstNode[T locationRangeNode](output *zetasql.AnalyzerOutput) []T {
-	result := make([]T, 0)
-	rast.Walk(output.Statement(), func(n rast.Node) error {
-		node, ok := n.(T)
-		if !ok {
-			return nil
-		}
-		result = append(result, node)
-		return nil
-	})
-
-	return result
-}
-
-type astNode interface {
-	*ast.TablePathExpressionNode | *ast.PathExpressionNode | *ast.SelectColumnNode
-}
-
-func lookupNode[T astNode](n ast.Node) (T, bool) {
-	if n == nil {
-		return nil, false
-	}
-
-	result, ok := n.(T)
-	if ok {
-		return result, true
-	}
-
-	return lookupNode[T](n.Parent())
 }
