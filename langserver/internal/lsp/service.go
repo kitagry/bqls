@@ -435,11 +435,23 @@ var completionItemKindName = map[CompletionItemKind]string{
 	CIKTypeParameter: "typeParameter",
 }
 
+type MarkupKind string
+
+const (
+	MKPlainText MarkupKind = "plaintext"
+	MKMarkdown  MarkupKind = "markdown"
+)
+
+type MarkupContent struct {
+	Kind  MarkupKind `json:"kind"`
+	Value string     `json:"value"`
+}
+
 type CompletionItem struct {
 	Label               string             `json:"label"`
 	Kind                CompletionItemKind `json:"kind,omitempty"`
 	Detail              string             `json:"detail,omitempty"`
-	Documentation       string             `json:"documentation,omitempty"`
+	Documentation       MarkupContent      `json:"documentation,omitempty"`
 	SortText            string             `json:"sortText,omitempty"`
 	FilterText          string             `json:"filterText,omitempty"`
 	InsertText          string             `json:"insertText,omitempty"`

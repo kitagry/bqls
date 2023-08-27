@@ -48,14 +48,20 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INTEGER\nid description",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
 				},
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "name",
-					Documentation: "STRING",
+					Kind:    lsp.CIKField,
+					NewText: "name",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "STRING",
+					},
 				},
 			},
 		},
@@ -76,9 +82,12 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INTEGER\nid description",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
 				},
 			},
 		},
@@ -108,9 +117,12 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "name",
-					Documentation: "STRING",
+					Kind:    lsp.CIKField,
+					NewText: "name",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "STRING",
+					},
 				},
 			},
 		},
@@ -132,9 +144,12 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INT64",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INT64",
+					},
 				},
 				{ // TODO: Refactoring test
 					Kind:    lsp.CIKField,
@@ -159,10 +174,13 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INTEGER\nid description",
-					TypedPrefix:   "i",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
+					TypedPrefix: "i",
 				},
 			},
 		},
@@ -183,10 +201,13 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INTEGER\nid description",
-					TypedPrefix:   "i",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
+					TypedPrefix: "i",
 				},
 			},
 		},
@@ -213,9 +234,12 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INTEGER\nid description",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
 				},
 			},
 		},
@@ -248,9 +272,12 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INTEGER\nid description",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
 				},
 			},
 		},
@@ -277,10 +304,13 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INTEGER\nid description",
-					TypedPrefix:   "i",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
+					TypedPrefix: "i",
 				},
 			},
 		},
@@ -307,9 +337,12 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INTEGER\nid description",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
 				},
 			},
 		},
@@ -336,9 +369,12 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INT64",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INT64",
+					},
 				},
 			},
 		},
@@ -359,9 +395,12 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INTEGER\nid description",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
 				},
 			},
 		},
@@ -382,9 +421,12 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INTEGER\nid description",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
 				},
 			},
 		},
@@ -405,10 +447,13 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INTEGER\nid description",
-					TypedPrefix:   "i",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
+					TypedPrefix: "i",
 				},
 			},
 		},
@@ -429,9 +474,12 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INT64",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INT64",
+					},
 				},
 			},
 		},
@@ -451,10 +499,13 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "table",
-					Documentation: "project.dataset.table",
-					TypedPrefix:   "t",
+					Kind:    lsp.CIKField,
+					NewText: "table",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "project.dataset.table",
+					},
+					TypedPrefix: "t",
 				},
 			},
 		},
@@ -497,9 +548,12 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INTEGER\nid description",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
 				},
 			},
 		},
@@ -520,9 +574,12 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INTEGER\nid description",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
 				},
 			},
 		},
@@ -543,9 +600,12 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INTEGER\nid description",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
 				},
 			},
 		},
@@ -566,9 +626,12 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INTEGER\nid description",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
 				},
 			},
 		},
@@ -589,10 +652,13 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INTEGER\nid description",
-					TypedPrefix:   "i",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
+					TypedPrefix: "i",
 				},
 			},
 		},
@@ -613,10 +679,13 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INTEGER\nid description",
-					TypedPrefix:   "i",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
+					TypedPrefix: "i",
 				},
 			},
 		},
@@ -646,28 +715,40 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INTEGER\nid description",
-					TypedPrefix:   "",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
+					TypedPrefix: "",
 				},
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "id",
-					Documentation: "INTEGER\nid description2",
-					TypedPrefix:   "",
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description2",
+					},
+					TypedPrefix: "",
 				},
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "t1",
-					Documentation: "project.dataset.table",
-					TypedPrefix:   "",
+					Kind:    lsp.CIKField,
+					NewText: "t1",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "project.dataset.table",
+					},
+					TypedPrefix: "",
 				},
 				{
-					Kind:          lsp.CIKField,
-					NewText:       "t2",
-					Documentation: "project.dataset.table2",
-					TypedPrefix:   "",
+					Kind:    lsp.CIKField,
+					NewText: "t2",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "project.dataset.table2",
+					},
+					TypedPrefix: "",
 				},
 			},
 		},
@@ -743,14 +824,20 @@ func TestProject_CompleteFromSQLContext_FromClause(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKModule,
-					NewText:       "1table",
-					Documentation: "project.dataset.1table",
+					Kind:    lsp.CIKModule,
+					NewText: "1table",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "project.dataset.1table",
+					},
 				},
 				{
-					Kind:          lsp.CIKModule,
-					NewText:       "2table",
-					Documentation: "project.dataset.2table",
+					Kind:    lsp.CIKModule,
+					NewText: "2table",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "project.dataset.2table",
+					},
 				},
 			},
 		},
@@ -775,9 +862,12 @@ func TestProject_CompleteFromSQLContext_FromClause(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKModule,
-					NewText:       "table20230622",
-					Documentation: "project.dataset.table20230622",
+					Kind:    lsp.CIKModule,
+					NewText: "table20230622",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "project.dataset.table20230622",
+					},
 				},
 			},
 		},
@@ -805,14 +895,20 @@ func TestProject_CompleteFromSQLContext_FromClause(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKModule,
-					NewText:       "dataset1",
-					Documentation: "project.dataset1",
+					Kind:    lsp.CIKModule,
+					NewText: "dataset1",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "project.dataset1",
+					},
 				},
 				{
-					Kind:          lsp.CIKModule,
-					NewText:       "dataset2",
-					Documentation: "project.dataset2",
+					Kind:    lsp.CIKModule,
+					NewText: "dataset2",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "project.dataset2",
+					},
 				},
 			},
 		},
@@ -839,16 +935,22 @@ func TestProject_CompleteFromSQLContext_FromClause(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKModule,
-					NewText:       "project1",
-					Documentation: "project name",
-					TypedPrefix:   "p",
+					Kind:    lsp.CIKModule,
+					NewText: "project1",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "project name",
+					},
+					TypedPrefix: "p",
 				},
 				{
-					Kind:          lsp.CIKModule,
-					NewText:       "project2",
-					Documentation: "project name",
-					TypedPrefix:   "p",
+					Kind:    lsp.CIKModule,
+					NewText: "project2",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "project name",
+					},
+					TypedPrefix: "p",
 				},
 			},
 		},

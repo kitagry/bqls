@@ -173,10 +173,13 @@ func (c *completor) completeTableScanField(ctx context.Context, tableScanNode *r
 	if strings.HasPrefix(tableScanNode.Alias(), incompleteColumnName) {
 		return []CompletionItem{
 			{
-				Kind:          lsp.CIKField,
-				NewText:       tableScanNode.Alias(),
-				Documentation: tableScanNode.Table().FullName(),
-				TypedPrefix:   incompleteColumnName,
+				Kind:    lsp.CIKField,
+				NewText: tableScanNode.Alias(),
+				Documentation: lsp.MarkupContent{
+					Kind:  lsp.MKPlainText,
+					Value: tableScanNode.Table().FullName(),
+				},
+				TypedPrefix: incompleteColumnName,
 			},
 		}
 	}
@@ -277,10 +280,13 @@ func (c *completor) completeProjectForTablePath(ctx context.Context, param table
 		}
 
 		result = append(result, CompletionItem{
-			Kind:          lsp.CIKModule,
-			NewText:       p.ProjectId,
-			Documentation: p.Name,
-			TypedPrefix:   param.ProjectID,
+			Kind:    lsp.CIKModule,
+			NewText: p.ProjectId,
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: p.Name,
+			},
+			TypedPrefix: param.ProjectID,
 		})
 	}
 
@@ -300,10 +306,13 @@ func (c *completor) completeDatasetForTablePath(ctx context.Context, param table
 		}
 
 		result = append(result, CompletionItem{
-			Kind:          lsp.CIKModule,
-			NewText:       d.DatasetID,
-			Documentation: fmt.Sprintf("%s.%s", d.ProjectID, d.DatasetID),
-			TypedPrefix:   param.DatasetID,
+			Kind:    lsp.CIKModule,
+			NewText: d.DatasetID,
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: fmt.Sprintf("%s.%s", d.ProjectID, d.DatasetID),
+			},
+			TypedPrefix: param.DatasetID,
 		})
 	}
 
@@ -323,10 +332,13 @@ func (c *completor) completeTableForTablePath(ctx context.Context, param tablePa
 		}
 
 		result = append(result, CompletionItem{
-			Kind:          lsp.CIKModule,
-			NewText:       t.TableID,
-			Documentation: fmt.Sprintf("%s.%s.%s", t.ProjectID, t.DatasetID, t.TableID),
-			TypedPrefix:   param.TableID,
+			Kind:    lsp.CIKModule,
+			NewText: t.TableID,
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: fmt.Sprintf("%s.%s.%s", t.ProjectID, t.DatasetID, t.TableID),
+			},
+			TypedPrefix: param.TableID,
 		})
 	}
 
@@ -426,10 +438,13 @@ type columnInterface interface {
 
 func createCompletionItemFromColumn(column columnInterface, incompleteColumnName string) CompletionItem {
 	return CompletionItem{
-		Kind:          lsp.CIKField,
-		NewText:       column.Name(),
-		Documentation: column.Type().TypeName(types.ProductExternal),
-		TypedPrefix:   incompleteColumnName,
+		Kind:    lsp.CIKField,
+		NewText: column.Name(),
+		Documentation: lsp.MarkupContent{
+			Kind:  lsp.MKPlainText,
+			Value: column.Type().TypeName(types.ProductExternal),
+		},
+		TypedPrefix: incompleteColumnName,
 	}
 }
 
@@ -439,9 +454,12 @@ func createCompletionItemFromSchema(schema *bq.FieldSchema, incompleteColumnName
 		detail += "\n" + schema.Description
 	}
 	return CompletionItem{
-		Kind:          lsp.CIKField,
-		NewText:       schema.Name,
-		Documentation: detail,
-		TypedPrefix:   incompleteColumnName,
+		Kind:    lsp.CIKField,
+		NewText: schema.Name,
+		Documentation: lsp.MarkupContent{
+			Kind:  lsp.MKPlainText,
+			Value: detail,
+		},
+		TypedPrefix: incompleteColumnName,
 	}
 }
