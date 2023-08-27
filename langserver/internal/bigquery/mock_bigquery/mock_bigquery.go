@@ -111,18 +111,18 @@ func (mr *MockClientMockRecorder) ListProjects(ctx interface{}) *gomock.Call {
 }
 
 // ListTables mocks base method.
-func (m *MockClient) ListTables(ctx context.Context, projectID, datasetID string) ([]*bigquery.Table, error) {
+func (m *MockClient) ListTables(ctx context.Context, projectID, datasetID string, onlyLatestSuffix bool) ([]*bigquery.Table, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListTables", ctx, projectID, datasetID)
+	ret := m.ctrl.Call(m, "ListTables", ctx, projectID, datasetID, onlyLatestSuffix)
 	ret0, _ := ret[0].([]*bigquery.Table)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListTables indicates an expected call of ListTables.
-func (mr *MockClientMockRecorder) ListTables(ctx, projectID, datasetID interface{}) *gomock.Call {
+func (mr *MockClientMockRecorder) ListTables(ctx, projectID, datasetID, onlyLatestSuffix interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTables", reflect.TypeOf((*MockClient)(nil).ListTables), ctx, projectID, datasetID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTables", reflect.TypeOf((*MockClient)(nil).ListTables), ctx, projectID, datasetID, onlyLatestSuffix)
 }
 
 // Run mocks base method.

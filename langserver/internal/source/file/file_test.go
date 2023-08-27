@@ -1,4 +1,4 @@
-package source_test
+package file_test
 
 import (
 	"fmt"
@@ -12,8 +12,7 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/bigquery/mock_bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
-	"github.com/kitagry/bqls/langserver/internal/source"
-	"github.com/sirupsen/logrus"
+	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
 
 func TestProject_ParseFile(t *testing.T) {
@@ -21,7 +20,7 @@ func TestProject_ParseFile(t *testing.T) {
 		file               string
 		bqTableMetadataMap map[string]*bq.TableMetadata
 
-		expectedErrs []source.Error
+		expectedErrs []file.Error
 	}{
 		"parse dot file": {
 			file: "SELECT t. FROM `project.dataset.table` t",
@@ -35,7 +34,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Unrecognized name: t.",
 					Position: lsp.Position{
@@ -65,7 +64,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Unrecognized name: t.record.",
 					Position: lsp.Position{
@@ -89,7 +88,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Unrecognized name: t.",
 					Position: lsp.Position{
@@ -113,7 +112,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Syntax error: SELECT list must not be empty",
 					Position: lsp.Position{
@@ -136,7 +135,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Syntax error: Unexpected end of script",
 					Position: lsp.Position{
@@ -159,7 +158,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Syntax error: Unexpected end of script",
 					Position: lsp.Position{
@@ -182,7 +181,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Unrecognized name: unexist_column",
 					Position: lsp.Position{
@@ -206,7 +205,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Unrecognized name: unexist_column",
 					Position: lsp.Position{
@@ -230,7 +229,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Unrecognized name: unexist_column",
 					Position: lsp.Position{
@@ -254,7 +253,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Unrecognized name: unexist_column",
 					Position: lsp.Position{
@@ -278,7 +277,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Unrecognized name: timestam; Did you mean timestamp?",
 					Position: lsp.Position{
@@ -308,7 +307,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Field name unexist_column does not exist in STRUCT<id INT64>",
 					Position: lsp.Position{
@@ -338,7 +337,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Field name unexist_column does not exist in STRUCT<id INT64>",
 					Position: lsp.Position{
@@ -362,7 +361,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Name unexist_column not found inside t",
 					Position: lsp.Position{
@@ -386,7 +385,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Name unexist_column not found inside t",
 					Position: lsp.Position{
@@ -410,7 +409,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Name unexist_column not found inside t",
 					Position: lsp.Position{
@@ -434,7 +433,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Name unexist_column not found inside t",
 					Position: lsp.Position{
@@ -458,7 +457,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Unrecognized name: t",
 					Position: lsp.Position{
@@ -482,7 +481,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Name i not found inside t1",
 					Position: lsp.Position{
@@ -506,7 +505,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Unrecognized name: t",
 					Position: lsp.Position{
@@ -530,7 +529,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Name i not found inside t2",
 					Position: lsp.Position{
@@ -554,7 +553,7 @@ func TestProject_ParseFile(t *testing.T) {
 					},
 				},
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Syntax error: Unexpected end of script",
 					Position: lsp.Position{
@@ -579,9 +578,8 @@ func TestProject_ParseFile(t *testing.T) {
 				}
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), tablePathSplitted[0], tablePathSplitted[1], tablePathSplitted[2]).Return(schema, nil).MinTimes(0)
 			}
-			p := source.NewProjectWithBQClient("/", bqClient, logrus.New())
-
-			got := p.ParseFile("uri", tt.file)
+			analyzer := file.NewAnalyzer(bqClient)
+			got := analyzer.ParseFile("uri", tt.file)
 			if diff := cmp.Diff(tt.expectedErrs, got.Errors, cmpopts.IgnoreUnexported()); diff != "" {
 				t.Errorf("ParseFile result diff (-expect, +got)\n%s", diff)
 			}
@@ -598,7 +596,7 @@ func TestProject_ParseFileWithIncompleteTable(t *testing.T) {
 		file                   string
 		bigqueryClientMockFunc func(t *testing.T) bigquery.Client
 
-		expectedErrs []source.Error
+		expectedErrs []file.Error
 	}{
 		"Parse with incomplete table name": {
 			file: "SELECT * FROM `project.dataset.`",
@@ -608,7 +606,7 @@ func TestProject_ParseFileWithIncompleteTable(t *testing.T) {
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found"))
 				return bqClient
 			},
-			expectedErrs: []source.Error{
+			expectedErrs: []file.Error{
 				{
 					Msg: "INVALID_ARGUMENT: Table not found: `project.dataset.`",
 					Position: lsp.Position{
@@ -625,9 +623,9 @@ func TestProject_ParseFileWithIncompleteTable(t *testing.T) {
 	for n, tt := range tests {
 		t.Run(n, func(t *testing.T) {
 			bqClient := tt.bigqueryClientMockFunc(t)
-			p := source.NewProjectWithBQClient("/", bqClient, logrus.New())
+			analyzer := file.NewAnalyzer(bqClient)
 
-			got := p.ParseFile("uri", tt.file)
+			got := analyzer.ParseFile("uri", tt.file)
 			if diff := cmp.Diff(tt.expectedErrs, got.Errors, cmpopts.IgnoreUnexported()); diff != "" {
 				t.Errorf("ParseFile result diff (-expect, +got)\n%s", diff)
 			}

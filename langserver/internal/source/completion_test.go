@@ -684,7 +684,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 				}
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), tablePathSplitted[0], tablePathSplitted[1], tablePathSplitted[2]).Return(schema, nil).MinTimes(0)
 			}
-			bqClient.EXPECT().ListTables(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).MinTimes(0)
+			bqClient.EXPECT().ListTables(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).MinTimes(0)
 			logger := logrus.New()
 			logger.SetLevel(logrus.DebugLevel)
 			p := source.NewProjectWithBQClient("/", bqClient, logger)
@@ -726,7 +726,7 @@ func TestProject_CompleteFromClause(t *testing.T) {
 				ctrl := gomock.NewController(t)
 				bqClient := mock_bigquery.NewMockClient(ctrl)
 
-				bqClient.EXPECT().ListTables(gomock.Any(), "project", "dataset").Return([]*bq.Table{
+				bqClient.EXPECT().ListTables(gomock.Any(), "project", "dataset", gomock.Any()).Return([]*bq.Table{
 					{
 						ProjectID: "project",
 						DatasetID: "dataset",
@@ -762,12 +762,7 @@ func TestProject_CompleteFromClause(t *testing.T) {
 				ctrl := gomock.NewController(t)
 				bqClient := mock_bigquery.NewMockClient(ctrl)
 
-				bqClient.EXPECT().ListTables(gomock.Any(), "project", "dataset").Return([]*bq.Table{
-					{
-						ProjectID: "project",
-						DatasetID: "dataset",
-						TableID:   "table20230621",
-					},
+				bqClient.EXPECT().ListTables(gomock.Any(), "project", "dataset", true).Return([]*bq.Table{
 					{
 						ProjectID: "project",
 						DatasetID: "dataset",

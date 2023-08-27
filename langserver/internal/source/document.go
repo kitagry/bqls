@@ -14,15 +14,15 @@ import (
 	"github.com/goccy/go-zetasql/types"
 	"github.com/kitagry/bqls/langserver/internal/function"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
+	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
 
 func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedString, error) {
 	ctx := context.Background()
 	sql := p.cache.Get(uri)
-	parsedFile := p.ParseFile(uri, sql.RawText)
+	parsedFile := p.analyzer.ParseFile(uri, sql.RawText)
 
-	termOffset := positionToByteOffset(sql.RawText, position)
-	termOffset = parsedFile.fixTermOffsetForNode(termOffset)
+	termOffset := parsedFile.TermOffset(position)
 	targetNode, ok := searchAstNode[*ast.PathExpressionNode](parsedFile.Node, termOffset)
 	if !ok {
 		p.logger.Debug("not found target node")
@@ -94,7 +94,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 			return nil, fmt.Errorf("failed to find term: %v", term)
 		}
 
-		tableMetadata, err := p.getTableMetadataFromPath(ctx, column.TableName())
+		tableMetadata, err := p.analyzer.GetTableMetadataFromPath(ctx, column.TableName())
 		if err != nil {
 			// cannot find table metadata
 			return []lsp.MarkedString{
@@ -123,7 +123,7 @@ func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedS
 			return nil, fmt.Errorf("failed to get column info: %w", err)
 		}
 
-		tableMetadata, err := p.getTableMetadataFromPath(ctx, column.TableName())
+		tableMetadata, err := p.analyzer.GetTableMetadataFromPath(ctx, column.TableName())
 		if err != nil {
 			return []lsp.MarkedString{
 				{
@@ -154,7 +154,7 @@ func (p *Project) termDocumentFromAstNode(ctx context.Context, targetNode *ast.T
 		return nil, false
 	}
 
-	targetTable, err := p.getTableMetadataFromPath(ctx, name)
+	targetTable, err := p.analyzer.GetTableMetadataFromPath(ctx, name)
 	if err != nil {
 		return nil, false
 	}
@@ -166,7 +166,7 @@ func (p *Project) termDocumentFromAstNode(ctx context.Context, targetNode *ast.T
 	return result, true
 }
 
-func (p *Project) termDocumentForInputScan(ctx context.Context, termOffset int, targetNode *ast.TablePathExpressionNode, output *zetasql.AnalyzerOutput, parsedFile ParsedFile) ([]lsp.MarkedString, bool) {
+func (p *Project) termDocumentForInputScan(ctx context.Context, termOffset int, targetNode *ast.TablePathExpressionNode, output *zetasql.AnalyzerOutput, parsedFile file.ParsedFile) ([]lsp.MarkedString, bool) {
 	targetScanNode, ok := getMostNarrowScanNode(termOffset, output.Statement())
 	if !ok {
 		return nil, false
@@ -230,7 +230,7 @@ func (p *Project) termDocumentForInputScan(ctx context.Context, termOffset int, 
 }
 
 func (p *Project) createTableMarkedString(ctx context.Context, node *rast.TableScanNode) ([]lsp.MarkedString, error) {
-	targetTable, err := p.getTableMetadataFromPath(ctx, node.Table().Name())
+	targetTable, err := p.analyzer.GetTableMetadataFromPath(ctx, node.Table().Name())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get table metadata: %w", err)
 	}

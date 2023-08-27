@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/kitagry/bqls/langserver/internal/lsp"
-	"github.com/kitagry/bqls/langserver/internal/source"
+	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
 
 func (h *Handler) scheduleDiagnostics() {
@@ -151,7 +151,7 @@ func bytesConvert(bytes int64) string {
 	)
 }
 
-func convertErrorsToDiagnostics(errs []source.Error) []lsp.Diagnostic {
+func convertErrorsToDiagnostics(errs []file.Error) []lsp.Diagnostic {
 	result := make([]lsp.Diagnostic, len(errs))
 	for i, err := range errs {
 		endPosition := err.Position

@@ -1,75 +1,46 @@
-package source
+package completion
 
 import (
 	"context"
 	"fmt"
 	"strings"
 
-	"cloud.google.com/go/bigquery"
+	bq "cloud.google.com/go/bigquery"
 	"github.com/goccy/go-zetasql"
 	"github.com/goccy/go-zetasql/ast"
 	rast "github.com/goccy/go-zetasql/resolved_ast"
 	"github.com/goccy/go-zetasql/types"
+	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
+	"github.com/kitagry/bqls/langserver/internal/source/file"
+	"github.com/sirupsen/logrus"
 )
 
-type CompletionItem struct {
-	Kind          lsp.CompletionItemKind
-	NewText       string
-	Documentation string
-	TypedPrefix   string
+type completor struct {
+	logger   *logrus.Logger
+	analyzer *file.Analyzer
+	bqClient bigquery.Client
 }
 
-func (c CompletionItem) ToLspCompletionItem(position lsp.Position, supportSnippet bool) lsp.CompletionItem {
-	if !supportSnippet {
-		return lsp.CompletionItem{
-			InsertTextFormat: lsp.ITFPlainText,
-			Kind:             c.Kind,
-			Label:            c.NewText,
-			Documentation:    c.Documentation,
-		}
-	}
-
-	startPosition := position
-	startPosition.Character -= len(c.TypedPrefix)
-	return lsp.CompletionItem{
-		InsertTextFormat: lsp.ITFSnippet,
-		Kind:             c.Kind,
-		Label:            c.NewText,
-		Documentation:    c.Documentation,
-		TextEdit: &lsp.TextEdit{
-			NewText: c.NewText,
-			Range: lsp.Range{
-				Start: startPosition,
-				End:   position,
-			},
-		},
-	}
-}
-
-func (p *Project) Complete(ctx context.Context, uri string, position lsp.Position) ([]CompletionItem, error) {
-	result := make([]CompletionItem, 0)
-	sql := p.cache.Get(uri)
-
-	parsedFile := p.analyzer.ParseFile(uri, sql.RawText)
+func (c *completor) Complete(ctx context.Context, parsedFile file.ParsedFile, position lsp.Position) ([]CompletionItem, error) {
 	termOffset := parsedFile.TermOffset(position)
 
 	// cursor is on table name
-	tablePathNode, ok := searchAstNode[*ast.TablePathExpressionNode](parsedFile.Node, termOffset)
+	tablePathNode, ok := file.SearchAstNode[*ast.TablePathExpressionNode](parsedFile.Node, termOffset)
 	if ok && tablePathNode.ParseLocationRange().End().ByteOffset() != termOffset {
-		return p.completeTablePath(ctx, tablePathNode)
+		return c.completeTablePath(ctx, tablePathNode)
 	}
 
 	output, ok := parsedFile.FindTargetAnalyzeOutput(termOffset)
 	if !ok {
-		p.logger.Debug("not found analyze output")
+		c.logger.Debug("not found analyze output")
 		return nil, nil
 	}
 	incompleteColumnName := parsedFile.FindIncompleteColumnName(position)
 
 	node, ok := findScanNode(output, termOffset)
 	if node == nil {
-		p.logger.Debug("not found project scan node")
+		c.logger.Debug("not found project scan node")
 		return nil, nil
 	}
 
@@ -83,12 +54,14 @@ func (p *Project) Complete(ctx context.Context, uri string, position lsp.Positio
 		node = aScanNode.InputScan()
 	}
 
+	result := make([]CompletionItem, 0)
+
 	columns := node.ColumnList()
 	for _, column := range columns {
 		if !strings.HasPrefix(column.Name(), incompleteColumnName) {
 			continue
 		}
-		item, ok := p.createCompletionItemFromColumn(ctx, incompleteColumnName, column)
+		item, ok := c.createCompletionItemFromColumn(ctx, incompleteColumnName, column)
 		if !ok {
 			continue
 		}
@@ -101,24 +74,24 @@ func (p *Project) Complete(ctx context.Context, uri string, position lsp.Positio
 		if !strings.HasPrefix(incompleteColumnName, column.Name()) {
 			continue
 		}
-		items := p.createCompletionItemForRecordType(ctx, incompleteColumnName, column)
+		items := c.createCompletionItemForRecordType(ctx, incompleteColumnName, column)
 
 		result = append(result, items...)
 	}
 
 	// for table alias completion
-	result = append(result, p.completeScanField(ctx, node, incompleteColumnName)...)
+	result = append(result, c.completeScanField(ctx, node, incompleteColumnName)...)
 
 	return result, nil
 }
 
 func findScanNode(output *zetasql.AnalyzerOutput, termOffset int) (node rast.ScanNode, ok bool) {
-	node, ok = searchResolvedAstNode[*rast.ProjectScanNode](output, termOffset)
+	node, ok = file.SearchResolvedAstNode[*rast.ProjectScanNode](output, termOffset)
 	if ok {
 		return node, true
 	}
 
-	node, ok = searchResolvedAstNode[*rast.OrderByScanNode](output, termOffset)
+	node, ok = file.SearchResolvedAstNode[*rast.OrderByScanNode](output, termOffset)
 	if ok {
 		return node, true
 	}
@@ -158,23 +131,23 @@ type tablePathParams struct {
 	TableID   string
 }
 
-func (p *Project) completeScanField(ctx context.Context, node rast.ScanNode, incompleteColumnName string) []CompletionItem {
+func (c *completor) completeScanField(ctx context.Context, node rast.ScanNode, incompleteColumnName string) []CompletionItem {
 	switch n := node.(type) {
 	case *rast.TableScanNode:
-		return p.completeTableScanField(ctx, n, incompleteColumnName)
+		return c.completeTableScanField(ctx, n, incompleteColumnName)
 	case *rast.WithRefScanNode:
-		return p.completeWithScanField(ctx, n, incompleteColumnName)
+		return c.completeWithScanField(ctx, n, incompleteColumnName)
 	case *rast.JoinScanNode:
-		leftResult := p.completeScanField(ctx, n.LeftScan(), incompleteColumnName)
-		rightResult := p.completeScanField(ctx, n.RightScan(), incompleteColumnName)
+		leftResult := c.completeScanField(ctx, n.LeftScan(), incompleteColumnName)
+		rightResult := c.completeScanField(ctx, n.RightScan(), incompleteColumnName)
 		return append(leftResult, rightResult...)
 	case *rast.FilterScanNode:
-		return p.completeScanField(ctx, n.InputScan(), incompleteColumnName)
+		return c.completeScanField(ctx, n.InputScan(), incompleteColumnName)
 	}
 	return nil
 }
 
-func (p *Project) completeTableScanField(ctx context.Context, tableScanNode *rast.TableScanNode, incompleteColumnName string) []CompletionItem {
+func (c *completor) completeTableScanField(ctx context.Context, tableScanNode *rast.TableScanNode, incompleteColumnName string) []CompletionItem {
 	if tableScanNode.Alias() == "" {
 		return nil
 	}
@@ -201,7 +174,7 @@ func (p *Project) completeTableScanField(ctx context.Context, tableScanNode *ras
 		if !strings.HasPrefix(column.Name(), afterWord) {
 			continue
 		}
-		item, ok := p.createCompletionItemFromColumn(ctx, afterWord, column)
+		item, ok := c.createCompletionItemFromColumn(ctx, afterWord, column)
 		if !ok {
 			continue
 		}
@@ -211,7 +184,7 @@ func (p *Project) completeTableScanField(ctx context.Context, tableScanNode *ras
 	return result
 }
 
-func (p *Project) completeWithScanField(ctx context.Context, withScanNode *rast.WithRefScanNode, incompleteColumnName string) []CompletionItem {
+func (c *completor) completeWithScanField(ctx context.Context, withScanNode *rast.WithRefScanNode, incompleteColumnName string) []CompletionItem {
 	if strings.HasPrefix(withScanNode.WithQueryName(), incompleteColumnName) {
 		return []CompletionItem{
 			{
@@ -233,7 +206,7 @@ func (p *Project) completeWithScanField(ctx context.Context, withScanNode *rast.
 		if !strings.HasPrefix(column.Name(), afterWord) {
 			continue
 		}
-		item, ok := p.createCompletionItemFromColumn(ctx, afterWord, column)
+		item, ok := c.createCompletionItemFromColumn(ctx, afterWord, column)
 		if !ok {
 			continue
 		}
@@ -243,8 +216,8 @@ func (p *Project) completeWithScanField(ctx context.Context, withScanNode *rast.
 	return result
 }
 
-func (p *Project) completeTablePath(ctx context.Context, node *ast.TablePathExpressionNode) ([]CompletionItem, error) {
-	tablePath, ok := createTableNameFromTablePathExpressionNode(node)
+func (c *completor) completeTablePath(ctx context.Context, node *ast.TablePathExpressionNode) ([]CompletionItem, error) {
+	tablePath, ok := file.CreateTableNameFromTablePathExpressionNode(node)
 	if !ok {
 		return nil, nil
 	}
@@ -263,18 +236,18 @@ func (p *Project) completeTablePath(ctx context.Context, node *ast.TablePathExpr
 
 	switch len(splittedTablePath) {
 	case 0, 1:
-		return p.completeProjectForTablePath(ctx, params)
+		return c.completeProjectForTablePath(ctx, params)
 	case 2:
-		return p.completeDatasetForTablePath(ctx, params)
+		return c.completeDatasetForTablePath(ctx, params)
 	case 3:
-		return p.completeTableForTablePath(ctx, params)
+		return c.completeTableForTablePath(ctx, params)
 	}
 
 	return nil, nil
 }
 
-func (p *Project) completeProjectForTablePath(ctx context.Context, param tablePathParams) ([]CompletionItem, error) {
-	projects, err := p.bqClient.ListProjects(ctx)
+func (c *completor) completeProjectForTablePath(ctx context.Context, param tablePathParams) ([]CompletionItem, error) {
+	projects, err := c.bqClient.ListProjects(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to ListProjects: %w", err)
 	}
@@ -296,8 +269,8 @@ func (p *Project) completeProjectForTablePath(ctx context.Context, param tablePa
 	return result, nil
 }
 
-func (p *Project) completeDatasetForTablePath(ctx context.Context, param tablePathParams) ([]CompletionItem, error) {
-	datasets, err := p.bqClient.ListDatasets(ctx, param.ProjectID)
+func (c *completor) completeDatasetForTablePath(ctx context.Context, param tablePathParams) ([]CompletionItem, error) {
+	datasets, err := c.bqClient.ListDatasets(ctx, param.ProjectID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to ListDatasets: %w", err)
 	}
@@ -319,10 +292,10 @@ func (p *Project) completeDatasetForTablePath(ctx context.Context, param tablePa
 	return result, nil
 }
 
-func (p *Project) completeTableForTablePath(ctx context.Context, param tablePathParams) ([]CompletionItem, error) {
-	tables, err := p.bqClient.ListTables(ctx, param.ProjectID, param.DatasetID, true)
+func (c *completor) completeTableForTablePath(ctx context.Context, param tablePathParams) ([]CompletionItem, error) {
+	tables, err := c.bqClient.ListTables(ctx, param.ProjectID, param.DatasetID, true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to ListTables: %w", err)
+		return nil, fmt.Errorf("failed to bqClient.ListTables: %w", err)
 	}
 
 	result := make([]CompletionItem, 0)
@@ -342,8 +315,8 @@ func (p *Project) completeTableForTablePath(ctx context.Context, param tablePath
 	return result, nil
 }
 
-func (p *Project) createCompletionItemFromColumn(ctx context.Context, incompleteColumnName string, column *rast.Column) (CompletionItem, bool) {
-	tableMetadata, err := p.analyzer.GetTableMetadataFromPath(ctx, column.TableName())
+func (c *completor) createCompletionItemFromColumn(ctx context.Context, incompleteColumnName string, column *rast.Column) (CompletionItem, bool) {
+	tableMetadata, err := c.analyzer.GetTableMetadataFromPath(ctx, column.TableName())
 	if err != nil {
 		// cannot find table metadata
 		return createCompletionItemFromColumn(column, incompleteColumnName), true
@@ -358,7 +331,7 @@ func (p *Project) createCompletionItemFromColumn(ctx context.Context, incomplete
 	return CompletionItem{}, false
 }
 
-func (p *Project) createCompletionItemForRecordType(ctx context.Context, incompleteColumnName string, column *rast.Column) []CompletionItem {
+func (c *completor) createCompletionItemForRecordType(ctx context.Context, incompleteColumnName string, column *rast.Column) []CompletionItem {
 	if !column.Type().IsStruct() {
 		return nil
 	}
@@ -369,15 +342,15 @@ func (p *Project) createCompletionItemForRecordType(ctx context.Context, incompl
 	}
 	afterRecord := strings.Join(splittedIncompleteColumnName[1:], ".")
 
-	tableMetadata, err := p.analyzer.GetTableMetadataFromPath(ctx, column.TableName())
+	tableMetadata, err := c.analyzer.GetTableMetadataFromPath(ctx, column.TableName())
 	if err != nil {
-		return p.createCompletionItemForType(ctx, afterRecord, column.Type())
+		return c.createCompletionItemForType(ctx, afterRecord, column.Type())
 	}
 
-	return p.createCompletionItemForBigquerySchema(ctx, incompleteColumnName, tableMetadata.Schema)
+	return c.createCompletionItemForBigquerySchema(ctx, incompleteColumnName, tableMetadata.Schema)
 }
 
-func (p *Project) createCompletionItemForType(ctx context.Context, incompleteColumnName string, typ types.Type) []CompletionItem {
+func (c *completor) createCompletionItemForType(ctx context.Context, incompleteColumnName string, typ types.Type) []CompletionItem {
 	if !typ.IsStruct() {
 		return nil
 	}
@@ -391,7 +364,7 @@ func (p *Project) createCompletionItemForType(ctx context.Context, incompleteCol
 				if !field.Type().IsStruct() {
 					return nil
 				}
-				return p.createCompletionItemForType(ctx, strings.Join(inCompleteColumns[1:], "."), field.Type())
+				return c.createCompletionItemForType(ctx, strings.Join(inCompleteColumns[1:], "."), field.Type())
 			}
 		}
 		return nil
@@ -407,12 +380,12 @@ func (p *Project) createCompletionItemForType(ctx context.Context, incompleteCol
 	return items
 }
 
-func (p *Project) createCompletionItemForBigquerySchema(ctx context.Context, incompleteColumnName string, schema bigquery.Schema) []CompletionItem {
+func (c *completor) createCompletionItemForBigquerySchema(ctx context.Context, incompleteColumnName string, schema bq.Schema) []CompletionItem {
 	inCompleteColumns := strings.Split(incompleteColumnName, ".")
 	if len(inCompleteColumns) > 1 {
 		for _, field := range schema {
 			if field.Name == inCompleteColumns[0] {
-				return p.createCompletionItemForBigquerySchema(ctx, strings.Join(inCompleteColumns[1:], "."), field.Schema)
+				return c.createCompletionItemForBigquerySchema(ctx, strings.Join(inCompleteColumns[1:], "."), field.Schema)
 			}
 		}
 		return nil
@@ -442,7 +415,7 @@ func createCompletionItemFromColumn(column columnInterface, incompleteColumnName
 	}
 }
 
-func createCompletionItemFromSchema(schema *bigquery.FieldSchema, incompleteColumnName string) CompletionItem {
+func createCompletionItemFromSchema(schema *bq.FieldSchema, incompleteColumnName string) CompletionItem {
 	detail := string(schema.Type)
 	if schema.Description != "" {
 		detail += "\n" + schema.Description
