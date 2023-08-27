@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 
 	"cloud.google.com/go/bigquery"
 	"google.golang.org/api/cloudresourcemanager/v1"
@@ -14,6 +15,10 @@ type cache struct {
 	db                 *database
 	bqClient           Client
 	tableMetadataCache map[string]*bigquery.TableMetadata
+
+	onceListProjects *sync.Once
+	onceListDatasets map[string]*sync.Once
+	onceListTables   map[string]*sync.Once
 }
 
 func newCache(bqClient Client) (*cache, error) {
@@ -31,6 +36,9 @@ func newCache(bqClient Client) (*cache, error) {
 		db:                 db,
 		bqClient:           bqClient,
 		tableMetadataCache: make(map[string]*bigquery.TableMetadata),
+		onceListProjects:   &sync.Once{},
+		onceListDatasets:   make(map[string]*sync.Once),
+		onceListTables:     make(map[string]*sync.Once),
 	}, nil
 }
 
@@ -48,6 +56,14 @@ func (c *cache) GetDefaultProject() string {
 func (c *cache) ListProjects(ctx context.Context) ([]*cloudresourcemanager.Project, error) {
 	results, err := c.db.SelectProjects(ctx)
 	if err == nil && len(results) > 0 {
+		// recache the latest projects
+		go c.onceListProjects.Do(func() {
+			ctx := context.WithoutCancel(ctx)
+			_, err := c.callListProjects(ctx)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to recache projects: %v\n", err)
+			}
+		})
 		return results, nil
 	}
 	if err != nil {
@@ -55,6 +71,10 @@ func (c *cache) ListProjects(ctx context.Context) ([]*cloudresourcemanager.Proje
 		fmt.Fprintf(os.Stderr, "failed to select projects: %v\n", err)
 	}
 
+	return c.callListProjects(ctx)
+}
+
+func (c *cache) callListProjects(ctx context.Context) ([]*cloudresourcemanager.Project, error) {
 	result, err := c.bqClient.ListProjects(ctx)
 	if err != nil {
 		return nil, err
@@ -73,6 +93,16 @@ func (c *cache) ListProjects(ctx context.Context) ([]*cloudresourcemanager.Proje
 func (c *cache) ListDatasets(ctx context.Context, projectID string) ([]*bigquery.Dataset, error) {
 	results, err := c.db.SelectDatasets(ctx, projectID)
 	if err == nil && len(results) > 0 {
+		if c.onceListDatasets[projectID] == nil {
+			c.onceListDatasets[projectID] = &sync.Once{}
+		}
+		go c.onceListDatasets[projectID].Do(func() {
+			ctx := context.WithoutCancel(ctx)
+			_, err := c.callListDatasets(ctx, projectID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to recache datasets: %v\n", err)
+			}
+		})
 		return results, nil
 	}
 	if err != nil {
@@ -80,6 +110,10 @@ func (c *cache) ListDatasets(ctx context.Context, projectID string) ([]*bigquery
 		fmt.Fprintf(os.Stderr, "failed to select datasets: %v\n", err)
 	}
 
+	return c.callListDatasets(ctx, projectID)
+}
+
+func (c *cache) callListDatasets(ctx context.Context, projectID string) ([]*bigquery.Dataset, error) {
 	result, err := c.bqClient.ListDatasets(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -98,6 +132,18 @@ func (c *cache) ListDatasets(ctx context.Context, projectID string) ([]*bigquery
 func (c *cache) ListTables(ctx context.Context, projectID, datasetID string) ([]*bigquery.Table, error) {
 	results, err := c.db.SelectTables(ctx, projectID, datasetID)
 	if err == nil && len(results) > 0 {
+		key := fmt.Sprintf("%s.%s", projectID, datasetID)
+		if c.onceListTables[key] == nil {
+			c.onceListTables[key] = &sync.Once{}
+		}
+
+		go c.onceListTables[key].Do(func() {
+			ctx := context.WithoutCancel(ctx)
+			_, err := c.callListTables(ctx, projectID, datasetID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to recache tables: %v\n", err)
+			}
+		})
 		return results, nil
 	}
 	if err != nil {
@@ -105,6 +151,10 @@ func (c *cache) ListTables(ctx context.Context, projectID, datasetID string) ([]
 		fmt.Fprintf(os.Stderr, "failed to select tables: %v\n", err)
 	}
 
+	return c.callListTables(ctx, projectID, datasetID)
+}
+
+func (c *cache) callListTables(ctx context.Context, projectID, datasetID string) ([]*bigquery.Table, error) {
 	result, err := c.bqClient.ListTables(ctx, projectID, datasetID)
 	if err != nil {
 		return nil, err

@@ -1,6 +1,6 @@
 module github.com/kitagry/bqls
 
-go 1.20
+go 1.21
 
 require (
 	github.com/google/go-cmp v0.5.9
@@ -9,6 +9,8 @@ require (
 
 require (
 	cloud.google.com/go/bigquery v1.52.0
+	github.com/JohannesKaufmann/html-to-markdown v1.4.1
+	github.com/PuerkitoBio/goquery v1.8.1
 	github.com/goccy/go-zetasql v0.5.1
 	github.com/golang/mock v1.6.0
 	github.com/mattn/go-sqlite3 v1.14.17
@@ -21,8 +23,6 @@ require (
 	cloud.google.com/go/compute v1.19.3 // indirect
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
 	cloud.google.com/go/iam v1.1.0 // indirect
-	github.com/JohannesKaufmann/html-to-markdown v1.4.1 // indirect
-	github.com/PuerkitoBio/goquery v1.8.1 // indirect
 	github.com/andybalholm/brotli v1.0.4 // indirect
 	github.com/andybalholm/cascadia v1.3.1 // indirect
 	github.com/apache/arrow/go/v12 v12.0.0 // indirect

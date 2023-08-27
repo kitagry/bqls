@@ -90,11 +90,12 @@ func (c *client) ListProjects(ctx context.Context) ([]*cloudresourcemanager.Proj
 }
 
 func (c *client) ListDatasets(ctx context.Context, projectID string) ([]*bigquery.Dataset, error) {
-	it := c.bqClient.DatasetsInProject(ctx, projectID)
+	d := c.bqClient.Datasets(ctx)
+	d.ProjectID = projectID
 
 	datasets := make([]*bigquery.Dataset, 0)
 	for {
-		dt, err := it.Next()
+		dt, err := d.Next()
 		if err == iterator.Done {
 			break
 		}

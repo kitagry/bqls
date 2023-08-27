@@ -43,15 +43,14 @@ jobs:
     strategy:
       matrix:
         os: [ "ubuntu-latest" ]
-        go-version: [ "1.20" ]
     runs-on: ${{ matrix.os }}
     steps:
     - name: checkout
       uses: actions/checkout@v3
-    - name: setup Go ${{ matrix.go-version }}
+    - name: setup Go
       uses: actions/setup-go@v4
       with:
-        go-version: ${{ matrix.go-version }}
+        go-version-file: go.mod
         cache: true
     - name: cache for linux
       uses: actions/cache@v3
