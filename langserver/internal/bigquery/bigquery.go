@@ -22,7 +22,7 @@ type Client interface {
 	ListDatasets(ctx context.Context, projectID string) ([]*bigquery.Dataset, error)
 
 	// ListTables lists all tables in the specified dataset.
-	ListTables(ctx context.Context, projectID, datasetID string) ([]*bigquery.Table, error)
+	ListTables(ctx context.Context, projectID, datasetID string, onlyLatestSuffix bool) ([]*bigquery.Table, error)
 
 	// GetTableMetadata returns the metadata of the specified table.
 	GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.TableMetadata, error)
@@ -108,7 +108,7 @@ func (c *client) ListDatasets(ctx context.Context, projectID string) ([]*bigquer
 	return datasets, nil
 }
 
-func (c *client) ListTables(ctx context.Context, projectID, datasetID string) ([]*bigquery.Table, error) {
+func (c *client) ListTables(ctx context.Context, projectID, datasetID string, onlyLatestSuffix bool) ([]*bigquery.Table, error) {
 	dataset := c.bqClient.DatasetInProject(projectID, datasetID)
 
 	it := dataset.Tables(ctx)
@@ -124,6 +124,10 @@ func (c *client) ListTables(ctx context.Context, projectID, datasetID string) ([
 		}
 
 		tables = append(tables, table)
+	}
+
+	if onlyLatestSuffix {
+		tables = extractLatestSuffixTables(tables)
 	}
 	return tables, nil
 }

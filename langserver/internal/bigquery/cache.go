@@ -129,7 +129,7 @@ func (c *cache) callListDatasets(ctx context.Context, projectID string) ([]*bigq
 	return result, nil
 }
 
-func (c *cache) ListTables(ctx context.Context, projectID, datasetID string) ([]*bigquery.Table, error) {
+func (c *cache) ListTables(ctx context.Context, projectID, datasetID string, onlyLatestSuffix bool) ([]*bigquery.Table, error) {
 	results, err := c.db.SelectTables(ctx, projectID, datasetID)
 	if err == nil && len(results) > 0 {
 		key := fmt.Sprintf("%s.%s", projectID, datasetID)
@@ -139,7 +139,7 @@ func (c *cache) ListTables(ctx context.Context, projectID, datasetID string) ([]
 
 		go c.onceListTables[key].Do(func() {
 			ctx := context.WithoutCancel(ctx)
-			_, err := c.callListTables(ctx, projectID, datasetID)
+			_, err := c.callListTables(ctx, projectID, datasetID, false)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "failed to recache tables: %v\n", err)
 			}
@@ -151,11 +151,12 @@ func (c *cache) ListTables(ctx context.Context, projectID, datasetID string) ([]
 		fmt.Fprintf(os.Stderr, "failed to select tables: %v\n", err)
 	}
 
-	return c.callListTables(ctx, projectID, datasetID)
+	return c.callListTables(ctx, projectID, datasetID, onlyLatestSuffix)
 }
 
-func (c *cache) callListTables(ctx context.Context, projectID, datasetID string) ([]*bigquery.Table, error) {
-	result, err := c.bqClient.ListTables(ctx, projectID, datasetID)
+func (c *cache) callListTables(ctx context.Context, projectID, datasetID string, onlyLatestSuffix bool) ([]*bigquery.Table, error) {
+	// onlyLatestSuffix is ignored for cache.
+	result, err := c.bqClient.ListTables(ctx, projectID, datasetID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +167,10 @@ func (c *cache) callListTables(ctx context.Context, projectID, datasetID string)
 			// TODO
 			fmt.Fprintf(os.Stderr, "failed to insert tables: %v\n", err)
 		}
+	}
+
+	if onlyLatestSuffix {
+		result = extractLatestSuffixTables(result)
 	}
 	return result, nil
 }

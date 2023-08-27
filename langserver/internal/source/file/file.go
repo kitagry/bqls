@@ -1,6 +1,7 @@
-package source
+package file
 
 import (
+	"bufio"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -24,6 +25,11 @@ type ParsedFile struct {
 
 	FixOffsets []FixOffset
 	Errors     []Error
+}
+
+func (p ParsedFile) TermOffset(pos lsp.Position) int {
+	termOffset := positionToByteOffset(p.Src, pos)
+	return p.fixTermOffsetForNode(termOffset)
 }
 
 func (p ParsedFile) fixTermOffsetForNode(termOffset int) int {
@@ -142,111 +148,6 @@ func (p *ParsedFile) FindIncompleteColumnName(pos lsp.Position) string {
 		}
 	}
 	return ""
-}
-
-func (p *Project) ParseFile(uri string, src string) ParsedFile {
-	fixedSrc, errs, fixOffsets := fixDot(src)
-
-	var node ast.ScriptNode
-	rnode := make([]*zetasql.AnalyzerOutput, 0)
-	for _retry := 0; _retry < 10; _retry++ {
-		var err error
-		var fo []FixOffset
-		node, err = zetasql.ParseScript(fixedSrc, zetasql.NewParserOptions(), zetasql.ErrorMessageOneLine)
-		if err != nil {
-			pErr := parseZetaSQLError(err)
-			if strings.Contains(pErr.Msg, "SELECT list must not be empty") {
-				fixedSrc, pErr, fo = fixSelectListMustNotBeEmptyStatement(fixedSrc, pErr)
-			}
-			if strings.Contains(pErr.Msg, "Unexpected end of script") {
-				fixedSrc, pErr, fo = fixUnexpectedEndOfScript(fixedSrc, pErr)
-			}
-			errs = append(errs, pErr)
-			if len(fo) > 0 {
-				// retry
-				fixOffsets = append(fixOffsets, fo...)
-				continue
-			}
-		}
-
-		stmts := make([]ast.StatementNode, 0)
-		ast.Walk(node, func(n ast.Node) error {
-			if n == nil {
-				return nil
-			}
-			if n.IsStatement() {
-				stmts = append(stmts, n)
-			}
-			return nil
-		})
-
-		for _, s := range stmts {
-			output, err := p.analyzeStatement(fixedSrc, s)
-			if err == nil {
-				rnode = append(rnode, output)
-				continue
-			}
-
-			pErr := parseZetaSQLError(err)
-
-			isUnrecognizedNameError := strings.Contains(pErr.Msg, "Unrecognized name: ")
-			isNotExistInStructError := strings.Contains(pErr.Msg, "does not exist in STRUCT")
-			isNotFoundInsideError := strings.Contains(pErr.Msg, "not found inside")
-			isTableNotFoundError := strings.Contains(pErr.Msg, "Table not found: ")
-
-			// add information to Error
-			switch {
-			case isUnrecognizedNameError:
-				pErr = addInformationToUnrecognizedNameError(fixedSrc, pErr)
-			case isNotExistInStructError:
-				pErr = addInformationToNotExistInStructError(fixedSrc, pErr)
-			case isNotFoundInsideError:
-				pErr = addInformationToNotFoundInsideTableError(fixedSrc, pErr)
-			case isTableNotFoundError:
-				ind := strings.Index(pErr.Msg, "Table not found: ")
-				table := strings.TrimSpace(pErr.Msg[ind+len("Table not found: "):])
-				pErr.TermLength = len(table)
-				pErr.IncompleteColumnName = table
-			}
-			errs = append(errs, pErr)
-
-			// fix src
-			if isUnrecognizedNameError || isNotExistInStructError || isNotFoundInsideError {
-				errTermOffset := positionToByteOffset(fixedSrc, pErr.Position)
-				if _, ok := searchAstNode[*ast.SelectListNode](node, errTermOffset); ok {
-					fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
-				}
-				if _, ok := searchAstNode[*ast.WhereClauseNode](node, errTermOffset); ok {
-					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
-				}
-				if _, ok := searchAstNode[*ast.GroupByNode](node, errTermOffset); ok {
-					fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
-				}
-				if _, ok := searchAstNode[*ast.OrderByNode](node, errTermOffset); ok {
-					fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
-				}
-				if _, ok := searchAstNode[*ast.OnClauseNode](node, errTermOffset); ok {
-					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
-				}
-			}
-
-			if len(fo) > 0 {
-				fixOffsets = append(fixOffsets, fo...)
-				goto retry
-			}
-		}
-		break
-	retry:
-	}
-
-	return ParsedFile{
-		URI:        uri,
-		Src:        src,
-		Node:       node,
-		RNode:      rnode,
-		FixOffsets: fixOffsets,
-		Errors:     errs,
-	}
 }
 
 type FixOffset struct {
@@ -497,7 +398,7 @@ func fixErrorForWhereStatement(src string, node ast.StatementNode, parsedErr Err
 	}
 
 	fixOffset := FixOffset{Offset: errOffset, Length: 0}
-	if node, ok := searchAstNode[*ast.BinaryExpressionNode](node, errOffset); ok {
+	if node, ok := SearchAstNode[*ast.BinaryExpressionNode](node, errOffset); ok {
 		// e.x.) SELECT * FROM table WHERE unexist_column = 1
 		loc := node.ParseLocationRange()
 		startOffset := loc.Start().ByteOffset()
@@ -554,4 +455,36 @@ func addInformationToNotFoundInsideTableError(src string, parsedErr Error) Error
 	firstIndex := strings.LastIndex(src[:errOffset], " ") + 1
 	parsedErr.IncompleteColumnName = src[firstIndex : errOffset+len(notExistColumn)]
 	return parsedErr
+}
+
+func positionToByteOffset(sql string, position lsp.Position) int {
+	buf := bufio.NewScanner(strings.NewReader(sql))
+	buf.Split(bufio.ScanLines)
+
+	var offset int
+	for i := 0; i < position.Line; i++ {
+		buf.Scan()
+		offset += len([]byte(buf.Text())) + 1
+	}
+	offset += position.Character
+	return offset
+}
+
+func byteOffsetToPosition(sql string, offset int) (lsp.Position, bool) {
+	lines := strings.Split(sql, "\n")
+
+	line := 0
+	for _, l := range lines {
+		if offset < len(l)+1 {
+			return lsp.Position{
+				Line:      line,
+				Character: offset,
+			}, true
+		}
+
+		line++
+		offset -= len(l) + 1
+	}
+
+	return lsp.Position{}, false
 }

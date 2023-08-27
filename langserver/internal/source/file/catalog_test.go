@@ -1,4 +1,4 @@
-package source_test
+package file_test
 
 import (
 	"errors"
@@ -9,7 +9,7 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/bigquery/mock_bigquery"
-	"github.com/kitagry/bqls/langserver/internal/source"
+	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
 
 func TestCatalog_AddTable(t *testing.T) {
@@ -75,7 +75,7 @@ func TestCatalog_AddTable(t *testing.T) {
 			defer mockCtrl.Finish()
 
 			bqClient := tt.createMockBigQuery(mockCtrl)
-			catalog := source.NewCatalog(bqClient)
+			catalog := file.NewCatalog(bqClient)
 
 			got, err := catalog.FindTable(tt.path)
 			if !errors.Is(err, tt.expectError) {
@@ -112,7 +112,7 @@ func TestCatalog_shouldNotGetSchemaTwice(t *testing.T) {
 			},
 		},
 	}, nil).Times(1)
-	catalog := source.NewCatalog(bqClient)
+	catalog := file.NewCatalog(bqClient)
 
 	_, err := catalog.FindTable([]string{"project.dataset.table"})
 	if err != nil {

@@ -1,4 +1,4 @@
-package source
+package file
 
 import (
 	"strings"
@@ -6,7 +6,7 @@ import (
 	"github.com/goccy/go-zetasql/ast"
 )
 
-func createTableNameFromTablePathExpressionNode(node *ast.TablePathExpressionNode) (string, bool) {
+func CreateTableNameFromTablePathExpressionNode(node *ast.TablePathExpressionNode) (string, bool) {
 	var pathExpr *ast.PathExpressionNode
 	if unnestExpr := node.UnnestExpr(); unnestExpr != nil {
 		ex, ok := unnestExpr.Expression().(*ast.PathExpressionNode)
