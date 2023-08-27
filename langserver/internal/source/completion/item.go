@@ -5,7 +5,7 @@ import "github.com/kitagry/bqls/langserver/internal/lsp"
 type CompletionItem struct {
 	Kind          lsp.CompletionItemKind
 	NewText       string
-	Documentation string
+	Documentation lsp.MarkupContent
 	TypedPrefix   string
 }
 

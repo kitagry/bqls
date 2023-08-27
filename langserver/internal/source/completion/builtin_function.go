@@ -25,10 +25,13 @@ func (c *completor) completeBuiltinFunction(ctx context.Context, parsedFile file
 	for _, f := range function.BuiltInFunctions {
 		if strings.HasPrefix(f.Name, incompleteColumnName) {
 			result = append(result, CompletionItem{
-				Kind:          lsp.CIKFunction,
-				NewText:       f.Name,
-				TypedPrefix:   incompleteColumnName,
-				Documentation: f.Description,
+				Kind:        lsp.CIKFunction,
+				NewText:     f.Name,
+				TypedPrefix: incompleteColumnName,
+				Documentation: lsp.MarkupContent{
+					Kind:  lsp.MKMarkdown,
+					Value: f.Description,
+				},
 			})
 		}
 	}
