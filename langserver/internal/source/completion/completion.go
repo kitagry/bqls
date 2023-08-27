@@ -22,6 +22,14 @@ type completor struct {
 	bqClient bigquery.Client
 }
 
+func New(logger *logrus.Logger, analyzer *file.Analyzer, bqClient bigquery.Client) *completor {
+	return &completor{
+		logger:   logger,
+		analyzer: analyzer,
+		bqClient: bqClient,
+	}
+}
+
 func (c *completor) Complete(ctx context.Context, parsedFile file.ParsedFile, position lsp.Position) ([]CompletionItem, error) {
 	termOffset := parsedFile.TermOffset(position)
 
