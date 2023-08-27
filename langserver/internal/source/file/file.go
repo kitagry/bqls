@@ -137,8 +137,7 @@ func (p *ParsedFile) FindTargetAnalyzeOutput(termOffset int) (*zetasql.AnalyzerO
 }
 
 func (p *ParsedFile) FindIncompleteColumnName(pos lsp.Position) string {
-	targetTerm := positionToByteOffset(p.Src, pos)
-	targetTerm = p.fixTermOffsetForNode(targetTerm)
+	targetTerm := p.TermOffset(pos)
 
 	for _, err := range p.Errors {
 		startOffset := positionToByteOffset(p.Src, err.Position)
