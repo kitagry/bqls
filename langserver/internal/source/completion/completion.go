@@ -31,6 +31,16 @@ func New(logger *logrus.Logger, analyzer *file.Analyzer, bqClient bigquery.Clien
 }
 
 func (c *completor) Complete(ctx context.Context, parsedFile file.ParsedFile, position lsp.Position) ([]CompletionItem, error) {
+	result, err := c.completeFromSQLContext(ctx, parsedFile, position)
+	if err != nil {
+		return result, err
+	}
+
+	result = append(result, c.completeBuiltinFunction(ctx, parsedFile, position)...)
+	return result, nil
+}
+
+func (c *completor) completeFromSQLContext(ctx context.Context, parsedFile file.ParsedFile, position lsp.Position) ([]CompletionItem, error) {
 	termOffset := parsedFile.TermOffset(position)
 
 	// cursor is on table name

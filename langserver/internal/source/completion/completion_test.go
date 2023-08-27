@@ -1,4 +1,4 @@
-package completion_test
+package completion
 
 import (
 	"context"
@@ -13,19 +13,18 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/bigquery/mock_bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
-	"github.com/kitagry/bqls/langserver/internal/source/completion"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
 	"github.com/kitagry/bqls/langserver/internal/source/helper"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/api/cloudresourcemanager/v1"
 )
 
-func TestProject_CompleteColumn(t *testing.T) {
+func TestProject_CompleteFromSQLContext(t *testing.T) {
 	tests := map[string]struct {
 		files              map[string]string
 		bqTableMetadataMap map[string]*bq.TableMetadata
 
-		expectCompletionItems []completion.CompletionItem
+		expectCompletionItems []CompletionItem
 		expectErr             error
 	}{
 		"Select columns with supportSunippet is true": {
@@ -47,7 +46,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -75,7 +74,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -107,7 +106,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "name",
@@ -131,7 +130,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -158,7 +157,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -182,7 +181,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -212,7 +211,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -247,7 +246,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -276,7 +275,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -306,7 +305,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -335,7 +334,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -358,7 +357,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -381,7 +380,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -404,7 +403,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -428,7 +427,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -450,7 +449,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "table",
@@ -473,7 +472,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:        lsp.CIKField,
 					NewText:     "data",
@@ -496,7 +495,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -519,7 +518,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -542,7 +541,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -565,7 +564,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -588,7 +587,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -612,7 +611,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -645,7 +644,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 					},
 				},
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKField,
 					NewText:       "id",
@@ -690,7 +689,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 			logger.SetLevel(logrus.DebugLevel)
 
 			analyzer := file.NewAnalyzer(bqClient)
-			completor := completion.New(logger, analyzer, bqClient)
+			completor := New(logger, analyzer, bqClient)
 
 			files, path, position, err := helper.GetLspPosition(tt.files)
 			if err != nil {
@@ -699,7 +698,7 @@ func TestProject_CompleteColumn(t *testing.T) {
 
 			parsedFile := analyzer.ParseFile(path, files[path])
 
-			got, err := completor.Complete(context.Background(), parsedFile, position)
+			got, err := completor.completeFromSQLContext(context.Background(), parsedFile, position)
 			if !errors.Is(err, tt.expectErr) {
 				t.Fatalf("got error %v, but want %v", err, tt.expectErr)
 			}
@@ -711,12 +710,12 @@ func TestProject_CompleteColumn(t *testing.T) {
 	}
 }
 
-func TestProject_CompleteFromClause(t *testing.T) {
+func TestProject_CompleteFromSQLContext_FromClause(t *testing.T) {
 	tests := map[string]struct {
 		files                  map[string]string
 		bigqueryClientMockFunc func(t *testing.T) bigquery.Client
 
-		expectCompletionItems []completion.CompletionItem
+		expectCompletionItems []CompletionItem
 		expectErr             error
 	}{
 		"list table": {
@@ -742,7 +741,7 @@ func TestProject_CompleteFromClause(t *testing.T) {
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
 				return bqClient
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKModule,
 					NewText:       "1table",
@@ -774,7 +773,7 @@ func TestProject_CompleteFromClause(t *testing.T) {
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
 				return bqClient
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKModule,
 					NewText:       "table20230622",
@@ -804,7 +803,7 @@ func TestProject_CompleteFromClause(t *testing.T) {
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
 				return bqClient
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKModule,
 					NewText:       "dataset1",
@@ -838,7 +837,7 @@ func TestProject_CompleteFromClause(t *testing.T) {
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
 				return bqClient
 			},
-			expectCompletionItems: []completion.CompletionItem{
+			expectCompletionItems: []CompletionItem{
 				{
 					Kind:          lsp.CIKModule,
 					NewText:       "project1",
@@ -859,7 +858,7 @@ func TestProject_CompleteFromClause(t *testing.T) {
 		t.Run(n, func(t *testing.T) {
 			bqClient := tt.bigqueryClientMockFunc(t)
 			analyzer := file.NewAnalyzer(bqClient)
-			completor := completion.New(logrus.New(), analyzer, bqClient)
+			completor := New(logrus.New(), analyzer, bqClient)
 
 			files, path, position, err := helper.GetLspPosition(tt.files)
 			if err != nil {
@@ -868,7 +867,7 @@ func TestProject_CompleteFromClause(t *testing.T) {
 
 			parsedFile := analyzer.ParseFile(path, files[path])
 
-			got, err := completor.Complete(context.Background(), parsedFile, position)
+			got, err := completor.completeFromSQLContext(context.Background(), parsedFile, position)
 			if !errors.Is(err, tt.expectErr) {
 				t.Fatalf("got error %v, but want %v", err, tt.expectErr)
 			}
