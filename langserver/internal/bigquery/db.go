@@ -129,7 +129,7 @@ func (db *database) SelectProjects(ctx context.Context) ([]*cloudresourcemanager
 }
 
 func (db *database) InsertProjects(ctx context.Context, projects []*cloudresourcemanager.Project) error {
-	query := "INSERT INTO projects(project_id, name) VALUES "
+	query := "INSERT OR IGNORE INTO projects(project_id, name) VALUES "
 	queryBuilder := &strings.Builder{}
 	queryBuilder.Grow(len(query) + 7*len(projects))
 	queryBuilder.WriteString(query)
@@ -171,7 +171,7 @@ func (db *database) SelectDatasets(ctx context.Context, projectID string) ([]*bi
 }
 
 func (db *database) InsertDatasets(ctx context.Context, datasets []*bigquery.Dataset) error {
-	query := "INSERT INTO datasets(project_id, dataset_id) VALUES "
+	query := "INSERT OR IGNORE INTO datasets(project_id, dataset_id) VALUES "
 	queryBuilder := &strings.Builder{}
 	queryBuilder.Grow(len(query) + 7*len(datasets))
 	queryBuilder.WriteString(query)
@@ -214,7 +214,7 @@ func (db *database) SelectTables(ctx context.Context, projectID, datasetID strin
 }
 
 func (db *database) InsertTables(ctx context.Context, tables []*bigquery.Table) error {
-	query := "INSERT INTO tables(project_id, dataset_id, table_id) VALUES "
+	query := "INSERT OR IGNORE INTO tables(project_id, dataset_id, table_id) VALUES "
 	queryBuilder := &strings.Builder{}
 	queryBuilder.Grow(len(query) + 10*len(tables))
 	queryBuilder.WriteString(query)
