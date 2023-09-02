@@ -98,7 +98,10 @@ func (p ParsedFile) findTargetStatementNodeIndex(termOffset int) (int, bool) {
 		if n == nil {
 			return nil
 		}
-		if n.IsStatement() {
+		// Currently VariableDeclarationNode can't be analyzed.
+		// So, skip it.
+		_, isVariableDeclaration := n.(*ast.VariableDeclarationNode)
+		if n.IsStatement() && !isVariableDeclaration {
 			stmts = append(stmts, n)
 		}
 		return nil
@@ -194,7 +197,7 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) 
 	// src is a word that ends with a dot.
 	loc := lastDotRegex.FindIndex([]byte(src + " "))
 	if len(loc) != 2 {
-		return src, nil, nil
+		return src, make([]Error, 0), nil
 	}
 
 	errs = make([]Error, 0, 1)
@@ -358,6 +361,22 @@ func addInformationToUnrecognizedNameError(src string, parsedErr Error) Error {
 	parsedErr.TermLength = len(unrecognizedName)
 	parsedErr.IncompleteColumnName = unrecognizedName
 	return parsedErr
+}
+
+func fixDeclarationError(src string, parsedErr Error, defaultVal string) (fixedSrc string, fixOffsets []FixOffset) {
+	errOffset := positionToByteOffset(src, parsedErr.Position)
+	if errOffset == 0 || errOffset == len(src) {
+		return src, nil
+	}
+
+	replaceOffset := errOffset + parsedErr.TermLength - len(parsedErr.IncompleteColumnName)
+	fixedSrc = src[:replaceOffset] + defaultVal + src[replaceOffset+len(parsedErr.IncompleteColumnName):]
+	fixOffset := FixOffset{
+		Offset: errOffset,
+		Length: -parsedErr.TermLength + len(defaultVal),
+	}
+
+	return fixedSrc, []FixOffset{fixOffset}
 }
 
 // fix field name <name> error.
