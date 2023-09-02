@@ -11,17 +11,20 @@ import (
 	rast "github.com/goccy/go-zetasql/resolved_ast"
 	"github.com/goccy/go-zetasql/types"
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
+	"github.com/sirupsen/logrus"
 )
 
 type Analyzer struct {
+	logger   *logrus.Logger
 	bqClient bigquery.Client
 	catalog  types.Catalog
 }
 
-func NewAnalyzer(bqClient bigquery.Client) *Analyzer {
+func NewAnalyzer(logger *logrus.Logger, bqClient bigquery.Client) *Analyzer {
 	catalog := NewCatalog(bqClient)
 
 	return &Analyzer{
+		logger:   logger,
 		bqClient: bqClient,
 		catalog:  catalog,
 	}
@@ -132,7 +135,20 @@ func (p *Analyzer) ParseFile(uri string, src string) ParsedFile {
 			return nil
 		})
 
+		declarationMap := make(map[string]string)
 		for _, s := range stmts {
+			if s.Kind() == ast.VariableDeclaration {
+				node := s.(*ast.VariableDeclarationNode)
+				dummyValue, err := getDummyValueForDeclarationNode(node)
+				if err != nil {
+					p.logger.Debug("failed to get default value for declaration", err)
+				}
+				list := node.VariableList().IdentifierList()
+				for _, l := range list {
+					declarationMap[l.Name()] = dummyValue
+				}
+				continue
+			}
 			output, err := p.AnalyzeStatement(fixedSrc, s)
 			if err == nil {
 				rnode = append(rnode, output)
@@ -160,28 +176,32 @@ func (p *Analyzer) ParseFile(uri string, src string) ParsedFile {
 				pErr.TermLength = len(table)
 				pErr.IncompleteColumnName = table
 			}
-			errs = append(errs, pErr)
 
 			// fix src
+			skipError := false
 			if isUnrecognizedNameError || isNotExistInStructError || isNotFoundInsideError {
 				errTermOffset := positionToByteOffset(fixedSrc, pErr.Position)
-				if _, ok := SearchAstNode[*ast.SelectListNode](node, errTermOffset); ok {
+				if defaultVal, ok := declarationMap[pErr.IncompleteColumnName]; isUnrecognizedNameError && ok {
+					fixedSrc, fo = fixDeclarationError(fixedSrc, pErr, defaultVal)
+					if len(fo) > 0 {
+						skipError = true
+					}
+				} else if _, ok := SearchAstNode[*ast.SelectListNode](node, errTermOffset); ok {
 					fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
-				}
-				if _, ok := SearchAstNode[*ast.WhereClauseNode](node, errTermOffset); ok {
+				} else if _, ok := SearchAstNode[*ast.WhereClauseNode](node, errTermOffset); ok {
 					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
-				}
-				if _, ok := SearchAstNode[*ast.GroupByNode](node, errTermOffset); ok {
+				} else if _, ok := SearchAstNode[*ast.GroupByNode](node, errTermOffset); ok {
 					fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
-				}
-				if _, ok := SearchAstNode[*ast.OrderByNode](node, errTermOffset); ok {
+				} else if _, ok := SearchAstNode[*ast.OrderByNode](node, errTermOffset); ok {
 					fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
-				}
-				if _, ok := SearchAstNode[*ast.OnClauseNode](node, errTermOffset); ok {
+				} else if _, ok := SearchAstNode[*ast.OnClauseNode](node, errTermOffset); ok {
 					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
 				}
 			}
 
+			if !skipError {
+				errs = append(errs, pErr)
+			}
 			if len(fo) > 0 {
 				fixOffsets = append(fixOffsets, fo...)
 				goto retry
@@ -218,5 +238,35 @@ func (a *Analyzer) GetTableMetadataFromPath(ctx context.Context, path string) (*
 		return a.bqClient.GetTableMetadata(ctx, a.bqClient.GetDefaultProject(), splitNode[0], splitNode[1])
 	default:
 		return nil, fmt.Errorf("invalid path: %s", path)
+	}
+}
+
+func getDummyValueForDeclarationNode(node *ast.VariableDeclarationNode) (string, error) {
+	switch n := node.Type().(type) {
+	case *ast.ArrayTypeNode:
+		return "[]", nil
+	case *ast.SimpleTypeNode:
+		return getDummyValueForDefaultValueNode(node.DefaultValue())
+	default:
+		return "", fmt.Errorf("not implemented: %s", n.Kind())
+	}
+}
+
+func getDummyValueForDefaultValueNode(node ast.ExpressionNode) (string, error) {
+	switch n := node.(type) {
+	case *ast.NullLiteralNode:
+		return "NULL", nil
+	case *ast.BooleanLiteralNode:
+		return "TRUE", nil
+	case *ast.IntLiteralNode:
+		return "0", nil
+	case *ast.FloatLiteralNode:
+		return "0.0", nil
+	case *ast.StringLiteralNode:
+		return "''", nil
+	case *ast.DateOrTimeLiteralNode:
+		return "DATE('1970-01-01')", nil
+	default:
+		return "", fmt.Errorf("not implemented: %s", n.Kind())
 	}
 }

@@ -403,6 +403,33 @@ last modified at 2023-06-17 00:00:00`,
 				},
 			},
 		},
+		"hover with declaration": {
+			files: map[string]string{
+				"file1.sql": "DECLARE target_id INT64 DEFAULT 1;\nWITH data AS (SELECT id FROM `project.dataset.table`)\nSELECT * FROM data| WHERE id = target_id",
+			},
+			bqTableMetadata: &bq.TableMetadata{
+				FullID: "project.dataset.table",
+				Schema: bq.Schema{
+					{
+						Name:        "id",
+						Type:        bq.IntegerFieldType,
+						Description: "id description",
+					},
+				},
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{
+					Language: "yaml",
+					Value: `- name: id
+  type: INT64
+`,
+				},
+				{
+					Language: "sql",
+					Value:    "WITH data AS (\nSELECT id FROM `project.dataset.table`\n)",
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {

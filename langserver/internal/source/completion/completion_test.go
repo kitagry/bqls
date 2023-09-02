@@ -769,7 +769,7 @@ func TestProject_CompleteFromSQLContext(t *testing.T) {
 			logger := logrus.New()
 			logger.SetLevel(logrus.DebugLevel)
 
-			analyzer := file.NewAnalyzer(bqClient)
+			analyzer := file.NewAnalyzer(logger, bqClient)
 			completor := New(logger, analyzer, bqClient)
 
 			files, path, position, err := helper.GetLspPosition(tt.files)
@@ -959,7 +959,10 @@ func TestProject_CompleteFromSQLContext_FromClause(t *testing.T) {
 	for n, tt := range tests {
 		t.Run(n, func(t *testing.T) {
 			bqClient := tt.bigqueryClientMockFunc(t)
-			analyzer := file.NewAnalyzer(bqClient)
+			logger := logrus.New()
+			logger.SetLevel(logrus.DebugLevel)
+
+			analyzer := file.NewAnalyzer(logger, bqClient)
 			completor := New(logrus.New(), analyzer, bqClient)
 
 			files, path, position, err := helper.GetLspPosition(tt.files)

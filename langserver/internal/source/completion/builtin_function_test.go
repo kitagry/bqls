@@ -42,7 +42,7 @@ func TestCompletor_CompleteBuiltinFunction(t *testing.T) {
 			logger := logrus.New()
 			logger.SetLevel(logrus.DebugLevel)
 
-			analyzer := file.NewAnalyzer(bqClient)
+			analyzer := file.NewAnalyzer(logger, bqClient)
 			completor := New(logger, analyzer, bqClient)
 
 			files, path, position, err := helper.GetLspPosition(tt.files)

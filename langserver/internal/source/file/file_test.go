@@ -13,6 +13,7 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/bigquery/mock_bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
+	"github.com/sirupsen/logrus"
 )
 
 func TestProject_ParseFile(t *testing.T) {
@@ -578,7 +579,10 @@ func TestProject_ParseFile(t *testing.T) {
 				}
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), tablePathSplitted[0], tablePathSplitted[1], tablePathSplitted[2]).Return(schema, nil).MinTimes(0)
 			}
-			analyzer := file.NewAnalyzer(bqClient)
+			logger := logrus.New()
+			logger.SetLevel(logrus.DebugLevel)
+
+			analyzer := file.NewAnalyzer(logger, bqClient)
 			got := analyzer.ParseFile("uri", tt.file)
 			if diff := cmp.Diff(tt.expectedErrs, got.Errors, cmpopts.IgnoreUnexported()); diff != "" {
 				t.Errorf("ParseFile result diff (-expect, +got)\n%s", diff)
@@ -622,8 +626,57 @@ func TestProject_ParseFileWithIncompleteTable(t *testing.T) {
 
 	for n, tt := range tests {
 		t.Run(n, func(t *testing.T) {
+			logger := logrus.New()
+			logger.SetLevel(logrus.DebugLevel)
 			bqClient := tt.bigqueryClientMockFunc(t)
-			analyzer := file.NewAnalyzer(bqClient)
+			analyzer := file.NewAnalyzer(logger, bqClient)
+
+			got := analyzer.ParseFile("uri", tt.file)
+			if diff := cmp.Diff(tt.expectedErrs, got.Errors, cmpopts.IgnoreUnexported()); diff != "" {
+				t.Errorf("ParseFile result diff (-expect, +got)\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
+	tests := map[string]struct {
+		file               string
+		bqTableMetadataMap map[string]*bq.TableMetadata
+
+		expectedErrs []file.Error
+	}{
+		"Parse with incomplete table name": {
+			file: "DECLARE target_id INT64 DEFAULT 10;\n" +
+				"SELECT * FROM `project.dataset.table` WHERE id = target_id",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []file.Error{},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			for tablePath, schema := range tt.bqTableMetadataMap {
+				tablePathSplitted := strings.Split(tablePath, ".")
+				if len(tablePathSplitted) != 3 {
+					t.Fatalf("table path length should be 3, got %s", tablePath)
+				}
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), tablePathSplitted[0], tablePathSplitted[1], tablePathSplitted[2]).Return(schema, nil).MinTimes(0)
+			}
+			logger := logrus.New()
+			logger.SetLevel(logrus.DebugLevel)
+			analyzer := file.NewAnalyzer(logger, bqClient)
 
 			got := analyzer.ParseFile("uri", tt.file)
 			if diff := cmp.Diff(tt.expectedErrs, got.Errors, cmpopts.IgnoreUnexported()); diff != "" {

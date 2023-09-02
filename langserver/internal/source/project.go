@@ -47,7 +47,7 @@ func NewProject(ctx context.Context, rootPath string, projectID string, logger *
 		return nil, fmt.Errorf("failed to create bigquery client: %w", err)
 	}
 
-	analyzer := file.NewAnalyzer(bqClient)
+	analyzer := file.NewAnalyzer(logger, bqClient)
 
 	return &Project{
 		rootPath: rootPath,
@@ -60,7 +60,7 @@ func NewProject(ctx context.Context, rootPath string, projectID string, logger *
 
 func NewProjectWithBQClient(rootPath string, bqClient bigquery.Client, logger *logrus.Logger) *Project {
 	cache := cache.NewGlobalCache()
-	analyzer := file.NewAnalyzer(bqClient)
+	analyzer := file.NewAnalyzer(logger, bqClient)
 	return &Project{
 		rootPath: rootPath,
 		logger:   logger,
