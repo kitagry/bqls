@@ -246,14 +246,47 @@ func getDummyValueForDeclarationNode(node *ast.VariableDeclarationNode) (string,
 	case *ast.ArrayTypeNode:
 		return "[]", nil
 	case *ast.SimpleTypeNode:
-		return getDummyValueForDefaultValueNode(node.DefaultValue())
+		if node.DefaultValue() != nil {
+			return getDummyValueForDefaultValueNode(node.DefaultValue())
+		}
+		if pen, ok := n.Child(0).(*ast.PathExpressionNode); ok {
+			if in, ok := pen.Child(0).(*ast.IdentifierNode); ok {
+				return getDummyValueForDeclarationIdentifierName(in.Name())
+			}
+		}
+		return "", fmt.Errorf("failed to load default value")
 	default:
 		return "", fmt.Errorf("not implemented: %s", n.Kind())
 	}
 }
 
+func getDummyValueForDeclarationIdentifierName(name string) (string, error) {
+	switch name {
+	case "BOOL":
+		return "TRUE", nil
+	case "INT64":
+		return "1", nil
+	case "FLOAT64":
+		return "1.0", nil
+	case "STRING":
+		return "''", nil
+	case "BYTES":
+		return "b''", nil
+	case "DATE":
+		return "DATE('1970-01-01')", nil
+	case "DATETIME":
+		return "DATETIME('1970-01-01 00:00:00')", nil
+	case "TIME":
+		return "TIME('00:00:00')", nil
+	case "TIMESTAMP":
+		return "TIMESTAMP('1970-01-01 00:00:00')", nil
+	default:
+		return "", fmt.Errorf("not implemented: %s", name)
+	}
+}
+
 func getDummyValueForDefaultValueNode(node ast.ExpressionNode) (string, error) {
-	switch n := node.(type) {
+	switch node.(type) {
 	case *ast.NullLiteralNode:
 		return "NULL", nil
 	case *ast.BooleanLiteralNode:
@@ -267,6 +300,6 @@ func getDummyValueForDefaultValueNode(node ast.ExpressionNode) (string, error) {
 	case *ast.DateOrTimeLiteralNode:
 		return "DATE('1970-01-01')", nil
 	default:
-		return "", fmt.Errorf("not implemented: %s", n.Kind())
+		return "", fmt.Errorf("not implemented: %T", node)
 	}
 }
