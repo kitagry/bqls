@@ -91,3 +91,17 @@ func LookupNode[T astNode](n ast.Node) (T, bool) {
 
 	return LookupNode[T](n.Parent())
 }
+
+func ListAstNode[T locationRangeNode](n ast.ScriptNode) []T {
+	result := make([]T, 0)
+	ast.Walk(n, func(n ast.Node) error {
+		node, ok := n.(T)
+		if !ok {
+			return nil
+		}
+		result = append(result, node)
+		return nil
+	})
+
+	return result
+}

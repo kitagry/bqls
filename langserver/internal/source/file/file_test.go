@@ -646,8 +646,23 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 
 		expectedErrs []file.Error
 	}{
-		"Parse with incomplete table name": {
+		"Parse with default value": {
 			file: "DECLARE target_id INT64 DEFAULT 10;\n" +
+				"SELECT * FROM `project.dataset.table` WHERE id = target_id",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []file.Error{},
+		},
+		"Parse without default value": {
+			file: "DECLARE target_id INT64;\n" +
 				"SELECT * FROM `project.dataset.table` WHERE id = target_id",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
 				"project.dataset.table": {
