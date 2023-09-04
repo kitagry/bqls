@@ -40,12 +40,7 @@ func (c *completor) Complete(ctx context.Context, parsedFile file.ParsedFile, po
 }
 
 func findScanNode(output *zetasql.AnalyzerOutput, termOffset int) (node rast.ScanNode, ok bool) {
-	node, ok = file.SearchResolvedAstNode[*rast.ProjectScanNode](output, termOffset)
-	if ok {
-		return node, true
-	}
-
-	node, ok = file.SearchResolvedAstNode[*rast.OrderByScanNode](output, termOffset)
+	node, ok = file.SearchResolvedAstNode[rast.ScanNode](output, termOffset)
 	if ok {
 		return node, true
 	}
@@ -76,6 +71,7 @@ func findScanNode(output *zetasql.AnalyzerOutput, termOffset int) (node rast.Sca
 	if node == nil {
 		return nil, false
 	}
+
 	return node, true
 }
 

@@ -478,6 +478,36 @@ func TestProject_CompleteColumns(t *testing.T) {
 				},
 			},
 		},
+		"Complete column with with table and join": {
+			files: map[string]string{
+				"file1.sql": "WITH data1 AS (SELECT id AS hoge FROM `project.dataset.table`), data2 AS (SELECT id AS fuga FROM `project.dataset.table`)\nSELECT d| FROM data1 INNER JOIN data2 ON data1.hoge = data2.fuga",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Description: "id description",
+							Type:        bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:          lsp.CIKField,
+					NewText:       "data1",
+					Documentation: lsp.MarkupContent{},
+					TypedPrefix:   "d",
+				},
+				{
+					Kind:          lsp.CIKField,
+					NewText:       "data2",
+					Documentation: lsp.MarkupContent{},
+					TypedPrefix:   "d",
+				},
+			},
+		},
 		"Complete table alias": {
 			files: map[string]string{
 				"file1.sql": "SELECT t| FROM `project.dataset.table` AS table",
@@ -651,9 +681,41 @@ func TestProject_CompleteColumns(t *testing.T) {
 					NewText: "id",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
-						Value: "INTEGER\nid description",
+						Value: "INT64",
 					},
 					TypedPrefix: "i",
+				},
+			},
+		},
+		"Complete column in where clause with group by clause": {
+			files: map[string]string{
+				"file1.sql": "SELECT id, COUNT(name) FROM `project.dataset.table` WHERE n| GROUP BY id",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Description: "id description",
+							Type:        bq.IntegerFieldType,
+						},
+						{
+							Name:        "name",
+							Description: "name description",
+							Type:        bq.StringFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "name",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "STRING\nname description",
+					},
+					TypedPrefix: "n",
 				},
 			},
 		},
