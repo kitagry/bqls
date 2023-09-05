@@ -45,6 +45,12 @@ func NewHandler(isDebug bool) *Handler {
 }
 
 func (h *Handler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	defer func() {
+		err := recover()
+		if err != nil {
+			h.logger.Errorf("panic: %v", err)
+		}
+	}()
 	jsonrpc2.HandlerWithError(h.handle).Handle(ctx, conn, req)
 }
 
