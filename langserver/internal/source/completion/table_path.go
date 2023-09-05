@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/goccy/go-zetasql/ast"
-	rast "github.com/goccy/go-zetasql/resolved_ast"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
@@ -53,78 +52,6 @@ func (c *completor) completeTablePath(ctx context.Context, parsedFile file.Parse
 	}
 
 	return nil, nil
-}
-
-func (c *completor) completeTableScanField(ctx context.Context, tableScanNode *rast.TableScanNode, incompleteColumnName string) []CompletionItem {
-	if tableScanNode.Alias() == "" {
-		return nil
-	}
-
-	if strings.HasPrefix(tableScanNode.Alias(), incompleteColumnName) {
-		return []CompletionItem{
-			{
-				Kind:    lsp.CIKField,
-				NewText: tableScanNode.Alias(),
-				Documentation: lsp.MarkupContent{
-					Kind:  lsp.MKPlainText,
-					Value: tableScanNode.Table().FullName(),
-				},
-				TypedPrefix: incompleteColumnName,
-			},
-		}
-	}
-
-	if !strings.HasPrefix(incompleteColumnName, tableScanNode.Alias()+".") {
-		return nil
-	}
-
-	result := make([]CompletionItem, 0)
-	afterWord := strings.TrimPrefix(incompleteColumnName, tableScanNode.Alias()+".")
-	columns := tableScanNode.ColumnList()
-	for _, column := range columns {
-		if !strings.HasPrefix(column.Name(), afterWord) {
-			continue
-		}
-		item, ok := c.createCompletionItemFromColumn(ctx, afterWord, column)
-		if !ok {
-			continue
-		}
-
-		result = append(result, item)
-	}
-	return result
-}
-
-func (c *completor) completeWithScanField(ctx context.Context, withScanNode *rast.WithRefScanNode, incompleteColumnName string) []CompletionItem {
-	if strings.HasPrefix(withScanNode.WithQueryName(), incompleteColumnName) {
-		return []CompletionItem{
-			{
-				Kind:        lsp.CIKField,
-				NewText:     withScanNode.WithQueryName(),
-				TypedPrefix: incompleteColumnName,
-			},
-		}
-	}
-
-	if !strings.HasPrefix(incompleteColumnName, withScanNode.WithQueryName()+".") {
-		return nil
-	}
-
-	result := make([]CompletionItem, 0)
-	afterWord := strings.TrimPrefix(incompleteColumnName, withScanNode.WithQueryName()+".")
-	columns := withScanNode.ColumnList()
-	for _, column := range columns {
-		if !strings.HasPrefix(column.Name(), afterWord) {
-			continue
-		}
-		item, ok := c.createCompletionItemFromColumn(ctx, afterWord, column)
-		if !ok {
-			continue
-		}
-
-		result = append(result, item)
-	}
-	return result
 }
 
 func (c *completor) completeProjectForTablePath(ctx context.Context, param tablePathParams) ([]CompletionItem, error) {

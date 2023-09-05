@@ -22,23 +22,20 @@ func (c *completor) completeColumns(ctx context.Context, parsedFile file.ParsedF
 	incompleteColumnName := parsedFile.FindIncompleteColumnName(position)
 
 	node, ok := findScanNode(output, termOffset)
-	if node == nil {
+	if !ok {
 		c.logger.Debug("not found project scan node")
 		return nil
+	}
+
+	if sNode, ok := c.getMostNarrowInputScanNode(node, termOffset); ok {
+		node = sNode
 	}
 
 	if pScanNode, ok := node.(*rast.ProjectScanNode); ok {
 		node = pScanNode.InputScan()
 	}
-	if oScanNode, ok := node.(*rast.OrderByScanNode); ok {
-		node = oScanNode.InputScan()
-	}
-	if aScanNode, ok := node.(*rast.AggregateScanNode); ok {
-		node = aScanNode.InputScan()
-	}
 
 	result := make([]CompletionItem, 0)
-
 	columns := node.ColumnList()
 	for _, column := range columns {
 		if !strings.HasPrefix(column.Name(), incompleteColumnName) {
@@ -168,4 +165,205 @@ func (c *completor) completeScanField(ctx context.Context, node rast.ScanNode, i
 		return c.completeScanField(ctx, n.InputScan(), incompleteColumnName)
 	}
 	return nil
+}
+
+func (c *completor) completeTableScanField(ctx context.Context, tableScanNode *rast.TableScanNode, incompleteColumnName string) []CompletionItem {
+	if tableScanNode.Alias() == "" {
+		return nil
+	}
+
+	if strings.HasPrefix(tableScanNode.Alias(), incompleteColumnName) {
+		return []CompletionItem{
+			{
+				Kind:    lsp.CIKField,
+				NewText: tableScanNode.Alias(),
+				Documentation: lsp.MarkupContent{
+					Kind:  lsp.MKPlainText,
+					Value: tableScanNode.Table().FullName(),
+				},
+				TypedPrefix: incompleteColumnName,
+			},
+		}
+	}
+
+	if !strings.HasPrefix(incompleteColumnName, tableScanNode.Alias()+".") {
+		return nil
+	}
+
+	result := make([]CompletionItem, 0)
+	afterWord := strings.TrimPrefix(incompleteColumnName, tableScanNode.Alias()+".")
+	columns := tableScanNode.ColumnList()
+	for _, column := range columns {
+		if !strings.HasPrefix(column.Name(), afterWord) {
+			continue
+		}
+		item, ok := c.createCompletionItemFromColumn(ctx, afterWord, column)
+		if !ok {
+			continue
+		}
+
+		result = append(result, item)
+	}
+	return result
+}
+
+func (c *completor) completeWithScanField(ctx context.Context, withScanNode *rast.WithRefScanNode, incompleteColumnName string) []CompletionItem {
+	if strings.HasPrefix(withScanNode.WithQueryName(), incompleteColumnName) {
+		return []CompletionItem{
+			{
+				Kind:        lsp.CIKField,
+				NewText:     withScanNode.WithQueryName(),
+				TypedPrefix: incompleteColumnName,
+			},
+		}
+	}
+
+	if !strings.HasPrefix(incompleteColumnName, withScanNode.WithQueryName()+".") {
+		return nil
+	}
+
+	result := make([]CompletionItem, 0)
+	afterWord := strings.TrimPrefix(incompleteColumnName, withScanNode.WithQueryName()+".")
+	columns := withScanNode.ColumnList()
+	for _, column := range columns {
+		if !strings.HasPrefix(column.Name(), afterWord) {
+			continue
+		}
+		item, ok := c.createCompletionItemFromColumn(ctx, afterWord, column)
+		if !ok {
+			continue
+		}
+
+		result = append(result, item)
+	}
+	return result
+}
+
+func (c *completor) getMostNarrowInputScanNode(node rast.ScanNode, termOffset int) (rast.ScanNode, bool) {
+	for {
+		switch n := node.(type) {
+		case *rast.ProjectScanNode:
+			node, ok := c.getMostNarrowInputScanNode(n.InputScan(), termOffset)
+			if ok {
+				return node, true
+			}
+
+			lRange := n.ParseLocationRange()
+			if lRange == nil {
+				return n, true
+			}
+
+			if lRange.Start().ByteOffset() <= termOffset && termOffset <= lRange.End().ByteOffset() {
+				return n, true
+			}
+			return nil, false
+		case *rast.AggregateScanNode:
+			node, ok := c.getMostNarrowInputScanNode(n.InputScan(), termOffset)
+			if ok {
+				return node, true
+			}
+
+			lRange := n.ParseLocationRange()
+			if lRange == nil {
+				return n, true
+			}
+
+			if lRange.Start().ByteOffset() <= termOffset && termOffset <= lRange.End().ByteOffset() {
+				return n, true
+			}
+			return nil, false
+		case *rast.FilterScanNode:
+			node, ok := c.getMostNarrowInputScanNode(n.InputScan(), termOffset)
+			if ok {
+				return node, true
+			}
+
+			lRange := n.ParseLocationRange()
+			if lRange == nil {
+				return n, true
+			}
+
+			if lRange.Start().ByteOffset() <= termOffset && termOffset <= lRange.End().ByteOffset() {
+				return n, true
+			}
+			return nil, false
+		case *rast.TableScanNode:
+			lRange := n.ParseLocationRange()
+			if lRange == nil {
+				return n, true
+			}
+
+			if lRange.Start().ByteOffset() <= termOffset && termOffset <= lRange.End().ByteOffset() {
+				return n, true
+			}
+			return nil, false
+		case *rast.WithScanNode:
+			wel := n.WithEntryList()
+			replaced := false
+			for _, we := range wel {
+				lRange := we.ParseLocationRange()
+				if lRange == nil {
+					continue
+				}
+
+				startOffset := lRange.Start().ByteOffset()
+				endOffset := lRange.End().ByteOffset()
+				if termOffset < startOffset || endOffset < termOffset {
+					continue
+				}
+
+				node = we.WithSubquery()
+				replaced = true
+			}
+
+			if !replaced {
+				node = n.Query()
+			}
+
+			result, ok := c.getMostNarrowInputScanNode(node, termOffset)
+			if ok {
+				return result, true
+			}
+			return node, true
+		case *rast.WithRefScanNode:
+			return nil, false
+		case *rast.JoinScanNode:
+			node1, ok := c.getMostNarrowInputScanNode(n.LeftScan(), termOffset)
+			if ok {
+				return node1, true
+			}
+			node2, ok := c.getMostNarrowInputScanNode(n.RightScan(), termOffset)
+			if ok {
+				return node2, true
+			}
+
+			lRange := n.ParseLocationRange()
+			if lRange == nil {
+				return n, true
+			}
+
+			if lRange.Start().ByteOffset() <= termOffset && termOffset <= lRange.End().ByteOffset() {
+				return n, true
+			}
+			return nil, false
+		case *rast.OrderByScanNode:
+			node, ok := c.getMostNarrowInputScanNode(n.InputScan(), termOffset)
+			if ok {
+				return node, true
+			}
+
+			lRange := n.ParseLocationRange()
+			if lRange == nil {
+				return n, true
+			}
+
+			if lRange.Start().ByteOffset() <= termOffset && termOffset <= lRange.End().ByteOffset() {
+				return n, true
+			}
+			return nil, false
+		default:
+			c.logger.Printf("unknown scan node type: %T\n", n)
+			return nil, false
+		}
+	}
 }
