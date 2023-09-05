@@ -29,6 +29,12 @@ func (h *Handler) scheduleDiagnostics() {
 		running[uri] = cancel
 
 		go func() {
+			defer func() {
+				if err := recover(); err != nil {
+					h.logger.Errorf("panic in diagnostics: %v", err)
+				}
+			}()
+
 			diagnostics, err := h.diagnose(ctx, uri)
 			if err != nil {
 				h.logger.Println(err)
