@@ -447,6 +447,11 @@ func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([
 	// If cache the metadata, we should delete last modified time because it is confusing.
 	resultStr += fmt.Sprintf("\nlast modified at %s", metadata.LastModifiedTime.Format("2006-01-02 15:04:05"))
 
+	projectID, datasetID, tableID, ok := extractTableIDsFromMedatada(metadata)
+	if ok {
+		resultStr += fmt.Sprintf("\n\n[Docs](https://console.cloud.google.com/bigquery?project=%[1]s&ws=!1m5!1m4!4m3!1s%[1]s!2s%[2]s!3s%[3]s)", projectID, datasetID, tableID)
+	}
+
 	return []lsp.MarkedString{
 		{
 			Language: "markdown",
@@ -457,4 +462,23 @@ func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([
 			Value:    createBigQuerySchemaYamlString(metadata.Schema, 0),
 		},
 	}, nil
+}
+
+func extractTableIDsFromMedatada(metadata *bigquery.TableMetadata) (projectID, datasetID, tableID string, ok bool) {
+	// FullID is projectID:datasetID.tableID
+	sep := strings.Split(metadata.FullID, ":")
+	if len(sep) != 2 {
+		return "", "", "", false
+	}
+
+	projectID = sep[0]
+
+	sep = strings.Split(sep[1], ".")
+	if len(sep) != 2 {
+		return "", "", "", false
+	}
+
+	datasetID = sep[0]
+	tableID = sep[1]
+	return projectID, datasetID, tableID, true
 }
