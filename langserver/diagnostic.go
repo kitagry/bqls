@@ -34,7 +34,6 @@ func (h *Handler) scheduleDiagnostics() {
 					h.logger.Errorf("panic in diagnostics: %v", err)
 				}
 			}()
-
 			diagnostics, err := h.diagnose(ctx, uri)
 			if err != nil {
 				h.logger.Println(err)
@@ -69,6 +68,12 @@ func (h *Handler) scheduleDryRun() {
 		running[uri] = cancel
 
 		go func() {
+			defer func() {
+				if err := recover(); err != nil {
+					h.logger.Errorf("panic in dryrun: %v", err)
+				}
+			}()
+
 			diagnostics, totalProcessed, err := h.dryrun(ctx, uri)
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
