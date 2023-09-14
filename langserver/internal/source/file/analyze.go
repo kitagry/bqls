@@ -246,14 +246,14 @@ func getDummyValueForDeclarationNode(node *ast.VariableDeclarationNode) (string,
 	case *ast.ArrayTypeNode:
 		return "[]", nil
 	case *ast.SimpleTypeNode:
-		if node.DefaultValue() != nil {
-			return getDummyValueForDefaultValueNode(node.DefaultValue())
-		}
-
 		if pen, ok := n.Child(0).(*ast.PathExpressionNode); ok {
 			if in, ok := pen.Child(0).(*ast.IdentifierNode); ok {
 				return getDummyValueForDeclarationIdentifierName(in.Name())
 			}
+		}
+
+		if node.DefaultValue() != nil {
+			return getDummyValueForDefaultValueNode(node.DefaultValue())
 		}
 		return "", fmt.Errorf("failed to load default value")
 	default:

@@ -691,6 +691,21 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 			},
 			expectedErrs: []file.Error{},
 		},
+		"Parse datetime declaration statement": {
+			file: "DECLARE target_date DATETIME DEFAULT '20230612';\n" +
+				"SELECT * FROM `project.dataset.table` WHERE date = target_date",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "date",
+							Type: bq.DateTimeFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []file.Error{},
+		},
 	}
 
 	for n, tt := range tests {
