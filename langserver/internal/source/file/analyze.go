@@ -249,6 +249,7 @@ func getDummyValueForDeclarationNode(node *ast.VariableDeclarationNode) (string,
 		if node.DefaultValue() != nil {
 			return getDummyValueForDefaultValueNode(node.DefaultValue())
 		}
+
 		if pen, ok := n.Child(0).(*ast.PathExpressionNode); ok {
 			if in, ok := pen.Child(0).(*ast.IdentifierNode); ok {
 				return getDummyValueForDeclarationIdentifierName(in.Name())
@@ -256,7 +257,16 @@ func getDummyValueForDeclarationNode(node *ast.VariableDeclarationNode) (string,
 		}
 		return "", fmt.Errorf("failed to load default value")
 	default:
-		return "", fmt.Errorf("not implemented: %s", n.Kind())
+		// If declare statement doen't have the explicit type, node.Type() is nil
+		// e.g. `DECLARE x DEFAULT 1;`
+		if node.DefaultValue() != nil {
+			return getDummyValueForDefaultValueNode(node.DefaultValue())
+		}
+
+		if n != nil {
+			return "", fmt.Errorf("not implemented: %s", n.Kind())
+		}
+		return "", fmt.Errorf("don't support declaration `%s`", zetasql.Unparse(node))
 	}
 }
 
