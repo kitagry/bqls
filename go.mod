@@ -3,7 +3,7 @@ module github.com/kitagry/bqls
 go 1.21
 
 require (
-	github.com/google/go-cmp v0.5.9
+	github.com/google/go-cmp v0.6.0
 	github.com/sourcegraph/jsonrpc2 v0.2.0
 )
 
