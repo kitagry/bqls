@@ -67,6 +67,26 @@ func TestCatalog_AddTable(t *testing.T) {
 			expectTableName:   "project.dataset.table*",
 			expectColumnNames: []string{"name", "_TABLE_SUFFIX"},
 		},
+		"partitiontime table": {
+			path: []string{"project.dataset.table"},
+			createMockBigQuery: func(ctrl *gomock.Controller) bigquery.Client {
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					Schema: bq.Schema{
+						{
+							Name: "name",
+							Type: bq.StringFieldType,
+						},
+					},
+					TimePartitioning: &bq.TimePartitioning{
+						Type: bq.DayPartitioningType,
+					},
+				}, nil)
+				return bqClient
+			},
+			expectTableName:   "project.dataset.table",
+			expectColumnNames: []string{"name", "_PARTITIONTIME"},
+		},
 	}
 
 	for n, tt := range tests {
