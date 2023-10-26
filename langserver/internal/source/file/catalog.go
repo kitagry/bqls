@@ -83,6 +83,10 @@ func (c *Catalog) addTable(path []string) error {
 		columns[i] = types.NewSimpleColumn(tableName, field.Name, typ)
 	}
 
+	if metadata.TimePartitioning != nil {
+		columns = append(columns, types.NewSimpleColumn(tableName, "_PARTITIONTIME", types.TimestampType()))
+	}
+
 	if isWildCardTable(path) {
 		columns = append(columns, types.NewSimpleColumn(tableName, "_TABLE_SUFFIX", types.StringType()))
 	}
