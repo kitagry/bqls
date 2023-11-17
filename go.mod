@@ -15,7 +15,7 @@ require (
 	github.com/golang/mock v1.6.0
 	github.com/mattn/go-sqlite3 v1.14.18
 	github.com/sirupsen/logrus v1.9.3
-	google.golang.org/api v0.150.0
+	google.golang.org/api v0.151.0
 )
 
 require (
