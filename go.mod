@@ -11,7 +11,7 @@ require (
 	cloud.google.com/go/bigquery v1.57.1
 	github.com/JohannesKaufmann/html-to-markdown v1.4.2
 	github.com/PuerkitoBio/goquery v1.8.1
-	github.com/goccy/go-zetasql v0.5.1
+	github.com/goccy/go-zetasql v0.5.4
 	github.com/golang/mock v1.6.0
 	github.com/mattn/go-sqlite3 v1.14.18
 	github.com/sirupsen/logrus v1.9.3
