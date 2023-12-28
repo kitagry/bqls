@@ -23,12 +23,25 @@ type Catalog struct {
 	mu           *sync.Mutex
 }
 
-func NewCatalog(bqClient bigquery.Client) types.Catalog {
+var _ types.Catalog = (*Catalog)(nil)
+
+func NewCatalog(bqClient bigquery.Client) *Catalog {
 	catalog := types.NewSimpleCatalog(catalogName)
 	catalog.AddZetaSQLBuiltinFunctions(nil)
 	return &Catalog{
 		catalog:      catalog,
 		bqClient:     bqClient,
+		tableMetaMap: make(map[string]*bq.TableMetadata),
+		mu:           &sync.Mutex{},
+	}
+}
+
+func (c *Catalog) Clone() *Catalog {
+	catalog := types.NewSimpleCatalog(catalogName)
+	catalog.AddZetaSQLBuiltinFunctions(nil)
+	return &Catalog{
+		catalog:      catalog,
+		bqClient:     c.bqClient,
 		tableMetaMap: make(map[string]*bq.TableMetadata),
 		mu:           &sync.Mutex{},
 	}
@@ -175,6 +188,10 @@ func (c *Catalog) FindModel(path []string) (types.Model, error) { return c.catal
 
 func (c *Catalog) FindConnection(path []string) (types.Connection, error) {
 	return c.catalog.FindConnection(path)
+}
+
+func (c *Catalog) AddFunctionWithName(name string, fn *types.Function) {
+	c.catalog.AddFunctionWithName(name, fn)
 }
 
 func (c *Catalog) FindFunction(path []string) (*types.Function, error) {

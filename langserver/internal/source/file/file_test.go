@@ -706,6 +706,35 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 			},
 			expectedErrs: []file.Error{},
 		},
+		"Parse create tmp function statement with returns": {
+			file: "CREATE TEMP FUNCTION target_func(x INT64) RETURNS INT64 AS (x * 10);\n" +
+				"SELECT target_func(10);",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Parse create tmp function statement without returns": {
+			file: "CREATE TEMP FUNCTION target_func(x INT64) AS (x * 10);\n" +
+				"SELECT target_func(10);",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Currently, bqls does not support function without return type.",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 0,
+					},
+					TermLength: 53,
+					Severity:   lsp.Warning,
+				},
+				{
+					Msg: "INVALID_ARGUMENT: Function not found: target_func",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 7,
+					},
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {
