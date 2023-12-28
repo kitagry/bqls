@@ -15,7 +15,7 @@ func GetLspPosition(files map[string]string) (formattedFiles map[string]string, 
 		if ind := strings.Index(file, "|"); ind != -1 {
 			file = strings.Replace(file, "|", "", 1)
 			path = filePath
-			position = indexToPosition(file, ind)
+			position = IndexToPosition(file, ind)
 		}
 		formattedFiles[path] = file
 	}
@@ -27,7 +27,7 @@ func GetLspPosition(files map[string]string) (formattedFiles map[string]string, 
 	return
 }
 
-func indexToPosition(file string, index int) lsp.Position {
+func IndexToPosition(file string, index int) lsp.Position {
 	col, row := 0, 0
 	lines := strings.Split(file, "\n")
 	for _, line := range lines {

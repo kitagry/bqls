@@ -11,13 +11,15 @@ import (
 	rast "github.com/goccy/go-zetasql/resolved_ast"
 	"github.com/goccy/go-zetasql/types"
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
+	"github.com/kitagry/bqls/langserver/internal/lsp"
+	"github.com/kitagry/bqls/langserver/internal/source/helper"
 	"github.com/sirupsen/logrus"
 )
 
 type Analyzer struct {
 	logger   *logrus.Logger
 	bqClient bigquery.Client
-	catalog  types.Catalog
+	catalog  *Catalog
 }
 
 func NewAnalyzer(logger *logrus.Logger, bqClient bigquery.Client) *Analyzer {
@@ -30,10 +32,10 @@ func NewAnalyzer(logger *logrus.Logger, bqClient bigquery.Client) *Analyzer {
 	}
 }
 
-func (a *Analyzer) AnalyzeStatement(rawText string, stmt ast.StatementNode) (*zetasql.AnalyzerOutput, error) {
+func (a *Analyzer) AnalyzeStatement(rawText string, stmt ast.StatementNode, catalog types.Catalog) (*zetasql.AnalyzerOutput, error) {
 	langOpt := zetasql.NewLanguageOptions()
 	langOpt.SetNameResolutionMode(zetasql.NameResolutionDefault)
-	langOpt.SetProductMode(types.ProductInternal)
+	langOpt.SetProductMode(types.ProductExternal)
 	langOpt.SetEnabledLanguageFeatures([]zetasql.LanguageFeature{
 		zetasql.FeatureAnalyticFunctions,
 		zetasql.FeatureNamedArguments,
@@ -96,7 +98,7 @@ func (a *Analyzer) AnalyzeStatement(rawText string, stmt ast.StatementNode) (*ze
 	opts.SetAllowUndeclaredParameters(true)
 	opts.SetErrorMessageMode(zetasql.ErrorMessageOneLine)
 	opts.SetParseLocationRecordType(zetasql.ParseLocationRecordCodeSearch)
-	return zetasql.AnalyzeStatementFromParserAST(rawText, stmt, a.catalog, opts)
+	return zetasql.AnalyzeStatementFromParserAST(rawText, stmt, catalog, opts)
 }
 
 func (p *Analyzer) ParseFile(uri string, src string) ParsedFile {
@@ -135,6 +137,7 @@ func (p *Analyzer) ParseFile(uri string, src string) ParsedFile {
 			return nil
 		})
 
+		catalog := p.catalog.Clone()
 		declarationMap := make(map[string]string)
 		for _, s := range stmts {
 			if s.Kind() == ast.VariableDeclaration {
@@ -149,7 +152,23 @@ func (p *Analyzer) ParseFile(uri string, src string) ParsedFile {
 				}
 				continue
 			}
-			output, err := p.AnalyzeStatement(fixedSrc, s)
+
+			if s.Kind() == ast.CreateFunctionStatement {
+				node := s.(*ast.CreateFunctionStatementNode)
+				newFunc, err := p.createFunctionTypes(node, fixedSrc)
+				if err != nil {
+					errs = append(errs, *err)
+					continue
+				}
+
+				name := ""
+				for _, n := range node.FunctionDeclaration().Name().Names() {
+					name += n.Name()
+				}
+				catalog.AddFunctionWithName(name, newFunc)
+			}
+
+			output, err := p.AnalyzeStatement(fixedSrc, s, catalog)
 			if err == nil {
 				rnode = append(rnode, output)
 				continue
@@ -241,6 +260,54 @@ func (a *Analyzer) GetTableMetadataFromPath(ctx context.Context, path string) (*
 	}
 }
 
+func (p *Analyzer) createFunctionTypes(node *ast.CreateFunctionStatementNode, sourceFile string) (*types.Function, *Error) {
+	argTypes := []*types.FunctionArgumentType{}
+	for _, parameter := range node.FunctionDeclaration().Parameters().ParameterEntries() {
+		typ, err := getTypeFromTypeNode(parameter.Type())
+		if err != nil {
+			p.logger.Debug("failed to get type from parameter ", err)
+			return nil, nil
+		}
+		opt := types.NewFunctionArgumentTypeOptions(types.RequiredArgumentCardinality)
+		opt.SetArgumentName(parameter.Name().Name())
+		args := types.NewFunctionArgumentType(typ, opt)
+		argTypes = append(argTypes, args)
+	}
+
+	returnType := node.ReturnType()
+	var typ types.Type
+	if returnType != nil {
+		var err error
+		typ, err = getTypeFromTypeNode(node.ReturnType())
+		if err != nil {
+			p.logger.Debug("failed to get type from return type ", err)
+			return nil, nil
+		}
+	} else {
+		err := Error{
+			Msg:      "Currently, bqls does not support function without return type.",
+			Severity: lsp.Warning,
+		}
+		loc := node.ParseLocationRange()
+		if loc != nil {
+			err.Position = helper.IndexToPosition(sourceFile, loc.Start().ByteOffset())
+			err.TermLength = loc.End().ByteOffset() - loc.Start().ByteOffset()
+		}
+		return nil, &err
+	}
+	opt := types.NewFunctionArgumentTypeOptions(types.RequiredArgumentCardinality)
+	retType := types.NewFunctionArgumentType(typ, opt)
+
+	sig := types.NewFunctionSignature(retType, argTypes)
+
+	name := ""
+	for _, n := range node.FunctionDeclaration().Name().Names() {
+		name += n.Name()
+	}
+	newFunc := types.NewFunction([]string{name}, "", types.ScalarMode, []*types.FunctionSignature{sig})
+	return newFunc, nil
+}
+
 func getDummyValueForDeclarationNode(node *ast.VariableDeclarationNode) (string, error) {
 	switch n := node.Type().(type) {
 	case *ast.ArrayTypeNode:
@@ -312,4 +379,48 @@ func getDummyValueForDefaultValueNode(node ast.ExpressionNode) (string, error) {
 	default:
 		return "", fmt.Errorf("not implemented: %T", node)
 	}
+}
+
+func getTypeFromTypeNode(node ast.TypeNode) (types.Type, error) {
+	if stn, ok := node.(*ast.SimpleTypeNode); ok {
+		names := stn.TypeName().Names()
+		typeName := ""
+		for _, n := range names {
+			typeName += n.Name()
+		}
+
+		switch typeName {
+		case "INT64":
+			return types.Int64Type(), nil
+		case "FLOAT64":
+			return types.FloatType(), nil
+		case "BOOL":
+			return types.BoolType(), nil
+		case "STRING":
+			return types.StringType(), nil
+		case "BYTES":
+			return types.BytesType(), nil
+		case "DATE":
+			return types.DateType(), nil
+		case "DATETIME":
+			return types.DatetimeType(), nil
+		case "TIME":
+			return types.TimeType(), nil
+		case "TIMESTAMP":
+			return types.TimestampType(), nil
+		case "NUMERIC":
+			return types.NumericType(), nil
+		case "BIGNUMERIC":
+			return types.BigNumericType(), nil
+		case "GEOGRAPHY":
+			return types.GeographyType(), nil
+		case "INTERVAL":
+			return types.IntervalType(), nil
+		case "JSON":
+			return types.JsonType(), nil
+		default:
+			return nil, fmt.Errorf("not implemented: %s", typeName)
+		}
+	}
+	return nil, fmt.Errorf("not implemented: %T", node)
 }

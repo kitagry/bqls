@@ -162,6 +162,7 @@ type Error struct {
 	Position             lsp.Position
 	TermLength           int
 	IncompleteColumnName string
+	Severity             lsp.DiagnosticSeverity
 }
 
 func (e Error) Error() string {

@@ -172,8 +172,19 @@ func convertErrorsToDiagnostics(errs []file.Error) []lsp.Diagnostic {
 				Start: err.Position,
 				End:   endPosition,
 			},
-			Message: err.Msg,
+			Message:  err.Msg,
+			Severity: or(err.Severity, lsp.Error),
 		}
 	}
 	return result
+}
+
+func or[T comparable](list ...T) T {
+	var zero T
+	for _, t := range list {
+		if t != zero {
+			return t
+		}
+	}
+	return zero
 }
