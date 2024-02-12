@@ -44,6 +44,12 @@ func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req
 				ResolveProvider:   false,
 				TriggerCharacters: []string{"*", "."},
 			},
+			ExecuteCommandProvider: &lsp.ExecuteCommandOptions{
+				Commands: []string{
+					CommandListDatasets,
+					CommandListTables,
+				},
+			},
 		},
 	}, nil
 }

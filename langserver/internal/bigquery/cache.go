@@ -144,6 +144,10 @@ func (c *cache) ListTables(ctx context.Context, projectID, datasetID string, onl
 				fmt.Fprintf(os.Stderr, "failed to recache tables: %v\n", err)
 			}
 		})
+
+		if onlyLatestSuffix {
+			return extractLatestSuffixTables(results), nil
+		}
 		return results, nil
 	}
 	if err != nil {

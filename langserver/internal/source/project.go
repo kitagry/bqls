@@ -135,3 +135,11 @@ func (p *Project) Run(ctx context.Context, path string) (bigquery.BigqueryJob, e
 
 	return result, nil
 }
+
+func (p *Project) ListDatasets(ctx context.Context, projectID string) ([]*bq.Dataset, error) {
+	return p.bqClient.ListDatasets(ctx, projectID)
+}
+
+func (p *Project) ListTables(ctx context.Context, projectID, datasetID string) ([]*bq.Table, error) {
+	return p.bqClient.ListTables(ctx, projectID, datasetID, true)
+}

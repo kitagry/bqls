@@ -13,6 +13,8 @@ import (
 
 const (
 	CommandExecuteQuery = "executeQuery"
+	CommandListDatasets = "listDatasets"
+	CommandListTables   = "listTables"
 )
 
 func (h *Handler) handleTextDocumentCodeAction(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
@@ -48,6 +50,10 @@ func (h *Handler) handleWorkspaceExecuteCommand(ctx context.Context, conn *jsonr
 	switch params.Command {
 	case CommandExecuteQuery:
 		return h.commandExecuteQuery(ctx, params)
+	case CommandListDatasets:
+		return h.commandListDatasets(ctx, params)
+	case CommandListTables:
+		return h.commandListTables(ctx, params)
 	default:
 		return nil, fmt.Errorf("unknown command: %s", params.Command)
 	}
@@ -120,5 +126,77 @@ func (h *Handler) commandExecuteQuery(ctx context.Context, params lsp.ExecuteCom
 			Columns: columns,
 			Data:    data,
 		},
+	}, nil
+}
+
+type ListDatasetsResult struct {
+	Datasets []string `json:"datasets"`
+}
+
+func (h *Handler) commandListDatasets(ctx context.Context, params lsp.ExecuteCommandParams) (*ListDatasetsResult, error) {
+	projectID := h.initializeParams.InitializationOptions.ProjectID
+	if len(params.Arguments) > 0 {
+		var ok bool
+		projectID, ok = params.Arguments[0].(string)
+		if !ok {
+			return nil, fmt.Errorf("arguments should be string, but got %T", params.Arguments[0])
+		}
+	}
+
+	datasets, err := h.project.ListDatasets(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]string, 0, len(datasets))
+	for _, d := range datasets {
+		results = append(results, d.DatasetID)
+	}
+
+	return &ListDatasetsResult{
+		Datasets: results,
+	}, nil
+}
+
+type ListTablesResult struct {
+	Tables []string `json:"tables"`
+}
+
+func (h *Handler) commandListTables(ctx context.Context, params lsp.ExecuteCommandParams) (*ListTablesResult, error) {
+	projectID := h.initializeParams.InitializationOptions.ProjectID
+	var datasetID string
+	if len(params.Arguments) == 0 {
+		return nil, fmt.Errorf("datasetID arguments is not provided")
+	} else if len(params.Arguments) == 1 {
+		var ok bool
+		datasetID, ok = params.Arguments[0].(string)
+		if !ok {
+			return nil, fmt.Errorf("arguments should be string, but got %T", params.Arguments[0])
+		}
+	} else if len(params.Arguments) == 2 {
+		var ok bool
+		projectID, ok = params.Arguments[0].(string)
+		if !ok {
+			return nil, fmt.Errorf("arguments should be string, but got %T", params.Arguments[0])
+		}
+
+		datasetID, ok = params.Arguments[1].(string)
+		if !ok {
+			return nil, fmt.Errorf("arguments should be string, but got %T", params.Arguments[1])
+		}
+	}
+
+	tables, err := h.project.ListTables(ctx, projectID, datasetID)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]string, 0, len(tables))
+	for _, t := range tables {
+		results = append(results, t.TableID)
+	}
+
+	return &ListTablesResult{
+		Tables: results,
 	}, nil
 }
