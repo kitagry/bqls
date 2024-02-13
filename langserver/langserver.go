@@ -69,7 +69,7 @@ func (h *Handler) Close() error {
 	return errors.Join(errs...)
 }
 
-func (h *Handler) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result interface{}, err error) {
+func (h *Handler) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
 	switch req.Method {
 	case "initialize":
 		return h.handleInitialize(ctx, conn, req)

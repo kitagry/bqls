@@ -98,7 +98,7 @@ type Command struct {
 	 * Arguments that the command handler should be
 	 * invoked with.
 	 */
-	Arguments []interface{} `json:"arguments"`
+	Arguments []any `json:"arguments"`
 }
 
 type TextEdit struct {
