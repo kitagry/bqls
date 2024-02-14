@@ -120,7 +120,7 @@ func (c *cache) callListDatasets(ctx context.Context, projectID string) ([]*bigq
 	}
 
 	if len(result) > 0 {
-		err := c.db.InsertDatasets(ctx, result)
+		err := c.db.ReplaceDatasets(ctx, projectID, result)
 		if err != nil {
 			// TODO
 			fmt.Fprintf(os.Stderr, "failed to insert datasets: %v\n", err)
@@ -166,7 +166,7 @@ func (c *cache) callListTables(ctx context.Context, projectID, datasetID string,
 	}
 
 	if len(result) > 0 {
-		err := c.db.InsertTables(ctx, result)
+		err := c.db.ReplaceTables(ctx, projectID, datasetID, result)
 		if err != nil {
 			// TODO
 			fmt.Fprintf(os.Stderr, "failed to insert tables: %v\n", err)

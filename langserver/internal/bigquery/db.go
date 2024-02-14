@@ -170,8 +170,20 @@ func (db *database) SelectDatasets(ctx context.Context, projectID string) ([]*bi
 	return results, nil
 }
 
-func (db *database) InsertDatasets(ctx context.Context, datasets []*bigquery.Dataset) error {
-	query := "INSERT OR IGNORE INTO datasets(project_id, dataset_id) VALUES "
+func (db *database) ReplaceDatasets(ctx context.Context, projectID string, datasets []*bigquery.Dataset) error {
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to beginTx: %w", err)
+	}
+	defer tx.Rollback()
+
+	query := "DELETE FROM datasets WHERE project_id = ?"
+	_, err = tx.ExecContext(ctx, query, projectID)
+	if err != nil {
+		return fmt.Errorf("failed to delete datasets: %w", err)
+	}
+
+	query = "INSERT OR IGNORE INTO datasets(project_id, dataset_id) VALUES "
 	queryBuilder := &strings.Builder{}
 	queryBuilder.Grow(len(query) + 7*len(datasets))
 	queryBuilder.WriteString(query)
@@ -182,9 +194,14 @@ func (db *database) InsertDatasets(ctx context.Context, datasets []*bigquery.Dat
 	}
 	query = queryBuilder.String()[0 : queryBuilder.Len()-1]
 
-	_, err := db.db.ExecContext(ctx, query, args...)
+	_, err = tx.ExecContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("failed to insert datasets: %w", err)
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return fmt.Errorf("failed to commit: %w", err)
 	}
 	return nil
 }
@@ -213,8 +230,20 @@ func (db *database) SelectTables(ctx context.Context, projectID, datasetID strin
 	return results, nil
 }
 
-func (db *database) InsertTables(ctx context.Context, tables []*bigquery.Table) error {
-	query := "INSERT OR IGNORE INTO tables(project_id, dataset_id, table_id) VALUES "
+func (db *database) ReplaceTables(ctx context.Context, projectID, datasetID string, tables []*bigquery.Table) error {
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to beginTx: %w", err)
+	}
+	defer tx.Rollback()
+
+	query := "DELETE FROM tables WHERE project_id = ? AND dataset_id = ?"
+	_, err = tx.ExecContext(ctx, query, projectID, datasetID)
+	if err != nil {
+		return fmt.Errorf("failed to delete datasets: %w", err)
+	}
+
+	query = "INSERT OR IGNORE INTO tables(project_id, dataset_id, table_id) VALUES "
 	queryBuilder := &strings.Builder{}
 	queryBuilder.Grow(len(query) + 10*len(tables))
 	queryBuilder.WriteString(query)
@@ -225,9 +254,14 @@ func (db *database) InsertTables(ctx context.Context, tables []*bigquery.Table) 
 	}
 	query = queryBuilder.String()[0 : queryBuilder.Len()-1]
 
-	_, err := db.db.ExecContext(ctx, query, args...)
+	_, err = tx.ExecContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("failed to insert tables: %w", err)
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return fmt.Errorf("failed to commit: %w", err)
 	}
 	return nil
 }
