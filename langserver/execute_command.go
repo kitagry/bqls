@@ -120,7 +120,7 @@ func (h *Handler) commandExecuteQuery(ctx context.Context, params lsp.ExecuteCom
 
 	return &ExecuteQueryResult{
 		TextDocument: lsp.TextDocumentIdentifier{
-			URI: lsp.DocumentURI(fmt.Sprintf("bqls://job/%s", job.ID())),
+			URI: newJobVirtualTextDocumentURI(h.project.BigQueryProjectID, job.ID()),
 		},
 		Result: QueryResult{
 			Columns: columns,

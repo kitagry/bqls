@@ -27,6 +27,9 @@ type Client interface {
 	// GetTableMetadata returns the metadata of the specified table.
 	GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.TableMetadata, error)
 
+	// GetTableRecord returns the row of the specified table.
+	GetTableRecord(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.RowIterator, error)
+
 	// Run runs the specified query.
 	Run(ctx context.Context, q string, dryrun bool) (BigqueryJob, error)
 }
@@ -139,6 +142,10 @@ func (c *client) GetTableMetadata(ctx context.Context, projectID, datasetID, tab
 	}
 
 	return md, nil
+}
+
+func (c *client) GetTableRecord(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.RowIterator, error) {
+	return c.bqClient.DatasetInProject(projectID, datasetID).Table(tableID).Read(ctx), nil
 }
 
 type BigqueryJob interface {
