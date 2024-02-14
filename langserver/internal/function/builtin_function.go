@@ -97,8 +97,8 @@ var BuiltInFunctions = []BuiltInFunction{
 	},
 	{
 		Name:        "COUNTIF",
-		Method:      "COUNTIF(\n  expression\n)\n[ OVER over_clause ]\n\nover_clause:\n  { named_window | ( [ window_specification ] ) }\n\nwindow_specification:\n  [ named_window ]\n  [ PARTITION BY partition_expression [, ...] ]\n  [ ORDER BY expression [ { ASC | DESC }  ] [, ...] ]\n  [ window_frame_clause ]",
-		Description: "Returns the count of `TRUE` values for `expression`. Returns `0` if there are\nzero input rows, or if `expression` evaluates to `FALSE` or `NULL` for all rows.Since `expression` must be a `BOOL`, the form `COUNTIF(DISTINCT ...)`\nis not supported. This would not be useful: there is only one distinct value of\n`TRUE`.\nUsually when someone wants to combine `COUNTIF` and `DISTINCT`, they\nwant to count the number of distinct values of an expression for which a certain\ncondition is satisfied. One recipe to achieve this is the following:`COUNT(DISTINCT IF(condition, expression, NULL))\n`Note that this uses `COUNT`, not `COUNTIF`; the `IF` part has been moved inside.\nTo learn more, see the examples for [`COUNT`](#count).To learn more about the optional aggregate clauses that you can pass\ninto this function, see\n[Aggregate function calls](/bigquery/docs/reference/standard-sql/aggregate-function-calls).This function can be used with the\n[`AGGREGATION_THRESHOLD` clause](/bigquery/docs/reference/standard-sql/query-syntax#agg_threshold_clause).To learn more about the `OVER` clause and how to use it, see\n[Window function calls](/bigquery/docs/reference/standard-sql/window-function-calls).",
+		Method:      "COUNTIF(\n  [ DISTINCT ]\n  expression\n)\n[ OVER over_clause ]\n\nover_clause:\n  { named_window | ( [ window_specification ] ) }\n\nwindow_specification:\n  [ named_window ]\n  [ PARTITION BY partition_expression [, ...] ]\n  [ ORDER BY expression [ { ASC | DESC }  ] [, ...] ]\n  [ window_frame_clause ]",
+		Description: "Returns the count of `TRUE` values for `expression`. Returns `0` if there are\nzero input rows, or if `expression` evaluates to `FALSE` or `NULL` for all rows.Since `expression` must be a `BOOL`, the form `COUNTIF(DISTINCT ...)` is\ngenerally not useful: there is only one distinct value of `TRUE`. So\n`COUNTIF(DISTINCT ...)` will return 1 if `expression` evaluates to `TRUE` for\none or more input rows, or 0 otherwise.\nUsually when someone wants to combine `COUNTIF` and `DISTINCT`, they\nwant to count the number of distinct values of an expression for which a certain\ncondition is satisfied. One recipe to achieve this is the following:`COUNT(DISTINCT IF(condition, expression, NULL))\n`Note that this uses `COUNT`, not `COUNTIF`; the `IF` part has been moved inside.\nTo learn more, see the examples for [`COUNT`](#count).To learn more about the optional aggregate clauses that you can pass\ninto this function, see\n[Aggregate function calls](/bigquery/docs/reference/standard-sql/aggregate-function-calls).This function can be used with the\n[`AGGREGATION_THRESHOLD` clause](/bigquery/docs/reference/standard-sql/query-syntax#agg_threshold_clause).To learn more about the `OVER` clause and how to use it, see\n[Window function calls](/bigquery/docs/reference/standard-sql/window-function-calls).",
 		ExampleSQLs: []string{
 			"SELECT COUNTIF(x<0) AS num_negative, COUNTIF(x>0) AS num_positive\nFROM UNNEST([5, -2, 3, 6, -10, -7, 4, 0]) AS x;\n\n/*--------------+--------------*\n | num_negative | num_positive |\n +--------------+--------------+\n | 3            | 4            |\n *--------------+--------------*/",
 			"SELECT\n  x,\n  COUNTIF(x<0) OVER (ORDER BY ABS(x) ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS num_negative\nFROM UNNEST([5, -2, 3, 6, -10, NULL, -7, 4, 0]) AS x;\n\n/*------+--------------*\n | x    | num_negative |\n +------+--------------+\n | NULL | 0            |\n | 0    | 1            |\n | -2   | 1            |\n | 3    | 1            |\n | 4    | 0            |\n | 5    | 0            |\n | 6    | 1            |\n | -7   | 2            |\n | -10  | 2            |\n *------+--------------*/",
@@ -418,7 +418,7 @@ var BuiltInFunctions = []BuiltInFunction{
 	{
 		Name:        "DATE_DIFF",
 		Method:      "DATE_DIFF(date_expression_a, date_expression_b, date_part)",
-		Description: "Returns the whole number of specified `date_part` intervals between two\n`DATE` objects ( `date_expression_a` \\- `date_expression_b`).\nIf the first `DATE` is earlier than the second one,\nthe output is negative.`DATE_DIFF` supports the following `date_part` values:`DAY`\n`WEEK` This date part begins on Sunday.\n`WEEK(<WEEKDAY>)`: This date part begins on `WEEKDAY`. Valid values for\n`WEEKDAY` are `SUNDAY`, `MONDAY`, `TUESDAY`, `WEDNESDAY`, `THURSDAY`,\n`FRIDAY`, and `SATURDAY`.\n`ISOWEEK`: Uses [ISO 8601 week](https://en.wikipedia.org/wiki/ISO_week_date)\nboundaries. ISO weeks begin on Monday.\n`MONTH`, except when the first two arguments are `TIMESTAMP` objects.\n`QUARTER`\n`YEAR`\n`ISOYEAR`: Uses the [ISO 8601](https://en.wikipedia.org/wiki/ISO_8601)\nweek-numbering year boundary. The ISO year boundary is the Monday of the\nfirst week whose Thursday belongs to the corresponding Gregorian calendar\nyear.",
+		Description: "Returns the whole number of specified `date_part` intervals between two\n`DATE` objects ( `date_expression_a` \\- `date_expression_b`).\nIf the first `DATE` is earlier than the second one,\nthe output is negative.`DATE_DIFF` supports the following `date_part` values:`DAY`\n`WEEK` This date part begins on Sunday.\n`WEEK(<WEEKDAY>)`: This date part begins on `WEEKDAY`. Valid values for\n`WEEKDAY` are `SUNDAY`, `MONDAY`, `TUESDAY`, `WEDNESDAY`, `THURSDAY`,\n`FRIDAY`, and `SATURDAY`.\n`ISOWEEK`: Uses [ISO 8601 week](https://en.wikipedia.org/wiki/ISO_week_date)\nboundaries. ISO weeks begin on Monday.\n`MONTH`, except when the first two\narguments are `TIMESTAMP` values.\n`QUARTER`\n`YEAR`\n`ISOYEAR`: Uses the [ISO 8601](https://en.wikipedia.org/wiki/ISO_8601)\nweek-numbering year boundary. The ISO year boundary is the Monday of the\nfirst week whose Thursday belongs to the corresponding Gregorian calendar\nyear.",
 		ExampleSQLs: []string{
 			"SELECT\n  DATE_DIFF('2017-12-18', '2017-12-17', WEEK) AS week_diff,\n  DATE_DIFF('2017-12-18', '2017-12-17', WEEK(MONDAY)) AS week_weekday_diff,\n  DATE_DIFF('2017-12-18', '2017-12-17', ISOWEEK) AS isoweek_diff;\n\n/*-----------+-------------------+--------------*\n | week_diff | week_weekday_diff | isoweek_diff |\n +-----------+-------------------+--------------+\n | 0         | 1                 | 1            |\n *-----------+-------------------+--------------*/",
 		},
@@ -521,7 +521,7 @@ var BuiltInFunctions = []BuiltInFunction{
 	{
 		Name:        "DATETIME_DIFF",
 		Method:      "DATETIME_DIFF(datetime_expression_a, datetime_expression_b, part)",
-		Description: "Returns the whole number of specified `part` intervals between two\n`DATETIME` objects ( `datetime_expression_a` \\- `datetime_expression_b`).\nIf the first `DATETIME` is earlier than the second one,\nthe output is negative. Throws an error if the computation overflows the\nresult type, such as if the difference in\nmicroseconds\nbetween the two `DATETIME` objects would overflow an\n`INT64` value.`DATETIME_DIFF` supports the following values for `part`:`MICROSECOND`\n`MILLISECOND`\n`SECOND`\n`MINUTE`\n`HOUR`\n`DAY`\n`WEEK`: This date part begins on Sunday.\n`WEEK(<WEEKDAY>)`: This date part begins on `WEEKDAY`. Valid values for\n`WEEKDAY` are `SUNDAY`, `MONDAY`, `TUESDAY`, `WEDNESDAY`, `THURSDAY`,\n`FRIDAY`, and `SATURDAY`.\n`ISOWEEK`: Uses [ISO 8601 week](https://en.wikipedia.org/wiki/ISO_week_date)\nboundaries. ISO weeks begin on Monday.\n`MONTH`, except when the first two arguments are `TIMESTAMP` objects.\n`QUARTER`\n`YEAR`\n`ISOYEAR`: Uses the [ISO 8601](https://en.wikipedia.org/wiki/ISO_8601)\nweek-numbering year boundary. The ISO year boundary is the Monday of the\nfirst week whose Thursday belongs to the corresponding Gregorian calendar\nyear.",
+		Description: "Returns the whole number of specified `part` intervals between two\n`DATETIME` objects ( `datetime_expression_a` \\- `datetime_expression_b`).\nIf the first `DATETIME` is earlier than the second one,\nthe output is negative. Throws an error if the computation overflows the\nresult type, such as if the difference in\nmicroseconds\nbetween the two `DATETIME` objects would overflow an\n`INT64` value.`DATETIME_DIFF` supports the following values for `part`:`MICROSECOND`\n`MILLISECOND`\n`SECOND`\n`MINUTE`\n`HOUR`\n`DAY`\n`WEEK`: This date part begins on Sunday.\n`WEEK(<WEEKDAY>)`: This date part begins on `WEEKDAY`. Valid values for\n`WEEKDAY` are `SUNDAY`, `MONDAY`, `TUESDAY`, `WEDNESDAY`, `THURSDAY`,\n`FRIDAY`, and `SATURDAY`.\n`ISOWEEK`: Uses [ISO 8601 week](https://en.wikipedia.org/wiki/ISO_week_date)\nboundaries. ISO weeks begin on Monday.\n`MONTH`, except when the first two\narguments are `TIMESTAMP` values.\n`QUARTER`\n`YEAR`\n`ISOYEAR`: Uses the [ISO 8601](https://en.wikipedia.org/wiki/ISO_8601)\nweek-numbering year boundary. The ISO year boundary is the Monday of the\nfirst week whose Thursday belongs to the corresponding Gregorian calendar\nyear.",
 		ExampleSQLs: []string{
 			"SELECT\n  DATETIME_DIFF('2017-12-18', '2017-12-17', WEEK) AS week_diff,\n  DATETIME_DIFF('2017-12-18', '2017-12-17', WEEK(MONDAY)) AS week_weekday_diff,\n  DATETIME_DIFF('2017-12-18', '2017-12-17', ISOWEEK) AS isoweek_diff;\n\n/*-----------+-------------------+--------------*\n | week_diff | week_weekday_diff | isoweek_diff |\n +-----------+-------------------+--------------+\n | 0         | 1                 | 1            |\n *-----------+-------------------+--------------*/",
 		},
@@ -590,7 +590,7 @@ var BuiltInFunctions = []BuiltInFunction{
 	{
 		Name:        "ERROR",
 		Method:      "ERROR(error_message)",
-		Description: "Returns an error. The `error_message` argument is a `STRING`.GoogleSQL treats `ERROR` in the same way as any expression that may\nresult in an error: there is no special guarantee of evaluation order.",
+		Description: "Returns an error.",
 		ExampleSQLs: []string{
 			"SELECT\n  CASE\n    WHEN value = 'foo' THEN 'Value is foo.'\n    WHEN value = 'bar' THEN 'Value is bar.'\n    ELSE ERROR(CONCAT('Found unexpected value: ', value))\n  END AS new_value\nFROM (\n  SELECT 'foo' AS value UNION ALL\n  SELECT 'bar' AS value UNION ALL\n  SELECT 'baz' AS value);\n\n-- Found unexpected value: baz",
 			"SELECT *\nFROM (SELECT -1 AS x)\nWHERE x > 0 AND ERROR('Example error');",
@@ -802,9 +802,11 @@ var BuiltInFunctions = []BuiltInFunction{
 	},
 	{
 		Name:        "JSON_SET",
-		Method:      "JSON_SET(\n  json_expr,\n  json_path_value_pair[, ...]\n)\n\njson_path_value_pair:\n  json_path, value",
-		Description: "In the following example, the path `$.a` is matched, but `$.a.b` does not\nexist, so the new path and the value are inserted.`SELECT JSON_SET(JSON '{\"a\": {}}', '$.a.b', 100) AS json_data\n/*-----------------*\n | json_data       |\n +-----------------+\n | {\"a\":{\"b\":100}} |\n *-----------------*/\n`In the following example, the path prefix `$` points to a JSON null, so the\nremainder of the path is created for the value `100`.`SELECT JSON_SET(JSON 'null', '$.a.b', 100) AS json_data\n/*-----------------*\n | json_data       |\n +-----------------+\n | {\"a\":{\"b\":100}} |\n *-----------------*/\n`In the following example, the path `$.a.c` implies that the value at `$.a` is\na JSON object but it's not. This part of the operation is ignored, but the other\nparts of the operation are completed successfully.`SELECT JSON_SET(\n  JSON '{\"a\": 1}',\n  '$.b', 2,\n  '$.a.c', 100,\n  '$.d', 3) AS json_data\n/*---------------------*\n | json_data           |\n +---------------------+\n | {\"a\":1,\"b\":2,\"d\":3} |\n *---------------------*/\n`In the following example, the path `$.a[2]` implies that the value for `$.a` is\nan array, but it's not, so the operation is ignored for that value.`SELECT JSON_SET(\n  JSON '{\"a\": 1}',\n  '$.a[2]', 100,\n  '$.b', 2) AS json_data\n/*---------------*\n | json_data     |\n +---------------+\n | {\"a\":1,\"b\":2} |\n *---------------*/\n`In the following example, the path `$[1]` is matched and replaces the\narray element value with `foo`.`SELECT JSON_SET(JSON '[\"a\", [\"b\", \"c\"], \"d\"]', '$[1]', \"foo\") AS json_data\n/*-----------------*\n | json_data       |\n +-----------------+\n | [\"a\",\"foo\",\"d\"] |\n *-----------------*/\n`",
+		Method:      "JSON_SET(\n  json_expr,\n  json_path_value_pair[, ...]\n  [, create_if_missing=> { TRUE | FALSE }]\n)\n\njson_path_value_pair:\n  json_path, value",
+		Description: "In the following example, `create_if_missing` is `FALSE` and the path `$.b`\ndoesn't exist, so the set operation is ignored.`SELECT JSON_SET(\n  JSON '{\"a\": 1}',\n  \"$.b\", 999,\n  create_if_missing => false) AS json_data\n/*------------*\n | json_data  |\n +------------+\n | '{\"a\": 1}' |\n *------------*/\n`In the following example, `create_if_missing` is `TRUE` and the path `$.a`\nexists, so the value is replaced.`SELECT JSON_SET(\n  JSON '{\"a\": 1}',\n  \"$.a\", 999,\n  create_if_missing => false) AS json_data\n/*--------------*\n | json_data    |\n +--------------+\n | '{\"a\": 999}' |\n *--------------*/\n`In the following example, the path `$.a` is matched, but `$.a.b` does not\nexist, so the new path and the value are inserted.`SELECT JSON_SET(JSON '{\"a\": {}}', '$.a.b', 100) AS json_data\n/*-----------------*\n | json_data       |\n +-----------------+\n | {\"a\":{\"b\":100}} |\n *-----------------*/\n`In the following example, the path prefix `$` points to a JSON null, so the\nremainder of the path is created for the value `100`.`SELECT JSON_SET(JSON 'null', '$.a.b', 100) AS json_data\n/*-----------------*\n | json_data       |\n +-----------------+\n | {\"a\":{\"b\":100}} |\n *-----------------*/\n`In the following example, the path `$.a.c` implies that the value at `$.a` is\na JSON object but it's not. This part of the operation is ignored, but the other\nparts of the operation are completed successfully.`SELECT JSON_SET(\n  JSON '{\"a\": 1}',\n  '$.b', 2,\n  '$.a.c', 100,\n  '$.d', 3) AS json_data\n/*---------------------*\n | json_data           |\n +---------------------+\n | {\"a\":1,\"b\":2,\"d\":3} |\n *---------------------*/\n`",
 		ExampleSQLs: []string{
+			"SELECT JSON_SET(JSON '[\"a\", [\"b\", \"c\"], \"d\"]', '$[1][0][0]', \"foo\") AS json_data\n\n/*---------------------*\n | json_data           |\n +---------------------+\n | [\"a\",[\"b\",\"c\"],\"d\"] |\n *---------------------*/",
+			"SELECT JSON_SET(JSON '[\"a\", [\"b\", \"c\"], \"d\"]', '$[1][2][1]', \"foo\") AS json_data\n\n/*----------------------------------*\n | json_data                        |\n +----------------------------------+\n | [\"a\",[\"b\",\"c\",[null,\"foo\"]],\"d\"] |\n *----------------------------------*/",
 			"SELECT JSON_SET(JSON '{}', '$.b[2].d', 100) AS json_data\n\n/*-----------------------------*\n | json_data                   |\n +-----------------------------+\n | {\"b\":[null,null,{\"d\":100}]} |\n *-----------------------------*/",
 			"SELECT JSON_SET(\n  JSON '{\"a\": 1, \"b\": {\"c\":3}, \"d\": [4]}',\n  '$.a', 'v1',\n  '$.b.e', 'v2',\n  '$.d[2]', 'v3') AS json_data\n\n/*---------------------------------------------------*\n | json_data                                         |\n +---------------------------------------------------+\n | {\"a\":\"v1\",\"b\":{\"c\":3,\"e\":\"v2\"},\"d\":[4,null,\"v3\"]} |\n *---------------------------------------------------*/",
 		},
@@ -952,6 +954,87 @@ var BuiltInFunctions = []BuiltInFunction{
 		URL: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#to_json_string",
 	},
 	{
+		Name:        "ACOS",
+		Method:      "ACOS(X)",
+		Description: "Computes the principal value of the inverse cosine of X. The return value is in\nthe range \\[0,π\\]. Generates an error if X is a value outside of the\nrange \\[-1, 1\\].X\n ACOS(X)\n\n\n\n\n `+inf` `NaN` `-inf` `NaN` `NaN` `NaN`\n\n\n X < -1\n Error\n\n\n X > 1\n Error`ACOSH``ACOSH(X)\n`",
+		ExampleSQLs: []string{},
+		URL:         "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#acos",
+	},
+	{
+		Name:        "EXP",
+		Method:      "EXP(X)",
+		Description: "Computes _e_ to the power of X, also called the natural exponential function. If\nthe result underflows, this function returns a zero. Generates an error if the\nresult overflows.X\n EXP(X)\n\n\n\n\n 0.0\n 1.0\n\n\n `+inf` `+inf` `-inf`\n 0.0",
+		ExampleSQLs: []string{},
+		URL:         "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#exp",
+	},
+	{
+		Name:        "CEIL",
+		Method:      "CEIL(X)",
+		Description: "Returns the smallest integral value that is not less than X.X\n CEIL(X)\n\n\n\n\n 2.0\n 2.0\n\n\n 2.3\n 3.0\n\n\n 2.8\n 3.0\n\n\n 2.5\n 3.0\n\n\n -2.3\n -2.0\n\n\n -2.8\n -2.0\n\n\n -2.5\n -2.0\n\n\n 0\n 0\n\n\n `+inf` `+inf` `-inf` `-inf` `NaN` `NaN`",
+		ExampleSQLs: []string{},
+		URL:         "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#ceil",
+	},
+	{
+		Name:        "CBRT",
+		Method:      "CBRT(X)",
+		Description: "Computes the cube root of `X`. `X` can be any data type\nthat [coerces to `FLOAT64`](/bigquery/docs/reference/standard-sql/conversion_rules#conversion_rules).\nSupports the `SAFE.` prefix.X\n CBRT(X)\n\n\n\n\n `+inf` `inf` `-inf` `-inf` `NaN` `NaN` `0` `0` `NULL` `NULL`",
+		ExampleSQLs: []string{},
+		URL:         "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#cbrt",
+	},
+	{
+		Name:        "ABS",
+		Method:      "ABS(X)",
+		Description: "Computes absolute value. Returns an error if the argument is an integer and the\noutput value cannot be represented as the same type; this happens only for the\nlargest negative input value, which has no positive representation.X\n ABS(X)\n\n\n\n\n 25\n 25\n\n\n -25\n 25\n\n\n `+inf` `+inf` `-inf` `+inf`",
+		ExampleSQLs: []string{},
+		URL:         "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#abs",
+	},
+	{
+		Name:        "COSINE_DISTANCE",
+		Method:      "Preview\n  \n    This product or feature is subject to the \"Pre-GA Offerings Terms\"\n    in the General Service Terms section of the\n    Service Specific Terms.\n    Pre-GA products and features are available \"as is\" and might have\n    limited support. For more information, see the\n    launch stage descriptions.",
+		Description: "Computes the [cosine distance](https://en.wikipedia.org/wiki/Cosine_similarity#Cosine_distance) between two vectors.",
+		ExampleSQLs: []string{
+			"SELECT COSINE_DISTANCE([1.0, 2.0], [3.0, 4.0]) AS results;\n\n/*----------*\n | results  |\n +----------+\n | 0.016130 |\n *----------*/",
+			"SELECT COSINE_DISTANCE(\n [(1, 1.0), (2, 2.0)],\n [(2, 4.0), (1, 3.0)]) AS results;\n\n /*----------*\n  | results  |\n  +----------+\n  | 0.016130 |\n  *----------*/",
+			"SELECT COSINE_DISTANCE([1.0, 2.0], [3.0, 4.0]) AS results;",
+			"SELECT COSINE_DISTANCE([2.0, 1.0], [4.0, 3.0]) AS results;",
+			"SELECT COSINE_DISTANCE([(1, 1.0), (2, 2.0)], [(1, 3.0), (2, 4.0)]) AS results;",
+			"/*----------*\n  | results  |\n  +----------+\n  | 0.016130 |\n  *----------*/",
+		},
+		URL: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#cosine_distance",
+	},
+	{
+		Name:        "GREATEST",
+		Method:      "GREATEST(X1,...,XN)",
+		Description: "Returns the greatest value among `X1,...,XN`. If any argument is `NULL`, returns\n`NULL`. Otherwise, in the case of floating-point arguments, if any argument is\n`NaN`, returns `NaN`. In all other cases, returns the value among `X1,...,XN`\nthat has the greatest value according to the ordering used by the `ORDER BY`\nclause. The arguments `X1, ..., XN` must be coercible to a common supertype, and\nthe supertype must support ordering.X1,...,XN\n GREATEST(X1,...,XN)\n\n\n\n\n 3,5,1\n 5This function supports specifying [collation](/bigquery/docs/reference/standard-sql/collation-concepts#collate_about).",
+		ExampleSQLs: []string{},
+		URL:         "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#greatest",
+	},
+	{
+		Name:        "RAND",
+		Method:      "RAND()",
+		Description: "Generates a pseudo-random value of type `FLOAT64` in\nthe range of \\[0, 1), inclusive of 0 and exclusive of 1.`RANGE_BUCKET``RANGE_BUCKET(point, boundaries_array)\n`",
+		ExampleSQLs: []string{
+			"WITH students AS\n(\n  SELECT 9 AS age UNION ALL\n  SELECT 20 AS age UNION ALL\n  SELECT 25 AS age UNION ALL\n  SELECT 31 AS age UNION ALL\n  SELECT 32 AS age UNION ALL\n  SELECT 33 AS age\n)\nSELECT RANGE_BUCKET(age, [10, 20, 30]) AS age_group, COUNT(*) AS count\nFROM students\nGROUP BY 1\n\n/*--------------+-------*\n | age_group    | count |\n +--------------+-------+\n | 0            | 1     |\n | 2            | 2     |\n | 3            | 3     |\n *--------------+-------*/",
+		},
+		URL: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#rand",
+	},
+	{
+		Name:        "DIV",
+		Method:      "DIV(X, Y)",
+		Description: "Returns the result of integer division of X by Y. Division by zero returns\nan error. Division by -1 may overflow.X\n Y\n DIV(X, Y)\n\n\n\n\n 20\n 4\n 5\n\n\n 12\n -7\n -1\n\n\n 20\n 3\n 6\n\n\n 0\n 20\n 0\n\n\n 20\n 0\n Error",
+		ExampleSQLs: []string{},
+		URL:         "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#div",
+	},
+	{
+		Name:        "RANGE_BUCKET",
+		Method:      "RANGE_BUCKET(point, boundaries_array)",
+		Description: "`RANGE_BUCKET` scans through a sorted array and returns the 0-based position\nof the point's upper bound. This can be useful if you need to group your data to\nbuild partitions, histograms, business-defined rules, and more.`RANGE_BUCKET` follows these rules:If the point exists in the array, returns the index of the next larger value.\n\n```\nRANGE_BUCKET(20, [0, 10, 20, 30, 40]) -- 3 is return value\nRANGE_BUCKET(20, [0, 10, 20, 20, 40, 40]) -- 4 is return value\n\n```\n\nIf the point does not exist in the array, but it falls between two values,\nreturns the index of the larger value.\n\n```\nRANGE_BUCKET(25, [0, 10, 20, 30, 40]) -- 3 is return value\n\n```\n\nIf the point is smaller than the first value in the array, returns 0.\n\n```\nRANGE_BUCKET(-10, [5, 10, 20, 30, 40]) -- 0 is return value\n\n```\n\nIf the point is greater than or equal to the last value in the array,\nreturns the length of the array.\n\n```\nRANGE_BUCKET(80, [0, 10, 20, 30, 40]) -- 5 is return value\n\n```\n\nIf the array is empty, returns 0.\n\n```\nRANGE_BUCKET(80, []) -- 0 is return value\n\n```\n\nIf the point is `NULL` or `NaN`, returns `NULL`.\n\n```\nRANGE_BUCKET(NULL, [0, 10, 20, 30, 40]) -- NULL is return value\n\n```\n\nThe data type for the point and array must be compatible.\n\n```\nRANGE_BUCKET('a', ['a', 'b', 'c', 'd']) -- 1 is return value\nRANGE_BUCKET(1.2, [1, 1.2, 1.4, 1.6]) -- 2 is return value\nRANGE_BUCKET(1.2, [1, 2, 4, 6]) -- execution failure\n\n```Execution failure occurs when:The array has a `NaN` or `NULL` value in it.\n\n```\nRANGE_BUCKET(80, [NULL, 10, 20, 30, 40]) -- execution failure\n\n```\n\nThe array is not sorted in ascending order.\n\n```\nRANGE_BUCKET(30, [10, 30, 20, 40, 50]) -- execution failure\n\n```",
+		ExampleSQLs: []string{
+			"WITH students AS\n(\n  SELECT 9 AS age UNION ALL\n  SELECT 20 AS age UNION ALL\n  SELECT 25 AS age UNION ALL\n  SELECT 31 AS age UNION ALL\n  SELECT 32 AS age UNION ALL\n  SELECT 33 AS age\n)\nSELECT RANGE_BUCKET(age, [10, 20, 30]) AS age_group, COUNT(*) AS count\nFROM students\nGROUP BY 1\n\n/*--------------+-------*\n | age_group    | count |\n +--------------+-------+\n | 0            | 1     |\n | 2            | 2     |\n | 3            | 3     |\n *--------------+-------*/",
+		},
+		URL: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#range_bucket",
+	},
+	{
 		Name:        "ABS",
 		Method:      "ABS(X)",
 		Description: "Computes absolute value. Returns an error if the argument is an integer and the\noutput value cannot be represented as the same type; this happens only for the\nlargest negative input value, which has no positive representation.X\n ABS(X)\n\n\n\n\n 25\n 25\n\n\n -25\n 25\n\n\n `+inf` `+inf` `-inf` `+inf`",
@@ -1041,6 +1124,11 @@ var BuiltInFunctions = []BuiltInFunction{
 		Description: "Computes the hyperbolic cosine of X where X is specified in radians.\nGenerates an error if overflow occurs.X\n COSH(X)\n\n\n\n\n `+inf` `+inf` `-inf` `+inf` `NaN` `NaN``COSINE_DISTANCE`**Preview**\n\nThis product or feature is subject to the \"Pre-GA Offerings Terms\"\nin the General Service Terms section of the\n[Service Specific Terms](/terms/service-terms).\nPre-GA products and features are available \"as is\" and might have\nlimited support. For more information, see the\n[launch stage descriptions](/products#product-launch-stages).",
 		ExampleSQLs: []string{
 			"SELECT COSINE_DISTANCE([1.0, 2.0], [3.0, 4.0]) AS results;\n\n/*----------*\n | results  |\n +----------+\n | 0.016130 |\n *----------*/",
+			"SELECT COSINE_DISTANCE(\n [(1, 1.0), (2, 2.0)],\n [(2, 4.0), (1, 3.0)]) AS results;\n\n /*----------*\n  | results  |\n  +----------+\n  | 0.016130 |\n  *----------*/",
+			"SELECT COSINE_DISTANCE([1.0, 2.0], [3.0, 4.0]) AS results;",
+			"SELECT COSINE_DISTANCE([2.0, 1.0], [4.0, 3.0]) AS results;",
+			"SELECT COSINE_DISTANCE([(1, 1.0), (2, 2.0)], [(1, 3.0), (2, 4.0)]) AS results;",
+			"/*----------*\n  | results  |\n  +----------+\n  | 0.016130 |\n  *----------*/",
 		},
 		URL: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#cosh",
 	},
@@ -1051,7 +1139,10 @@ var BuiltInFunctions = []BuiltInFunction{
 		ExampleSQLs: []string{
 			"SELECT COSINE_DISTANCE([1.0, 2.0], [3.0, 4.0]) AS results;\n\n/*----------*\n | results  |\n +----------+\n | 0.016130 |\n *----------*/",
 			"SELECT COSINE_DISTANCE(\n [(1, 1.0), (2, 2.0)],\n [(2, 4.0), (1, 3.0)]) AS results;\n\n /*----------*\n  | results  |\n  +----------+\n  | 0.016130 |\n  *----------*/",
-			"SELECT COSINE_DISTANCE([1.0, 2.0], [3.0, 4.0]) AS results;\n\nSELECT COSINE_DISTANCE([2.0, 1.0], [4.0, 3.0]) AS results;\n\nSELECT COSINE_DISTANCE([(1, 1.0), (2, 2.0)], [(1, 3.0), (2, 4.0)]) AS results;\n\n /*----------*\n  | results  |\n  +----------+\n  | 0.016130 |\n  *----------*/",
+			"SELECT COSINE_DISTANCE([1.0, 2.0], [3.0, 4.0]) AS results;",
+			"SELECT COSINE_DISTANCE([2.0, 1.0], [4.0, 3.0]) AS results;",
+			"SELECT COSINE_DISTANCE([(1, 1.0), (2, 2.0)], [(1, 3.0), (2, 4.0)]) AS results;",
+			"/*----------*\n  | results  |\n  +----------+\n  | 0.016130 |\n  *----------*/",
 		},
 		URL: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#cosine_distance",
 	},
@@ -1104,7 +1195,10 @@ var BuiltInFunctions = []BuiltInFunction{
 		ExampleSQLs: []string{
 			"SELECT EUCLIDEAN_DISTANCE([1.0, 2.0], [3.0, 4.0]) AS results;\n\n/*----------*\n | results  |\n +----------+\n | 2.828    |\n *----------*/",
 			"SELECT EUCLIDEAN_DISTANCE(\n [(1, 1.0), (2, 2.0)],\n [(2, 4.0), (1, 3.0)]) AS results;\n\n /*----------*\n  | results  |\n  +----------+\n  | 2.828    |\n  *----------*/",
-			"SELECT EUCLIDEAN_DISTANCE([1.0, 2.0], [3.0, 4.0]);\n\nSELECT EUCLIDEAN_DISTANCE([2.0, 1.0], [4.0, 3.0]);\n\nSELECT EUCLIDEAN_DISTANCE([(1, 1.0), (2, 2.0)], [(1, 3.0), (2, 4.0)]) AS results;\n\n /*----------*\n  | results  |\n  +----------+\n  | 2.828    |\n  *----------*/",
+			"SELECT EUCLIDEAN_DISTANCE([1.0, 2.0], [3.0, 4.0]);",
+			"SELECT EUCLIDEAN_DISTANCE([2.0, 1.0], [4.0, 3.0]);",
+			"SELECT EUCLIDEAN_DISTANCE([(1, 1.0), (2, 2.0)], [(1, 3.0), (2, 4.0)]) AS results;",
+			"/*----------*\n  | results  |\n  +----------+\n  | 2.828    |\n  *----------*/",
 		},
 		URL: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#euclidean_distance",
 	},
@@ -1511,6 +1605,18 @@ var BuiltInFunctions = []BuiltInFunction{
 		Description: "The `SEARCH` function checks to see whether a BigQuery table or other\nsearch data contains a set of search terms (tokens). It returns `TRUE` if all\nsearch terms appear in the data, based on the text analysis\ndescribed in the [text analyzer](/bigquery/docs/reference/standard-sql/text-analysis), and `FALSE` otherwise.",
 		ExampleSQLs: []string{},
 		URL:         "https://cloud.google.com/bigquery/docs/reference/standard-sql/search_functions#search",
+	},
+	{
+		Name:        "VECTOR_SEARCH",
+		Method:      "Preview\n  \n    This product or feature is subject to the \"Pre-GA Offerings Terms\"\n    in the General Service Terms section of the\n    Service Specific Terms.\n    Pre-GA products and features are available \"as is\" and might have\n    limited support. For more information, see the\n    launch stage descriptions.",
+		Description: "The `VECTOR_SEARCH` function lets you search embeddings to find semantically\nsimilar entities.Embeddings are high-dimensional numerical vectors that represent a given entity,\nlike a piece of text or an audio file. Machine learning (ML) models use\nembeddings to encode semantics about such entities to make it easier to\nreason about and compare them. For example, a common operation in clustering,\nclassification, and recommendation models is to measure the distance between\nvectors in an [embedding space](https://en.wikipedia.org/wiki/Latent_space) to\nfind items that are most semantically similar.",
+		ExampleSQLs: []string{
+			"CREATE OR REPLACE TABLE mydataset.table1\n(\n  id INT64,\n  my_embedding ARRAY<FLOAT64>\n)\n\nINSERT mydataset.table1 (id, my_embedding)\nVALUES(1, [1.0, 2.0]),\n(2, [2.0, 4.0]),\n(3, [1.5, 7.0]),\n(4, [1.0, 3.2]),\n(5, [5.0, 5.4]),\n(6, [3.7, 1.8]),\n(7, [4.4, 2.9])",
+			"CREATE OR REPLACE TABLE mydataset.table2\n(\n  query_id STRING,\n  embedding ARRAY<FLOAT64>\n)\n\nINSERT mydataset.table2 (query_id, embedding)\nVALUES('dog', [1.0, 2.0]),\n('cat', [3.0, 5.2])",
+			"SELECT *\nFROM\n  VECTOR_SEARCH(\n    TABLE mydataset.table1,\n    'my_embedding',\n    (SELECT query_id, embedding FROM mydataset.table2),\n    'embedding',\n    top_k => 2);\n\n/*------  --------+-----------------+---------+----------------------------------------*\n | query.query_id | query.embedding | base.id | base.my_embedding | distance           |\n +----------------+-----------------+---------+-------------------+--------------------+\n | dog            | 1.0             | 1       | 1.0               | 0                  |\n |                | 2.0             |         | 2.0               |                    |\n +----------------+-----------------+---------+-------------------+--------------------+\n | dog            | 1.0             | 4       | 1.0               | 1.2000000000000002 |\n |                | 2.0             |         | 3.2               |                    |\n +----------------+-----------------+---------+-------------------+--------------------+\n | cat            | 3.0             | 2       | 2.0               | 1.5620499351813311 |\n |                | 5.2             |         | 4.0               |                    |\n +----------------+-----------------+---------+-------------------+--------------------+\n | cat            | 3.0             | 5       | 5.0               | 2.0099751242241779 |\n |                | 5.2             |         | 5.4               |                    |\n *----------------+-----------------+---------+-------------------+--------------------*/",
+			"SELECT *\nFROM\n  VECTOR_SEARCH(\n    TABLE mydataset.table1,\n    'my_embedding',\n    TABLE mydataset.table2,\n    'embedding',\n    top_k => 2,\n    distance_type => 'COSINE');\n\n/*------  --------+-----------------+---------+-------------------------------------------+\n | query.query_id | query.embedding | base.id | base.my_embedding | distance              |\n +----------------+-----------------+---------+-------------------+-----------------------+\n | dog            | 1.0             | 2       | 2.0               | 0                     |\n |                | 2.0             |         | 4.0               |                       |\n +----------------+-----------------+---------+-------------------+-----------------------+\n | dog            | 1.0             | 1       | 1.0               | 0                     |\n |                | 2.0             |         | 2.0               |                       |\n +----------------+-----------------+---------+-------------------+-----------------------+\n | cat            | 3.0             | 2       | 2.0               | 0.0017773842088002478 |\n |                | 5.2             |         | 4.0               |                       |\n +----------------+-----------------+---------+-------------------+-----------------------+\n | cat            | 3.0             | 1       | 1.0               | 0.0017773842088002478 |\n |                | 5.2             |         | 2.0               |                       |\n *----------------+-----------------+---------+-------------------+-----------------------*/",
+		},
+		URL: "https://cloud.google.com/bigquery/docs/reference/standard-sql/search_functions#vector_search",
 	},
 	{
 		Name:        "SESSION_USER",
