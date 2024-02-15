@@ -54,7 +54,7 @@ type ClientCapabilities struct {
 	Workspace    WorkspaceClientCapabilities    `json:"workspace,omitempty"`
 	TextDocument TextDocumentClientCapabilities `json:"textDocument,omitempty"`
 	Window       WindowClientCapabilities       `json:"window,omitempty"`
-	Experimental interface{}                    `json:"experimental,omitempty"`
+	Experimental any                            `json:"experimental,omitempty"`
 
 	// Below are Sourcegraph extensions. They do not live in lspext since
 	// they are extending the field InitializeParams.Capabilities
@@ -196,7 +196,7 @@ type TextDocumentClientCapabilities struct {
 	FoldingRange *struct {
 		DynamicRegistration bool `json:"dynamicRegistration,omitempty"`
 
-		RangeLimit interface{} `json:"rangeLimit,omitempty"`
+		RangeLimit any `json:"rangeLimit,omitempty"`
 
 		LineFoldingOnly bool `json:"lineFoldingOnly,omitempty"`
 	} `json:"foldingRange,omitempty"`
@@ -334,7 +334,7 @@ type ServerCapabilities struct {
 	// is a Sourcegraph extension.
 	XWorkspaceSymbolByProperties bool `json:"xworkspaceSymbolByProperties,omitempty"`
 
-	Experimental interface{} `json:"experimental,omitempty"`
+	Experimental any `json:"experimental,omitempty"`
 }
 
 type CompletionOptions struct {
@@ -364,8 +364,8 @@ type ExecuteCommandOptions struct {
 }
 
 type ExecuteCommandParams struct {
-	Command   string        `json:"command"`
-	Arguments []interface{} `json:"arguments,omitempty"`
+	Command   string `json:"command"`
+	Arguments []any  `json:"arguments,omitempty"`
 }
 
 type SemanticHighlightingOptions struct {
@@ -458,7 +458,7 @@ type CompletionItem struct {
 	InsertTextFormat    InsertTextFormat   `json:"insertTextFormat,omitempty"`
 	TextEdit            *TextEdit          `json:"textEdit,omitempty"`
 	AdditionalTextEdits []TextEdit         `json:"additionalTextEdits,omitempty"`
-	Data                interface{}        `json:"data,omitempty"`
+	Data                any                `json:"data,omitempty"`
 }
 
 type CompletionList struct {
@@ -696,7 +696,7 @@ type ConfigurationItem struct {
 	Section  string `json:"section,omitempty"`
 }
 
-type ConfigurationResult []interface{}
+type ConfigurationResult []any
 
 type CodeActionContext struct {
 	Diagnostics []Diagnostic `json:"diagnostics"`
@@ -713,9 +713,9 @@ type CodeLensParams struct {
 }
 
 type CodeLens struct {
-	Range   Range       `json:"range"`
-	Command Command     `json:"command,omitempty"`
-	Data    interface{} `json:"data,omitempty"`
+	Range   Range   `json:"range"`
+	Command Command `json:"command,omitempty"`
+	Data    any     `json:"data,omitempty"`
 }
 
 type DocumentFormattingParams struct {
@@ -788,7 +788,7 @@ type LogMessageParams struct {
 }
 
 type DidChangeConfigurationParams struct {
-	Settings interface{} `json:"settings"`
+	Settings any `json:"settings"`
 }
 
 type FileChangeType int

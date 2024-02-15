@@ -1,3 +1,76 @@
 # bqls
 
 BigQuery language server
+
+## Some Protocols
+
+### `workspace/executeCommand`
+
+#### `listDatasets`
+
+list up all datasets in the project.
+
+Request:
+
+```json
+{
+    "command": "listDatasets",
+    "arguments": ["YOUR_PROJECT_ID"]
+}
+```
+
+Response:
+
+```json
+{
+    "datasets": ["dataset1", "dataset2", "dataset3"]
+}
+```
+
+#### `listTables`
+
+list up all tables in the dataset.
+
+Request:
+
+```json
+{
+    "command": "listTables",
+    "arguments": ["YOUR_PROJECT_ID", "YOUR_DATASET_ID"]
+}
+```
+
+Response:
+
+```json
+{
+    "tables": ["table1", "table2", "table3"]
+}
+```
+
+## Custom API
+
+### `bqls/virtualTextDocument`
+
+Requests a virtual text document from the LSP, which is a read only document that can be displayed in the client.
+`bqls` will encode all virtual files under custom schema `bqls:`, so clients should route all requests for the `bqls:` schema back to the `bqls/virtualTextDocument`.
+I used [deno language server protocol](https://docs.deno.com/runtime/manual/advanced/language_server/overview) below as reference.
+
+For example, bqls can provide a virtual text document for a table information.
+You can request like `bqls://project/${project}/dataset/${dataset}/table/${table}`.
+
+Requests:
+
+```ts
+interface VirtualTextDocumentParams {
+    textDocument: TextDocumentIdentifier;
+}
+```
+
+Response:
+
+```ts
+interface VirtualTextDocument {
+    contents: []MarkedString;
+}
+```

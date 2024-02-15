@@ -1,7 +1,9 @@
 package source
 
 import (
+	"bytes"
 	"context"
+	"encoding/csv"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -9,16 +11,19 @@ import (
 	bq "cloud.google.com/go/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/cache"
+	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
 	"github.com/sirupsen/logrus"
+	"google.golang.org/api/iterator"
 )
 
 type Project struct {
-	rootPath string
-	logger   *logrus.Logger
-	cache    *cache.GlobalCache
-	bqClient bigquery.Client
-	analyzer *file.Analyzer
+	BigQueryProjectID string
+	rootPath          string
+	logger            *logrus.Logger
+	cache             *cache.GlobalCache
+	bqClient          bigquery.Client
+	analyzer          *file.Analyzer
 }
 
 type File struct {
@@ -50,11 +55,12 @@ func NewProject(ctx context.Context, rootPath string, projectID string, logger *
 	analyzer := file.NewAnalyzer(logger, bqClient)
 
 	return &Project{
-		rootPath: rootPath,
-		logger:   logger,
-		cache:    cache,
-		bqClient: bqClient,
-		analyzer: analyzer,
+		BigQueryProjectID: projectID,
+		rootPath:          rootPath,
+		logger:            logger,
+		cache:             cache,
+		bqClient:          bqClient,
+		analyzer:          analyzer,
 	}, nil
 }
 
@@ -132,6 +138,66 @@ func (p *Project) Run(ctx context.Context, path string) (bigquery.BigqueryJob, e
 	if err != nil {
 		return nil, err
 	}
+
+	return result, nil
+}
+
+func (p *Project) ListDatasets(ctx context.Context, projectID string) ([]*bq.Dataset, error) {
+	return p.bqClient.ListDatasets(ctx, projectID)
+}
+
+func (p *Project) ListTables(ctx context.Context, projectID, datasetID string) ([]*bq.Table, error) {
+	return p.bqClient.ListTables(ctx, projectID, datasetID, true)
+}
+
+func (p *Project) GetTableInfo(ctx context.Context, projectID, datasetID, tableID string) ([]lsp.MarkedString, error) {
+	tableMetadata, err := p.bqClient.GetTableMetadata(ctx, projectID, datasetID, tableID)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := buildBigQueryTableMetadataMarkedString(tableMetadata)
+	if err != nil {
+		return nil, err
+	}
+
+	it, err := p.bqClient.GetTableRecord(ctx, projectID, datasetID, tableID)
+	if err != nil {
+		return result, err
+	}
+
+	data := make([][]string, 0)
+	for i := 0; i < 100; i++ {
+		var values []bq.Value
+		err := it.Next(&values)
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return result, err
+		}
+
+		strs := make([]string, len(values))
+		for i, v := range values {
+			strs[i] = fmt.Sprint(v)
+		}
+		data = append(data, strs)
+	}
+
+	columns := make([]string, 0)
+	for _, f := range it.Schema {
+		columns = append(columns, f.Name)
+	}
+
+	var buf bytes.Buffer
+	cw := csv.NewWriter(&buf)
+	cw.Write(columns)
+	cw.WriteAll(data)
+
+	result = append(result, lsp.MarkedString{
+		Language: "csv",
+		Value:    buf.String(),
+	})
 
 	return result, nil
 }

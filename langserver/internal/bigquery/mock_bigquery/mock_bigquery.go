@@ -80,6 +80,21 @@ func (mr *MockClientMockRecorder) GetTableMetadata(ctx, projectID, datasetID, ta
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTableMetadata", reflect.TypeOf((*MockClient)(nil).GetTableMetadata), ctx, projectID, datasetID, tableID)
 }
 
+// GetTableRecord mocks base method.
+func (m *MockClient) GetTableRecord(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.RowIterator, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTableRecord", ctx, projectID, datasetID, tableID)
+	ret0, _ := ret[0].(*bigquery.RowIterator)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTableRecord indicates an expected call of GetTableRecord.
+func (mr *MockClientMockRecorder) GetTableRecord(ctx, projectID, datasetID, tableID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTableRecord", reflect.TypeOf((*MockClient)(nil).GetTableRecord), ctx, projectID, datasetID, tableID)
+}
+
 // ListDatasets mocks base method.
 func (m *MockClient) ListDatasets(ctx context.Context, projectID string) ([]*bigquery.Dataset, error) {
 	m.ctrl.T.Helper()

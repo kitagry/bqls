@@ -2,9 +2,11 @@ package langserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source"
@@ -67,32 +69,58 @@ func (h *Handler) Close() error {
 	return errors.Join(errs...)
 }
 
-func (h *Handler) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result interface{}, err error) {
+func (h *Handler) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
 	switch req.Method {
 	case "initialize":
 		return h.handleInitialize(ctx, conn, req)
 	case "initialized":
 		return
 	case "textDocument/didOpen":
-		return h.handleTextDocumentDidOpen(ctx, conn, req)
+		return ignoreMiddleware(h.handleTextDocumentDidOpen)(ctx, conn, req)
 	case "textDocument/didChange":
-		return h.handleTextDocumentDidChange(ctx, conn, req)
+		return ignoreMiddleware(h.handleTextDocumentDidChange)(ctx, conn, req)
 	case "textDocument/didClose":
-		return h.handleTextDocumentDidClose(ctx, conn, req)
+		return ignoreMiddleware(h.handleTextDocumentDidClose)(ctx, conn, req)
 	case "textDocument/didSave":
-		return h.handleTextDocumentDidSave(ctx, conn, req)
+		return ignoreMiddleware(h.handleTextDocumentDidSave)(ctx, conn, req)
 	case "textDocument/formatting":
-		return h.handleTextDocumentFormatting(ctx, conn, req)
+		return ignoreMiddleware(h.handleTextDocumentFormatting)(ctx, conn, req)
 	case "textDocument/hover":
-		return h.handleTextDocumentHover(ctx, conn, req)
+		return ignoreMiddleware(h.handleTextDocumentHover)(ctx, conn, req)
 	case "textDocument/completion":
-		return h.handleTextDocumentCompletion(ctx, conn, req)
+		return ignoreMiddleware(h.handleTextDocumentCompletion)(ctx, conn, req)
 	case "textDocument/codeAction":
 		return h.handleTextDocumentCodeAction(ctx, conn, req)
 	case "workspace/executeCommand":
 		return h.handleWorkspaceExecuteCommand(ctx, conn, req)
+	case "bqls/virtualTextDocument":
+		return h.handleVirtualTextDocument(ctx, conn, req)
 	}
 	return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeMethodNotFound, Message: fmt.Sprintf("method not supported: %s", req.Method)}
+}
+
+type HandleFunc func(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error)
+
+// In order to use bqls.nvim, we need to ignore requests that are not SQL files.
+// For example, when we open neo-tree to show the project-dataset-table structure, it sends a request to the language server.
+// But we don't need to handle it.
+func ignoreMiddleware(next HandleFunc) HandleFunc {
+	type TStruct struct {
+		TextDocument lsp.TextDocumentIdentifier `json:"textDocument"`
+	}
+
+	return func(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
+		var s TStruct
+		if err := json.Unmarshal(*req.Params, &s); err != nil {
+			return nil, err
+		}
+
+		// When buffer is not a SQL file, ignore the request
+		if !strings.HasSuffix(string(s.TextDocument.URI), ".sql") {
+			return nil, nil
+		}
+		return next(ctx, conn, req)
+	}
 }
 
 func uriToDocumentURI(uri string) lsp.DocumentURI {

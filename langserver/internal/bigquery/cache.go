@@ -120,7 +120,7 @@ func (c *cache) callListDatasets(ctx context.Context, projectID string) ([]*bigq
 	}
 
 	if len(result) > 0 {
-		err := c.db.InsertDatasets(ctx, result)
+		err := c.db.ReplaceDatasets(ctx, projectID, result)
 		if err != nil {
 			// TODO
 			fmt.Fprintf(os.Stderr, "failed to insert datasets: %v\n", err)
@@ -144,6 +144,10 @@ func (c *cache) ListTables(ctx context.Context, projectID, datasetID string, onl
 				fmt.Fprintf(os.Stderr, "failed to recache tables: %v\n", err)
 			}
 		})
+
+		if onlyLatestSuffix {
+			return extractLatestSuffixTables(results), nil
+		}
 		return results, nil
 	}
 	if err != nil {
@@ -162,7 +166,7 @@ func (c *cache) callListTables(ctx context.Context, projectID, datasetID string,
 	}
 
 	if len(result) > 0 {
-		err := c.db.InsertTables(ctx, result)
+		err := c.db.ReplaceTables(ctx, projectID, datasetID, result)
 		if err != nil {
 			// TODO
 			fmt.Fprintf(os.Stderr, "failed to insert tables: %v\n", err)
@@ -191,6 +195,10 @@ func (c *cache) GetTableMetadata(ctx context.Context, projectID, datasetID, tabl
 		c.tableMetadataCache[cacheKey] = result
 	}
 	return result, nil
+}
+
+func (c *cache) GetTableRecord(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.RowIterator, error) {
+	return c.bqClient.GetTableRecord(ctx, projectID, datasetID, tableID)
 }
 
 func (c *cache) Run(ctx context.Context, q string, dryrun bool) (BigqueryJob, error) {
