@@ -14,6 +14,8 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/function"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
+	"golang.org/x/text/language"
+	"golang.org/x/text/message"
 )
 
 func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedString, error) {
@@ -437,31 +439,77 @@ func createBigQueryFieldYamlString(field *bigquery.FieldSchema, depth int) strin
 }
 
 func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([]lsp.MarkedString, error) {
-	resultStr := fmt.Sprintf("## %s", metadata.FullID)
+	var sb strings.Builder
+	sb.Grow(1024)
+	sb.WriteString(fmt.Sprintf("## %s\n", metadata.FullID))
 
 	if len(metadata.Description) > 0 {
-		resultStr += fmt.Sprintf("\n%s", metadata.Description)
+		sb.WriteString(fmt.Sprintf("%s\n", metadata.Description))
 	}
 
-	resultStr += fmt.Sprintf("\ncreated at %s", metadata.CreationTime.Format("2006-01-02 15:04:05"))
+	sb.WriteString("\n### Table info\n\n")
+
+	sb.WriteString(fmt.Sprintf("* Created: %s\n", metadata.CreationTime.Format("2006-01-02 15:04:05")))
 	// If cache the metadata, we should delete last modified time because it is confusing.
-	resultStr += fmt.Sprintf("\nlast modified at %s", metadata.LastModifiedTime.Format("2006-01-02 15:04:05"))
+	sb.WriteString(fmt.Sprintf("* Last modified: %s\n", metadata.LastModifiedTime.Format("2006-01-02 15:04:05")))
+
+	if !metadata.ExpirationTime.IsZero() {
+		sb.WriteString(fmt.Sprintf("* Expired: %s\n", metadata.ExpirationTime.Format("2006-01-02 15:04:05")))
+	}
+
+	if len(metadata.Labels) > 0 {
+		sb.WriteString("* Labels:\n")
+		for k, v := range metadata.Labels {
+			sb.WriteString(fmt.Sprintf(" * %s: %s\n", k, v))
+		}
+	}
+
+	if metadata.TableConstraints != nil {
+		if len(metadata.TableConstraints.PrimaryKey.Columns) > 0 {
+			sb.WriteString("* Primary Key:\n")
+			for _, c := range metadata.TableConstraints.PrimaryKey.Columns {
+				sb.WriteString(fmt.Sprintf("  * %s\n", c))
+			}
+		}
+	}
+
+	sb.WriteString("\n### Storage info\n\n")
+
+	p := message.NewPrinter(language.English)
+	sb.WriteString(p.Sprintf("* Number of rows: %d\n", metadata.NumRows))
+	sb.WriteString(fmt.Sprintf("* Total logical bytes: %s\n", bytesConvert(metadata.NumBytes)))
 
 	projectID, datasetID, tableID, ok := extractTableIDsFromMedatada(metadata)
 	if ok {
-		resultStr += fmt.Sprintf("\n\n[Docs](https://console.cloud.google.com/bigquery?project=%[1]s&ws=!1m5!1m4!4m3!1s%[1]s!2s%[2]s!3s%[3]s)", projectID, datasetID, tableID)
+		sb.WriteString(fmt.Sprintf("\n[Docs](https://console.cloud.google.com/bigquery?project=%[1]s&ws=!1m5!1m4!4m3!1s%[1]s!2s%[2]s!3s%[3]s)\n", projectID, datasetID, tableID))
 	}
 
 	return []lsp.MarkedString{
 		{
 			Language: "markdown",
-			Value:    resultStr,
+			Value:    sb.String(),
 		},
 		{
 			Language: "yaml",
 			Value:    createBigQuerySchemaYamlString(metadata.Schema, 0),
 		},
 	}, nil
+}
+
+func bytesConvert(bytes int64) string {
+	if bytes == 0 {
+		return "0 bytes"
+	}
+
+	base := math.Floor(math.Log(float64(bytes)) / math.Log(1024))
+	units := []string{"bytes", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB"}
+
+	stringVal := fmt.Sprintf("%.2f", float64(bytes)/math.Pow(1024, base))
+	stringVal = strings.TrimSuffix(stringVal, ".00")
+	return fmt.Sprintf("%s %v",
+		stringVal,
+		units[int(base)],
+	)
 }
 
 func extractTableIDsFromMedatada(metadata *bigquery.TableMetadata) (projectID, datasetID, tableID string, ok bool) {

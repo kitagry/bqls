@@ -48,8 +48,17 @@ func TestProject_TermDocument(t *testing.T) {
 					Language: "markdown",
 					Value: `## project.dataset.table
 table description
-created at 2023-06-17 00:00:00
-last modified at 2023-06-17 00:00:00`,
+
+### Table info
+
+* Created: 2023-06-17 00:00:00
+* Last modified: 2023-06-17 00:00:00
+
+### Storage info
+
+* Number of rows: 0
+* Total logical bytes: 0 bytes
+`,
 				},
 				{
 					Language: "yaml",
@@ -80,8 +89,17 @@ last modified at 2023-06-17 00:00:00`,
 				{
 					Language: "markdown",
 					Value: `## project.dataset.table
-created at 2023-06-17 00:00:00
-last modified at 2023-06-17 00:00:00`,
+
+### Table info
+
+* Created: 2023-06-17 00:00:00
+* Last modified: 2023-06-17 00:00:00
+
+### Storage info
+
+* Number of rows: 0
+* Total logical bytes: 0 bytes
+`,
 				},
 				{
 					Language: "yaml",
