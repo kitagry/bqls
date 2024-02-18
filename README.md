@@ -57,7 +57,10 @@ Requests a virtual text document from the LSP, which is a read only document tha
 I used [deno language server protocol](https://docs.deno.com/runtime/manual/advanced/language_server/overview) below as reference.
 
 For example, bqls can provide a virtual text document for a table information.
-You can request like `bqls://project/${project}/dataset/${dataset}/table/${table}`.
+Currently, `bqls://` schema supported the following path:
+
+* table: `bqls://project/${project}/dataset/${dataset}/table/${table}`
+* job: `bqls://project/${project}/job/${job}`
 
 Requests:
 
@@ -71,6 +74,12 @@ Response:
 
 ```ts
 interface VirtualTextDocument {
-    contents: []MarkedString;
+    contents: MarkedString[];
+    result: QueryResult;
+}
+
+interface QueryResult {
+    columns: string[];
+    rows: any[][];
 }
 ```

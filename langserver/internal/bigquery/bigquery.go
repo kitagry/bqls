@@ -32,6 +32,9 @@ type Client interface {
 
 	// Run runs the specified query.
 	Run(ctx context.Context, q string, dryrun bool) (BigqueryJob, error)
+
+	// JobFromID returns the job with the specified ID.
+	JobFromProject(ctx context.Context, projectID, id string) (BigqueryJob, error)
 }
 
 type client struct {
@@ -164,4 +167,8 @@ func (c *client) Run(ctx context.Context, q string, dryrun bool) (BigqueryJob, e
 	}
 
 	return job, nil
+}
+
+func (c *client) JobFromProject(ctx context.Context, projectID, id string) (BigqueryJob, error) {
+	return c.bqClient.JobFromProject(ctx, projectID, id, c.bqClient.Location)
 }
