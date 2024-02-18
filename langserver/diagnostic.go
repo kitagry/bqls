@@ -1,6 +1,7 @@
 package langserver
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -173,18 +174,8 @@ func convertErrorsToDiagnostics(errs []file.Error) []lsp.Diagnostic {
 				End:   endPosition,
 			},
 			Message:  err.Msg,
-			Severity: or(err.Severity, lsp.Error),
+			Severity: cmp.Or(err.Severity, lsp.Error),
 		}
 	}
 	return result
-}
-
-func or[T comparable](list ...T) T {
-	var zero T
-	for _, t := range list {
-		if t != zero {
-			return t
-		}
-	}
-	return zero
 }
