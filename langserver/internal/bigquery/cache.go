@@ -204,3 +204,7 @@ func (c *cache) GetTableRecord(ctx context.Context, projectID, datasetID, tableI
 func (c *cache) Run(ctx context.Context, q string, dryrun bool) (BigqueryJob, error) {
 	return c.bqClient.Run(ctx, q, dryrun)
 }
+
+func (c *cache) JobFromProject(ctx context.Context, projectID, id string) (BigqueryJob, error) {
+	return c.bqClient.JobFromProject(ctx, projectID, id)
+}

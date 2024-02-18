@@ -7,17 +7,11 @@ import (
 	"fmt"
 	"strings"
 
+	"cloud.google.com/go/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/sourcegraph/jsonrpc2"
+	"google.golang.org/api/iterator"
 )
-
-type VirtualTextDocumentParams struct {
-	TextDocument lsp.TextDocumentIdentifier `json:"textDocument"`
-}
-
-type VirtualTextDocument struct {
-	Contents []lsp.MarkedString `json:"contents"`
-}
 
 type VirtualTextDocumentInfo struct {
 	ProjectID string
@@ -98,7 +92,7 @@ func (h *Handler) handleVirtualTextDocument(ctx context.Context, conn *jsonrpc2.
 		return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams}
 	}
 
-	var params VirtualTextDocumentParams
+	var params lsp.VirtualTextDocumentParams
 	if err := json.Unmarshal(*req.Params, &params); err != nil {
 		return nil, err
 	}
@@ -109,13 +103,44 @@ func (h *Handler) handleVirtualTextDocument(ctx context.Context, conn *jsonrpc2.
 	}
 
 	if virtualTextDocument.TableID != "" {
-		marks, err := h.project.GetTableInfo(ctx, virtualTextDocument.ProjectID, virtualTextDocument.DatasetID, virtualTextDocument.TableID)
+		result, err := h.project.GetTableInfo(ctx, virtualTextDocument.ProjectID, virtualTextDocument.DatasetID, virtualTextDocument.TableID)
 		if err != nil {
 			return nil, err
 		}
 
-		return VirtualTextDocument{Contents: marks}, nil
+		return result, nil
+	}
+
+	if virtualTextDocument.JobID != "" {
+		result, err := h.project.GetJobInfo(ctx, virtualTextDocument.ProjectID, virtualTextDocument.JobID)
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
 	}
 
 	return nil, nil
+}
+
+func buildQueryResult(it *bigquery.RowIterator) (lsp.QueryResult, error) {
+	var result lsp.QueryResult
+
+	for _, field := range it.Schema {
+		result.Columns = append(result.Columns, field.Name)
+	}
+
+	for {
+		var values []bigquery.Value
+		err := it.Next(&values)
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			return result, err
+		}
+
+		result.Data = append(result.Data, values)
+	}
+
+	return result, nil
 }

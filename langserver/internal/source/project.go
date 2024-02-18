@@ -1,9 +1,8 @@
 package source
 
 import (
-	"bytes"
 	"context"
-	"encoding/csv"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -150,54 +149,118 @@ func (p *Project) ListTables(ctx context.Context, projectID, datasetID string) (
 	return p.bqClient.ListTables(ctx, projectID, datasetID, true)
 }
 
-func (p *Project) GetTableInfo(ctx context.Context, projectID, datasetID, tableID string) ([]lsp.MarkedString, error) {
-	tableMetadata, err := p.bqClient.GetTableMetadata(ctx, projectID, datasetID, tableID)
+func (p *Project) GetJobInfo(ctx context.Context, projectID, jobID string) (lsp.VirtualTextDocument, error) {
+	job, err := p.bqClient.JobFromProject(ctx, projectID, jobID)
 	if err != nil {
-		return nil, err
+		return lsp.VirtualTextDocument{}, err
 	}
 
-	result, err := buildBigQueryTableMetadataMarkedString(tableMetadata)
+	// FIXME: region should be dynamic
+	markedStrings, err := buildBigQueryJobMarkedString(projectID, "US", job)
 	if err != nil {
-		return nil, err
+		return lsp.VirtualTextDocument{}, err
+	}
+
+	it, err := job.Read(ctx)
+	if err != nil {
+		return lsp.VirtualTextDocument{}, err
+	}
+	queryResult, err := buildQueryResult(it)
+	if err != nil {
+		return lsp.VirtualTextDocument{}, err
+	}
+
+	return lsp.VirtualTextDocument{Contents: markedStrings, Result: queryResult}, nil
+}
+
+func buildBigQueryJobMarkedString(projectID, region string, job bigquery.BigqueryJob) ([]lsp.MarkedString, error) {
+	var result []lsp.MarkedString
+
+	sb := strings.Builder{}
+	sb.WriteString(fmt.Sprintf("## Job %s\n", job.ID()))
+
+	status := job.LastStatus()
+
+	sb.WriteString("\n### Job info\n\n")
+	sb.WriteString(fmt.Sprintf("* Created: %s\n", status.Statistics.CreationTime.Format("2006-01-02 15:04:05")))
+	sb.WriteString(fmt.Sprintf("* Started: %s\n", status.Statistics.StartTime.Format("2006-01-02 15:04:05")))
+	endTimeStr := status.Statistics.EndTime.Format("2006-01-02 15:04:05")
+	if status.Statistics.EndTime.IsZero() {
+		endTimeStr = "Not finished"
+	}
+	sb.WriteString(fmt.Sprintf("* Ended: %s\n", endTimeStr))
+
+	if len(status.Errors) > 0 {
+		sb.WriteString("* Errors:\n")
+		for _, e := range status.Errors {
+			sb.WriteString(fmt.Sprintf("  * %s\n", e.Message))
+		}
+	}
+
+	sb.WriteString(fmt.Sprintf("* Bytes processed: %s\n", bytesConvert(status.Statistics.TotalBytesProcessed)))
+
+	switch details := status.Statistics.Details.(type) {
+	case *bq.QueryStatistics:
+		sb.WriteString(fmt.Sprintf("* Bytes billed: %s\n", bytesConvert(details.TotalBytesBilled)))
+		sb.WriteString(fmt.Sprintf("* Slot milliseconds: %d\n", details.SlotMillis))
+	}
+
+	sb.WriteString(fmt.Sprintf("\n[Query URL](https://console.cloud.google.com/bigquery?project=%s&ws=!1m5!1m4!1m3!1s%s!2s%s!3s%s)\n", projectID, projectID, job.ID(), region))
+
+	result = append(result, lsp.MarkedString{
+		Language: "markdown",
+		Value:    sb.String(),
+	})
+	return result, nil
+}
+
+func (p *Project) GetTableInfo(ctx context.Context, projectID, datasetID, tableID string) (lsp.VirtualTextDocument, error) {
+	tableMetadata, err := p.bqClient.GetTableMetadata(ctx, projectID, datasetID, tableID)
+	if err != nil {
+		return lsp.VirtualTextDocument{}, err
+	}
+
+	markedStrings, err := buildBigQueryTableMetadataMarkedString(tableMetadata)
+	if err != nil {
+		return lsp.VirtualTextDocument{}, err
 	}
 
 	it, err := p.bqClient.GetTableRecord(ctx, projectID, datasetID, tableID)
 	if err != nil {
-		return result, err
+		return lsp.VirtualTextDocument{}, err
+	}
+	it.Schema = tableMetadata.Schema
+	queryResult, err := buildQueryResult(it)
+	if err != nil {
+		return lsp.VirtualTextDocument{}, err
 	}
 
-	data := make([][]string, 0)
+	return lsp.VirtualTextDocument{Contents: markedStrings, Result: queryResult}, nil
+}
+
+func (p *Project) GetTablePreview(ctx context.Context, projectID, datasetID, tableID string) (*bq.RowIterator, error) {
+	return p.bqClient.GetTableRecord(ctx, projectID, datasetID, tableID)
+}
+
+func buildQueryResult(it *bq.RowIterator) (lsp.QueryResult, error) {
+	var result lsp.QueryResult
+
+	for _, field := range it.Schema {
+		result.Columns = append(result.Columns, field.Name)
+	}
+
 	for i := 0; i < 100; i++ {
 		var values []bq.Value
 		err := it.Next(&values)
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			break
 		}
 		if err != nil {
 			return result, err
 		}
 
-		strs := make([]string, len(values))
-		for i, v := range values {
-			strs[i] = fmt.Sprint(v)
-		}
-		data = append(data, strs)
+		result.Data = append(result.Data, values)
 	}
-
-	columns := make([]string, 0)
-	for _, f := range it.Schema {
-		columns = append(columns, f.Name)
-	}
-
-	var buf bytes.Buffer
-	cw := csv.NewWriter(&buf)
-	cw.Write(columns)
-	cw.WriteAll(data)
-
-	result = append(result, lsp.MarkedString{
-		Language: "csv",
-		Value:    buf.String(),
-	})
 
 	return result, nil
 }

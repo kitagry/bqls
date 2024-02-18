@@ -95,6 +95,21 @@ func (mr *MockClientMockRecorder) GetTableRecord(ctx, projectID, datasetID, tabl
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTableRecord", reflect.TypeOf((*MockClient)(nil).GetTableRecord), ctx, projectID, datasetID, tableID)
 }
 
+// JobFromProject mocks base method.
+func (m *MockClient) JobFromProject(ctx context.Context, projectID, id string) (bigquery0.BigqueryJob, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "JobFromProject", ctx, projectID, id)
+	ret0, _ := ret[0].(bigquery0.BigqueryJob)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// JobFromProject indicates an expected call of JobFromProject.
+func (mr *MockClientMockRecorder) JobFromProject(ctx, projectID, id interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "JobFromProject", reflect.TypeOf((*MockClient)(nil).JobFromProject), ctx, projectID, id)
+}
+
 // ListDatasets mocks base method.
 func (m *MockClient) ListDatasets(ctx context.Context, projectID string) ([]*bigquery.Dataset, error) {
 	m.ctrl.T.Helper()
