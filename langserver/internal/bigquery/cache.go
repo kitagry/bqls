@@ -208,3 +208,7 @@ func (c *cache) Run(ctx context.Context, q string, dryrun bool) (BigqueryJob, er
 func (c *cache) JobFromProject(ctx context.Context, projectID, id string) (BigqueryJob, error) {
 	return c.bqClient.JobFromProject(ctx, projectID, id)
 }
+
+func (c *cache) Jobs(ctx context.Context) *bigquery.JobIterator {
+	return c.bqClient.Jobs(ctx)
+}

@@ -35,6 +35,9 @@ type Client interface {
 
 	// JobFromID returns the job with the specified ID.
 	JobFromProject(ctx context.Context, projectID, id string) (BigqueryJob, error)
+
+	// Jobs returns the iterator of all jobs.
+	Jobs(ctx context.Context) *bigquery.JobIterator
 }
 
 type client struct {
@@ -171,4 +174,8 @@ func (c *client) Run(ctx context.Context, q string, dryrun bool) (BigqueryJob, e
 
 func (c *client) JobFromProject(ctx context.Context, projectID, id string) (BigqueryJob, error) {
 	return c.bqClient.JobFromProject(ctx, projectID, id, c.bqClient.Location)
+}
+
+func (c *client) Jobs(ctx context.Context) *bigquery.JobIterator {
+	return c.bqClient.Jobs(ctx)
 }

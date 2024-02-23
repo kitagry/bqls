@@ -1,6 +1,8 @@
 package lsp
 
 import (
+	"fmt"
+
 	"cloud.google.com/go/bigquery"
 )
 
@@ -16,4 +18,12 @@ type VirtualTextDocument struct {
 type QueryResult struct {
 	Columns []string           `json:"columns"`
 	Data    [][]bigquery.Value `json:"data"`
+}
+
+func NewJobVirtualTextDocumentURI(projectID, jobID string) DocumentURI {
+	return DocumentURI(fmt.Sprintf("bqls://project/%s/job/%s", projectID, jobID))
+}
+
+func NewTableVirtualTextDocumentURI(projectID, datasetID, tableID string) DocumentURI {
+	return DocumentURI(fmt.Sprintf("bqls://project/%s/dataset/%s/table/%s", projectID, datasetID, tableID))
 }

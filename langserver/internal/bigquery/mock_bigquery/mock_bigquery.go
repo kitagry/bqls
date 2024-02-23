@@ -110,6 +110,20 @@ func (mr *MockClientMockRecorder) JobFromProject(ctx, projectID, id interface{})
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "JobFromProject", reflect.TypeOf((*MockClient)(nil).JobFromProject), ctx, projectID, id)
 }
 
+// Jobs mocks base method.
+func (m *MockClient) Jobs(ctx context.Context) *bigquery.JobIterator {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Jobs", ctx)
+	ret0, _ := ret[0].(*bigquery.JobIterator)
+	return ret0
+}
+
+// Jobs indicates an expected call of Jobs.
+func (mr *MockClientMockRecorder) Jobs(ctx interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Jobs", reflect.TypeOf((*MockClient)(nil).Jobs), ctx)
+}
+
 // ListDatasets mocks base method.
 func (m *MockClient) ListDatasets(ctx context.Context, projectID string) ([]*bigquery.Dataset, error) {
 	m.ctrl.T.Helper()

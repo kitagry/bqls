@@ -3,6 +3,7 @@ package langserver
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 
 	"cloud.google.com/go/bigquery"
@@ -12,9 +13,10 @@ import (
 )
 
 const (
-	CommandExecuteQuery = "executeQuery"
-	CommandListDatasets = "listDatasets"
-	CommandListTables   = "listTables"
+	CommandExecuteQuery     = "executeQuery"
+	CommandListDatasets     = "listDatasets"
+	CommandListTables       = "listTables"
+	CommandListJobHistories = "listJobHistories"
 )
 
 func (h *Handler) handleTextDocumentCodeAction(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
@@ -32,6 +34,15 @@ func (h *Handler) handleTextDocumentCodeAction(ctx context.Context, conn *jsonrp
 			Title:     "Execute Query",
 			Command:   CommandExecuteQuery,
 			Arguments: []any{params.TextDocument.URI},
+		},
+		{
+			Title:   "List Personal Job Histories",
+			Command: CommandListJobHistories,
+		},
+		{
+			Title:     "List Project Job Histories",
+			Command:   CommandListJobHistories,
+			Arguments: []any{"--all-user"},
 		},
 	}
 	return commands, nil
@@ -54,22 +65,14 @@ func (h *Handler) handleWorkspaceExecuteCommand(ctx context.Context, conn *jsonr
 		return h.commandListDatasets(ctx, params)
 	case CommandListTables:
 		return h.commandListTables(ctx, params)
+	case CommandListJobHistories:
+		return h.commandListJobHistories(ctx, params)
 	default:
 		return nil, fmt.Errorf("unknown command: %s", params.Command)
 	}
 }
 
-type ExecuteQueryResult struct {
-	TextDocument lsp.TextDocumentIdentifier `json:"textDocument"`
-	Result       QueryResult                `json:"result"`
-}
-
-type QueryResult struct {
-	Columns []string           `json:"columns"`
-	Data    [][]bigquery.Value `json:"data"`
-}
-
-func (h *Handler) commandExecuteQuery(ctx context.Context, params lsp.ExecuteCommandParams) (*ExecuteQueryResult, error) {
+func (h *Handler) commandExecuteQuery(ctx context.Context, params lsp.ExecuteCommandParams) (*lsp.ExecuteQueryResult, error) {
 	if len(params.Arguments) != 1 {
 		return nil, fmt.Errorf("file uri arguments is not provided")
 	}
@@ -118,22 +121,18 @@ func (h *Handler) commandExecuteQuery(ctx context.Context, params lsp.ExecuteCom
 		columns = append(columns, f.Name)
 	}
 
-	return &ExecuteQueryResult{
+	return &lsp.ExecuteQueryResult{
 		TextDocument: lsp.TextDocumentIdentifier{
-			URI: newJobVirtualTextDocumentURI(h.project.BigQueryProjectID, job.ID()),
+			URI: lsp.NewJobVirtualTextDocumentURI(h.project.BigQueryProjectID, job.ID()),
 		},
-		Result: QueryResult{
+		Result: lsp.QueryResult{
 			Columns: columns,
 			Data:    data,
 		},
 	}, nil
 }
 
-type ListDatasetsResult struct {
-	Datasets []string `json:"datasets"`
-}
-
-func (h *Handler) commandListDatasets(ctx context.Context, params lsp.ExecuteCommandParams) (*ListDatasetsResult, error) {
+func (h *Handler) commandListDatasets(ctx context.Context, params lsp.ExecuteCommandParams) (*lsp.ListDatasetsResult, error) {
 	projectID := h.initializeParams.InitializationOptions.ProjectID
 	if len(params.Arguments) > 0 {
 		var ok bool
@@ -153,16 +152,12 @@ func (h *Handler) commandListDatasets(ctx context.Context, params lsp.ExecuteCom
 		results = append(results, d.DatasetID)
 	}
 
-	return &ListDatasetsResult{
+	return &lsp.ListDatasetsResult{
 		Datasets: results,
 	}, nil
 }
 
-type ListTablesResult struct {
-	Tables []string `json:"tables"`
-}
-
-func (h *Handler) commandListTables(ctx context.Context, params lsp.ExecuteCommandParams) (*ListTablesResult, error) {
+func (h *Handler) commandListTables(ctx context.Context, params lsp.ExecuteCommandParams) (*lsp.ListTablesResult, error) {
 	projectID := h.initializeParams.InitializationOptions.ProjectID
 	var datasetID string
 	if len(params.Arguments) == 0 {
@@ -196,7 +191,27 @@ func (h *Handler) commandListTables(ctx context.Context, params lsp.ExecuteComma
 		results = append(results, t.TableID)
 	}
 
-	return &ListTablesResult{
+	return &lsp.ListTablesResult{
 		Tables: results,
 	}, nil
+}
+
+func (h *Handler) commandListJobHistories(ctx context.Context, params lsp.ExecuteCommandParams) (any, error) {
+	f := flag.NewFlagSet("listJobHistory", flag.ContinueOnError)
+	allUser := f.Bool("all-user", false, "list personal job histories")
+
+	strArgs := make([]string, 0, len(params.Arguments))
+	for _, a := range params.Arguments {
+		strArgs = append(strArgs, fmt.Sprint(a))
+	}
+	err := f.Parse(strArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	jobs, err := h.project.ListJobs(ctx, h.initializeParams.InitializationOptions.ProjectID, *allUser)
+	if err != nil {
+		return nil, err
+	}
+	return lsp.ListJobHistoryResult{Jobs: jobs}, nil
 }
