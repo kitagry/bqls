@@ -94,7 +94,17 @@ func (h *Handler) handleVirtualTextDocument(ctx context.Context, conn *jsonrpc2.
 		return nil, err
 	}
 
+	workDoneToken := lsp.ProgressToken("virtual_text_document")
+	h.workDoneProgressBegin(ctx, workDoneToken, lsp.WorkDoneProgressBegin{
+		Title:   "Virtual text document",
+		Message: "Loading virtual text document info...",
+	})
+	defer h.workDoneProgressEnd(ctx, workDoneToken, lsp.WorkDoneProgressEnd{})
+
 	if virtualTextDocument.TableID != "" {
+		h.workDoneProgressReport(ctx, workDoneToken, lsp.WorkDoneProgressReport{
+			Message: "Fetching table info...",
+		})
 		result, err := h.project.GetTableInfo(ctx, virtualTextDocument.ProjectID, virtualTextDocument.DatasetID, virtualTextDocument.TableID)
 		if err != nil {
 			return nil, err
@@ -104,6 +114,9 @@ func (h *Handler) handleVirtualTextDocument(ctx context.Context, conn *jsonrpc2.
 	}
 
 	if virtualTextDocument.JobID != "" {
+		h.workDoneProgressReport(ctx, workDoneToken, lsp.WorkDoneProgressReport{
+			Message: "Fetching job info...",
+		})
 		result, err := h.project.GetJobInfo(ctx, virtualTextDocument.ProjectID, virtualTextDocument.JobID)
 		if err != nil {
 			return nil, err

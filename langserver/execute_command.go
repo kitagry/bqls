@@ -6,10 +6,8 @@ import (
 	"flag"
 	"fmt"
 
-	"cloud.google.com/go/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/sourcegraph/jsonrpc2"
-	"google.golang.org/api/iterator"
 )
 
 const (
@@ -94,40 +92,9 @@ func (h *Handler) commandExecuteQuery(ctx context.Context, params lsp.ExecuteCom
 		return nil, err
 	}
 
-	h.workDoneProgressReport(ctx, workDoneToken, lsp.WorkDoneProgressReport{
-		Message: "Fetching query result...",
-	})
-	it, err := job.Read(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	data := make([][]bigquery.Value, 0)
-	for {
-		var values []bigquery.Value
-		err := it.Next(&values)
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		data = append(data, values)
-	}
-
-	columns := make([]string, 0)
-	for _, f := range it.Schema {
-		columns = append(columns, f.Name)
-	}
-
 	return &lsp.ExecuteQueryResult{
 		TextDocument: lsp.TextDocumentIdentifier{
 			URI: lsp.NewJobVirtualTextDocumentURI(h.project.BigQueryProjectID, job.ID()),
-		},
-		Result: lsp.QueryResult{
-			Columns: columns,
-			Data:    data,
 		},
 	}, nil
 }
@@ -141,6 +108,13 @@ func (h *Handler) commandListDatasets(ctx context.Context, params lsp.ExecuteCom
 			return nil, fmt.Errorf("arguments should be string, but got %T", params.Arguments[0])
 		}
 	}
+
+	workDoneToken := lsp.ProgressToken("list_datasets")
+	h.workDoneProgressBegin(ctx, workDoneToken, lsp.WorkDoneProgressBegin{
+		Title:   "List datasets",
+		Message: "Loading datasets...",
+	})
+	defer h.workDoneProgressEnd(ctx, workDoneToken, lsp.WorkDoneProgressEnd{})
 
 	datasets, err := h.project.ListDatasets(ctx, projectID)
 	if err != nil {
@@ -180,6 +154,13 @@ func (h *Handler) commandListTables(ctx context.Context, params lsp.ExecuteComma
 			return nil, fmt.Errorf("arguments should be string, but got %T", params.Arguments[1])
 		}
 	}
+
+	workDoneToken := lsp.ProgressToken("list_tables")
+	h.workDoneProgressBegin(ctx, workDoneToken, lsp.WorkDoneProgressBegin{
+		Title:   "List tables",
+		Message: "Loading tables...",
+	})
+	defer h.workDoneProgressEnd(ctx, workDoneToken, lsp.WorkDoneProgressEnd{})
 
 	tables, err := h.project.ListTables(ctx, projectID, datasetID)
 	if err != nil {
