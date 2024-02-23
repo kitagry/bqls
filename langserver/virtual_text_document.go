@@ -79,14 +79,6 @@ func (v VirtualTextDocumentInfo) validate() error {
 	return fmt.Errorf("either dataset ID and table ID or job ID is required")
 }
 
-func newJobVirtualTextDocumentURI(projectID, jobID string) lsp.DocumentURI {
-	return lsp.DocumentURI(fmt.Sprintf("bqls://project/%s/job/%s", projectID, jobID))
-}
-
-func newTableVirtualTextDocumentURI(projectID, datasetID, tableID string) lsp.DocumentURI {
-	return lsp.DocumentURI(fmt.Sprintf("bqls://project/%s/dataset/%s/table/%s", projectID, datasetID, tableID))
-}
-
 func (h *Handler) handleVirtualTextDocument(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
 	if req.Params == nil {
 		return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams}

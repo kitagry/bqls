@@ -48,6 +48,38 @@ Response:
 }
 ```
 
+#### `listJobHistories`
+
+list up job histories in the project.
+
+Arguments:
+
+* `--all-user`: list up all jobs in the project. When this flag is not set, list up only jobs submitted by the user.
+
+Request:
+
+```json
+{
+    "command": "listJobHistories",
+}
+```
+
+Response:
+
+```json
+{
+    "jobs": [
+        {
+            "textDocument": { "uri": "bqls://..."},
+            "id": "job_id",
+            "owner": "user@example.com",
+            "summary": "job summary"
+        },
+    ]
+}
+```
+
+
 ## Custom API
 
 ### `bqls/virtualTextDocument`
