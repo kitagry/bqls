@@ -158,6 +158,7 @@ type BigqueryJob interface {
 	ID() string
 	Read(context.Context) (*bigquery.RowIterator, error)
 	LastStatus() *bigquery.JobStatus
+	Config() (bigquery.JobConfig, error)
 }
 
 func (c *client) Run(ctx context.Context, q string, dryrun bool) (BigqueryJob, error) {

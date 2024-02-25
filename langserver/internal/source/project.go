@@ -223,7 +223,7 @@ func (p *Project) GetJobInfo(ctx context.Context, projectID, jobID string) (lsp.
 
 	it, err := job.Read(ctx)
 	if err != nil {
-		return lsp.VirtualTextDocument{}, err
+		return lsp.VirtualTextDocument{Contents: markedStrings}, nil
 	}
 	queryResult, err := buildQueryResult(it)
 	if err != nil {
@@ -271,6 +271,20 @@ func buildBigQueryJobMarkedString(projectID, region string, job bigquery.Bigquer
 		Language: "markdown",
 		Value:    sb.String(),
 	})
+
+	config, err := job.Config()
+	if err != nil {
+		return result, nil
+	}
+
+	switch c := config.(type) {
+	case *bq.QueryConfig:
+		result = append(result, lsp.MarkedString{
+			Language: "sql",
+			Value:    c.Q,
+		})
+	}
+
 	return result, nil
 }
 
