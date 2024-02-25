@@ -299,6 +299,10 @@ func (p *Project) GetTableInfo(ctx context.Context, projectID, datasetID, tableI
 		return lsp.VirtualTextDocument{}, err
 	}
 
+	if tableMetadata.Type != bq.RegularTable {
+		return lsp.VirtualTextDocument{Contents: markedStrings}, nil
+	}
+
 	it, err := p.bqClient.GetTableRecord(ctx, projectID, datasetID, tableID)
 	if err != nil {
 		return lsp.VirtualTextDocument{}, err
