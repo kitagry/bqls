@@ -6,6 +6,31 @@ BigQuery language server
 
 ### `workspace/executeCommand`
 
+#### `executeQuery`
+
+Execute a query and return the virtual text document url.
+
+Request:
+
+```json
+{
+    "command": "executeQuery",
+    "arguments": ["YOUR_DOCUMENT_URI"]
+}
+```
+
+Response:
+
+```json
+{
+    "textDocument": {
+        "uri": "bqls://project/${project}/job/${job}"
+    }
+}
+```
+
+You can get the result of the query by requesting the `bqls/virtualTextDocument`.
+
 #### `listDatasets`
 
 list up all datasets in the project.
