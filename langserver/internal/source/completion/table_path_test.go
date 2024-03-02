@@ -34,7 +34,7 @@ func TestProject_CompleteTablePath(t *testing.T) {
 				ctrl := gomock.NewController(t)
 				bqClient := mock_bigquery.NewMockClient(ctrl)
 
-				bqClient.EXPECT().ListTables(gomock.Any(), "project", "dataset", gomock.Any()).Return([]*bq.Table{
+				bqClient.EXPECT().ListTables(gomock.Any(), "project", "dataset").Return([]*bq.Table{
 					{
 						ProjectID: "project",
 						DatasetID: "dataset",
@@ -76,7 +76,7 @@ func TestProject_CompleteTablePath(t *testing.T) {
 				ctrl := gomock.NewController(t)
 				bqClient := mock_bigquery.NewMockClient(ctrl)
 
-				bqClient.EXPECT().ListTables(gomock.Any(), "project", "dataset", true).Return([]*bq.Table{
+				bqClient.EXPECT().ListTables(gomock.Any(), "project", "dataset").Return([]*bq.Table{
 					{
 						ProjectID: "project",
 						DatasetID: "dataset",

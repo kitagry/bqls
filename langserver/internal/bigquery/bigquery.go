@@ -3,6 +3,7 @@ package bigquery
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"cloud.google.com/go/bigquery"
 	"google.golang.org/api/cloudresourcemanager/v1"
@@ -22,7 +23,7 @@ type Client interface {
 	ListDatasets(ctx context.Context, projectID string) ([]*bigquery.Dataset, error)
 
 	// ListTables lists all tables in the specified dataset.
-	ListTables(ctx context.Context, projectID, datasetID string, onlyLatestSuffix bool) ([]*bigquery.Table, error)
+	ListTables(ctx context.Context, projectID, datasetID string) ([]*bigquery.Table, error)
 
 	// GetTableMetadata returns the metadata of the specified table.
 	GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.TableMetadata, error)
@@ -117,10 +118,11 @@ func (c *client) ListDatasets(ctx context.Context, projectID string) ([]*bigquer
 	return datasets, nil
 }
 
-func (c *client) ListTables(ctx context.Context, projectID, datasetID string, onlyLatestSuffix bool) ([]*bigquery.Table, error) {
+func (c *client) ListTables(ctx context.Context, projectID, datasetID string) ([]*bigquery.Table, error) {
 	dataset := c.bqClient.DatasetInProject(projectID, datasetID)
 
 	it := dataset.Tables(ctx)
+	it.PageInfo().MaxSize = 1000
 
 	tables := make([]*bigquery.Table, 0)
 	for {
@@ -132,12 +134,15 @@ func (c *client) ListTables(ctx context.Context, projectID, datasetID string, on
 			return nil, fmt.Errorf("fail to scan DatasetInProject: %w", err)
 		}
 
+		if strings.HasPrefix(table.TableID, "LOAD_TEMP_") {
+			continue
+		}
+
 		tables = append(tables, table)
 	}
 
-	if onlyLatestSuffix {
-		tables = extractLatestSuffixTables(tables)
-	}
+	tables = extractLatestSuffixTables(tables)
+
 	return tables, nil
 }
 

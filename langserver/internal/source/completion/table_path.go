@@ -107,7 +107,7 @@ func (c *completor) completeDatasetForTablePath(ctx context.Context, param table
 }
 
 func (c *completor) completeTableForTablePath(ctx context.Context, param tablePathParams) ([]CompletionItem, error) {
-	tables, err := c.bqClient.ListTables(ctx, param.ProjectID, param.DatasetID, true)
+	tables, err := c.bqClient.ListTables(ctx, param.ProjectID, param.DatasetID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to bqClient.ListTables: %w", err)
 	}
