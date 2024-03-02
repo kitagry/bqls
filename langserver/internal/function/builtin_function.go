@@ -107,7 +107,7 @@ var BuiltInFunctions = []BuiltInFunction{
 	},
 	{
 		Name:        "GROUPING",
-		Method:      "Preview\n  \n    This product or feature is subject to the \"Pre-GA Offerings Terms\"\n    in the General Service Terms section of the\n    Service Specific Terms.\n    Pre-GA products and features are available \"as is\" and might have\n    limited support. For more information, see the\n    launch stage descriptions.",
+		Method:      "GROUPING(groupable_value)",
 		Description: "If a groupable item in the [`GROUP BY` clause](/bigquery/docs/reference/standard-sql/query-syntax#group_by_clause) is aggregated\n(and thus not grouped), this function returns `1`. Otherwise,\nthis function returns `0`.Definitions:`groupable_value`: An expression that represents a value that can be grouped\nin the `GROUP BY` clause.Details:The `GROUPING` function is helpful if you need to determine which rows are\nproduced by which grouping sets. A grouping set is a group of columns by which\nrows can be grouped together. So, if you need to filter rows by\na few specific grouping sets, you can use the `GROUPING` function to identify\nwhich grouping sets grouped which rows by creating a matrix of the results.In addition, you can use the `GROUPING` function to determine the type of\n`NULL` produced by the `GROUP BY` clause. In some cases, the `GROUP BY` clause\nproduces a `NULL` placeholder. This placeholder represents all groupable items\nthat are aggregated (not grouped) in the current grouping set. This is different\nfrom a standard `NULL`, which can also be produced by a query.For more information, see the following examples.",
 		ExampleSQLs: []string{
 			"WITH\n  Products AS (\n    SELECT 'shirt' AS product_type, 't-shirt' AS product_name, 3 AS product_count UNION ALL\n    SELECT 'shirt', 't-shirt', 8 UNION ALL\n    SELECT 'shirt', 'polo', 25 UNION ALL\n    SELECT 'pants', 'jeans', 6\n  )\nSELECT\n  product_type,\n  product_name,\n  SUM(product_count) AS product_sum,\n  GROUPING(product_type) AS product_type_agg,\n  GROUPING(product_name) AS product_name_agg,\nFROM Products\nGROUP BY GROUPING SETS(product_type, product_name, ())\nORDER BY product_name;\n\n/*--------------+--------------+-------------+------------------+------------------+\n | product_type | product_name | product_sum | product_type_agg | product_name_agg |\n +--------------+--------------+-------------+------------------+------------------+\n | NULL         | NULL         | 36          | 1                | 1                |\n | shirt        | NULL         | 36          | 0                | 1                |\n | pants        | NULL         | 6           | 0                | 1                |\n | NULL         | jeans        | 6           | 1                | 0                |\n | NULL         | polo         | 25          | 1                | 0                |\n | NULL         | t-shirt      | 11          | 1                | 0                |\n +--------------+--------------+-------------+------------------+------------------*/",
@@ -347,6 +347,13 @@ var BuiltInFunctions = []BuiltInFunction{
 		Description: "This function returns a transformed object table with the original columns plus\none or more additional columns, depending on the `transform_types` values\nspecified.This function only supports\n[object tables](https://cloud.google.com/bigquery/docs/object-table-introduction)\nas inputs. Subqueries or any other types of tables are not supported.`object_table_name` is the name of the object table to be transformed, in\nthe format `dataset_name.object_table_name`.`transform_types_array` is an array of `STRING` literals. Currently, the only\nsupported `transform_types_array` value is `SIGNED_URL`. Specifying `SIGNED_URL`\ncreates read-only signed URLs for the objects in the identified object table,\nwhich are returned in a `signed_url` column. Generated signed URLs are\nvalid for 6 hours.",
 		ExampleSQLs: []string{},
 		URL:         "https://cloud.google.com/bigquery/docs/reference/standard-sql/table-functions-built-in#external_object_transform",
+	},
+	{
+		Name:        "GAP_FILL",
+		Method:      "Finds and fills gaps in a time series.\nFor more information, see GAP_FILL in\nTime series functions.",
+		Description: "",
+		ExampleSQLs: []string{},
+		URL:         "https://cloud.google.com/bigquery/docs/reference/standard-sql/table-functions-built-in#gap_fill_table_functions",
 	},
 	{
 		Name:        "CAST",

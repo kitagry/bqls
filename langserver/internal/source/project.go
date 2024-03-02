@@ -146,7 +146,7 @@ func (p *Project) ListDatasets(ctx context.Context, projectID string) ([]*bq.Dat
 }
 
 func (p *Project) ListTables(ctx context.Context, projectID, datasetID string) ([]*bq.Table, error) {
-	return p.bqClient.ListTables(ctx, projectID, datasetID, true)
+	return p.bqClient.ListTables(ctx, projectID, datasetID)
 }
 
 func (p *Project) ListJobs(ctx context.Context, projectID string, allUsers bool) ([]lsp.JobHistory, error) {

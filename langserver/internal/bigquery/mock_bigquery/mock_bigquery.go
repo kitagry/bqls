@@ -155,18 +155,18 @@ func (mr *MockClientMockRecorder) ListProjects(ctx interface{}) *gomock.Call {
 }
 
 // ListTables mocks base method.
-func (m *MockClient) ListTables(ctx context.Context, projectID, datasetID string, onlyLatestSuffix bool) ([]*bigquery.Table, error) {
+func (m *MockClient) ListTables(ctx context.Context, projectID, datasetID string) ([]*bigquery.Table, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListTables", ctx, projectID, datasetID, onlyLatestSuffix)
+	ret := m.ctrl.Call(m, "ListTables", ctx, projectID, datasetID)
 	ret0, _ := ret[0].([]*bigquery.Table)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListTables indicates an expected call of ListTables.
-func (mr *MockClientMockRecorder) ListTables(ctx, projectID, datasetID, onlyLatestSuffix interface{}) *gomock.Call {
+func (mr *MockClientMockRecorder) ListTables(ctx, projectID, datasetID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTables", reflect.TypeOf((*MockClient)(nil).ListTables), ctx, projectID, datasetID, onlyLatestSuffix)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTables", reflect.TypeOf((*MockClient)(nil).ListTables), ctx, projectID, datasetID)
 }
 
 // Run mocks base method.
@@ -205,6 +205,21 @@ func NewMockBigqueryJob(ctrl *gomock.Controller) *MockBigqueryJob {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockBigqueryJob) EXPECT() *MockBigqueryJobMockRecorder {
 	return m.recorder
+}
+
+// Config mocks base method.
+func (m *MockBigqueryJob) Config() (bigquery.JobConfig, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Config")
+	ret0, _ := ret[0].(bigquery.JobConfig)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Config indicates an expected call of Config.
+func (mr *MockBigqueryJobMockRecorder) Config() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Config", reflect.TypeOf((*MockBigqueryJob)(nil).Config))
 }
 
 // ID mocks base method.
