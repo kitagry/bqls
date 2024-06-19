@@ -9,7 +9,7 @@ require (
 
 require (
 	cloud.google.com/go/bigquery v1.61.0
-	github.com/JohannesKaufmann/html-to-markdown v1.5.0
+	github.com/JohannesKaufmann/html-to-markdown v1.6.0
 	github.com/PuerkitoBio/goquery v1.9.2
 	github.com/goccy/go-zetasql v0.5.5
 	github.com/golang/mock v1.6.0
