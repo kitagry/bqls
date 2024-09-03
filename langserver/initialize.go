@@ -46,8 +46,10 @@ func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req
 			},
 			ExecuteCommandProvider: &lsp.ExecuteCommandOptions{
 				Commands: []string{
+					CommandExecuteQuery,
 					CommandListDatasets,
 					CommandListTables,
+					CommandListJobHistories,
 				},
 			},
 		},

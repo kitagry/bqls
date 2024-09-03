@@ -75,6 +75,7 @@ func (a *Analyzer) AnalyzeStatement(rawText string, stmt ast.StatementNode, cata
 		zetasql.FeatureV11WithOnSubquery,
 		zetasql.FeatureV13Pivot,
 		zetasql.FeatureV13Unpivot,
+		zetasql.FeatureV13WithRecursive,
 	})
 	langOpt.SetSupportedStatementKinds([]rast.Kind{
 		rast.BeginStmt,
