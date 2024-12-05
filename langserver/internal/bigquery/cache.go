@@ -12,9 +12,10 @@ import (
 )
 
 type cache struct {
-	db                 *database
-	bqClient           Client
-	tableMetadataCache map[string]*bigquery.TableMetadata
+	db                     *database
+	bqClient               Client
+	tableMetadataCacheLock sync.Mutex
+	tableMetadataCache     map[string]*bigquery.TableMetadata
 
 	onceListProjects *sync.Once
 	onceListDatasets map[string]*sync.Once
@@ -33,12 +34,13 @@ func newCache(bqClient Client) (*cache, error) {
 	}
 
 	return &cache{
-		db:                 db,
-		bqClient:           bqClient,
-		tableMetadataCache: make(map[string]*bigquery.TableMetadata),
-		onceListProjects:   &sync.Once{},
-		onceListDatasets:   make(map[string]*sync.Once),
-		onceListTables:     make(map[string]*sync.Once),
+		db:                     db,
+		bqClient:               bqClient,
+		tableMetadataCacheLock: sync.Mutex{},
+		tableMetadataCache:     make(map[string]*bigquery.TableMetadata),
+		onceListProjects:       &sync.Once{},
+		onceListDatasets:       make(map[string]*sync.Once),
+		onceListTables:         make(map[string]*sync.Once),
 	}, nil
 }
 
@@ -175,6 +177,8 @@ func (c *cache) callListTables(ctx context.Context, projectID, datasetID string)
 
 func (c *cache) GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.TableMetadata, error) {
 	cacheKey := fmt.Sprintf("%s:%s:%s", projectID, datasetID, tableID)
+	c.tableMetadataCacheLock.Lock()
+	defer c.tableMetadataCacheLock.Unlock()
 	cache, ok := c.tableMetadataCache[cacheKey]
 	if ok {
 		return cache, nil
