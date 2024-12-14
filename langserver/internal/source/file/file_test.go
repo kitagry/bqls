@@ -566,6 +566,24 @@ func TestProject_ParseFile(t *testing.T) {
 				},
 			},
 		},
+		"parse QUALIFY statement": {
+			file: "SELECT * FROM `project.dataset.table` t1\nQUALIFY RANK() OVER (PARTITION BY city ORDER BY temperature) = 1",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "city",
+							Type: bq.StringFieldType,
+						},
+						{
+							Name: "temperature",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []file.Error{},
+		},
 	}
 
 	for n, tt := range tests {
