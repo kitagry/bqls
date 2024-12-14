@@ -21,18 +21,15 @@ jobs:
       BIN_NAME: bqls
 
     steps:
-    - uses: actions/checkout@v3
-      with:
-        fetch-depth: 0
-
+    - uses: actions/checkout@v4
     - name: setup Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
         go-version-file: go.mod
         cache: true
 
     - name: cache for linux
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       if: runner.os == 'Linux'
       with:
         path: |
@@ -43,7 +40,7 @@ jobs:
           ${{ runner.os }}-go-
 
     - name: cache for macOS
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       if: runner.os == 'macOS'
       with:
         path: |
