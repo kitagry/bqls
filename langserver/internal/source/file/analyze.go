@@ -40,6 +40,7 @@ func (a *Analyzer) langOpt() (*zetasql.LanguageOptions, error) {
 	langOpt.EnableLanguageFeature(zetasql.FeatureV13Qualify)
 	langOpt.EnableLanguageFeature(zetasql.FeatureV13ScriptLabel)
 	langOpt.EnableLanguageFeature(zetasql.FeatureAnalyticFunctions)
+	langOpt.EnableLanguageFeature(zetasql.FeatureV13AllowDashesInTableName)
 	langOpt.SetSupportsAllStatementKinds()
 	langOpt.EnableAllReservableKeywords(true)
 	err := langOpt.EnableReservableKeyword("QUALIFY", true)

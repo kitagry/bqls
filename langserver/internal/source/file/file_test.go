@@ -584,6 +584,20 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{},
 		},
+		"parse without backtick": {
+			file: "SELECT * FROM project.dataset.table",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []file.Error{},
+		},
 	}
 
 	for n, tt := range tests {
