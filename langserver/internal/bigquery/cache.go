@@ -83,10 +83,14 @@ func (c *cache) callListProjects(ctx context.Context) ([]*cloudresourcemanager.P
 	}
 
 	if len(result) > 0 {
-		err := c.db.InsertProjects(ctx, result)
-		if err != nil {
-			// TODO
-			fmt.Fprintf(os.Stderr, "failed to insert projects: %v\n", err)
+		insertSize := 1000
+		for i := 0; i < len(result); i += insertSize {
+			insertItems := result[i:min(len(result), i+insertSize)]
+			err := c.db.InsertProjects(ctx, insertItems)
+			if err != nil {
+				// TODO
+				fmt.Fprintf(os.Stderr, "failed to insert projects: %v\n", err)
+			}
 		}
 	}
 	return result, nil

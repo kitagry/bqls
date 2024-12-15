@@ -77,7 +77,7 @@ func (c *client) GetDefaultProject() string {
 }
 
 func (c *client) ListProjects(ctx context.Context) ([]*cloudresourcemanager.Project, error) {
-	caller := c.cloudresourcemanagerService.Projects.List().Context(ctx)
+	caller := c.cloudresourcemanagerService.Projects.List().PageSize(1000).Context(ctx)
 
 	list, err := caller.Do()
 	if err != nil {
