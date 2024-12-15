@@ -361,6 +361,12 @@ func (c *completor) getMostNarrowInputScanNode(node rast.ScanNode, termOffset in
 				return n, true
 			}
 			return nil, false
+		case *rast.LimitOffsetScanNode:
+			node, ok := c.getMostNarrowInputScanNode(n.InputScan(), termOffset)
+			if ok {
+				return node, true
+			}
+			return nil, false
 		default:
 			c.logger.Printf("unknown scan node type: %T\n", n)
 			return nil, false

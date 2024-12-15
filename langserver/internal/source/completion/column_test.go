@@ -809,6 +809,33 @@ func TestProject_CompleteColumns(t *testing.T) {
 				},
 			},
 		},
+		"Complete column on limit clause": {
+			files: map[string]string{
+				"file1.sql": "SELECT | FROM `project.dataset.table` LIMIT 10",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Description: "id description",
+							Type:        bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
+					TypedPrefix: "",
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {
