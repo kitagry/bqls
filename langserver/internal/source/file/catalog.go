@@ -55,7 +55,14 @@ func (c *Catalog) FindTable(path []string) (types.Table, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	table, err := c.catalog.FindTable(path)
+	projectID, datasetID, tableID, err := c.pathToProjectTable(path)
+	if err != nil {
+		return nil, err
+	}
+
+	formattedPath := []string{fmt.Sprintf("%s.%s.%s", projectID, datasetID, tableID)}
+
+	table, err := c.catalog.FindTable(formattedPath)
 	if err == nil {
 		return table, nil
 	}
@@ -66,25 +73,21 @@ func (c *Catalog) FindTable(path []string) (types.Table, error) {
 		errs = append(errs, fmt.Errorf("failed to add table: %w", err))
 		return nil, errors.Join(errs...)
 	}
-	return c.catalog.FindTable(path)
+	return c.catalog.FindTable(formattedPath)
 }
 
 func (c *Catalog) addTable(path []string) error {
-	tableSep := strings.Split(strings.Join(path, "."), ".")
-	var metadata *bq.TableMetadata
-	var err error
-	if len(tableSep) == 3 {
-		metadata, err = c.bqClient.GetTableMetadata(context.Background(), tableSep[0], tableSep[1], tableSep[2])
-	} else if len(tableSep) == 2 {
-		metadata, err = c.bqClient.GetTableMetadata(context.Background(), c.bqClient.GetDefaultProject(), tableSep[0], tableSep[1])
-	} else {
-		return fmt.Errorf("unknown table: %s", strings.Join(path, "."))
+	projectID, datasetID, tableID, err := c.pathToProjectTable(path)
+	if err != nil {
+		return err
 	}
+
+	metadata, err := c.bqClient.GetTableMetadata(context.Background(), projectID, datasetID, tableID)
 	if err != nil {
 		return fmt.Errorf("failed to get schema: %w", err)
 	}
 
-	tableName := strings.Join(path, ".")
+	tableName := fmt.Sprintf("%s.%s.%s", projectID, datasetID, tableID)
 
 	schema := metadata.Schema
 	columns := make([]types.Column, len(schema))
@@ -108,6 +111,16 @@ func (c *Catalog) addTable(path []string) error {
 	c.catalog.AddTable(table)
 	c.tableMetaMap[tableName] = metadata
 	return nil
+}
+
+func (c *Catalog) pathToProjectTable(path []string) (projectID, datasetID, tableID string, err error) {
+	tableSep := strings.Split(strings.Join(path, "."), ".")
+	if len(tableSep) == 3 {
+		return tableSep[0], tableSep[1], tableSep[2], nil
+	} else if len(tableSep) == 2 {
+		return c.bqClient.GetDefaultProject(), tableSep[0], tableSep[1], nil
+	}
+	return "", "", "", fmt.Errorf(`unknown table "%s"`, strings.Join(tableSep, "."))
 }
 
 func bigqueryTypeToZetaSQLType(typ bq.FieldType, isRepeated bool, schema bq.Schema) (types.Type, error) {
