@@ -46,13 +46,42 @@ func (p ParsedFile) ExtractSQL(locationRange *types.ParseLocationRange) (string,
 		return "", false
 	}
 
-	startOffset := p.fixTermOFfsetForSQL(locationRange.Start().ByteOffset())
-	endOffset := p.fixTermOFfsetForSQL(locationRange.End().ByteOffset())
+	startOffset := p.fixTermOffsetForSQL(locationRange.Start().ByteOffset())
+	endOffset := p.fixTermOffsetForSQL(locationRange.End().ByteOffset())
 
 	return p.Src[startOffset:endOffset], true
 }
 
-func (p ParsedFile) fixTermOFfsetForSQL(termOffset int) int {
+func (p ParsedFile) ToLspRange(r *types.ParseLocationRange) (lsp.Range, bool) {
+	if r == nil {
+		return lsp.Range{}, false
+	}
+
+	return lsp.Range{
+		Start: p.toLspPoint(r.Start()),
+		End:   p.toLspPoint(r.End()),
+	}, true
+}
+
+func (p ParsedFile) toLspPoint(point *types.ParseLocationPoint) lsp.Position {
+	offset := p.fixTermOffsetForSQL(point.ByteOffset())
+
+	toEndText := p.Src[:offset]
+	line := strings.Count(toEndText, "\n")
+	newLineInd := strings.LastIndex(toEndText, "\n")
+	var char int
+	if newLineInd == -1 {
+		char = len(toEndText)
+	} else {
+		char = len(toEndText[newLineInd:]) - 1
+	}
+	return lsp.Position{
+		Line:      line,
+		Character: char,
+	}
+}
+
+func (p ParsedFile) fixTermOffsetForSQL(termOffset int) int {
 	for _, fo := range p.FixOffsets {
 		if termOffset > fo.Offset+fo.Length {
 			termOffset -= fo.Length
