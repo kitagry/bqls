@@ -22,7 +22,7 @@ func (h *Handler) handleTextDocumentHover(ctx context.Context, conn *jsonrpc2.Co
 }
 
 func (h *Handler) documentIdent(ctx context.Context, uri lsp.DocumentURI, position lsp.Position) (lsp.Hover, error) {
-	result, err := h.project.TermDocument(documentURIToURI(uri), position)
+	result, err := h.project.TermDocument(ctx, documentURIToURI(uri), position)
 	if err != nil {
 		return lsp.Hover{}, err
 	}
