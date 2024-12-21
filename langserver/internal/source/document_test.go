@@ -1,6 +1,7 @@
 package source_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -468,7 +469,7 @@ table description
 				p.UpdateFile(uri, content, 1)
 			}
 
-			got, err := p.TermDocument(path, position)
+			got, err := p.TermDocument(context.Background(), path, position)
 			if !errors.Is(err, tt.expectErr) {
 				t.Fatalf("got error %v, but want %v", err, tt.expectErr)
 			}

@@ -18,8 +18,7 @@ import (
 	"golang.org/x/text/message"
 )
 
-func (p *Project) TermDocument(uri string, position lsp.Position) ([]lsp.MarkedString, error) {
-	ctx := context.Background()
+func (p *Project) TermDocument(ctx context.Context, uri string, position lsp.Position) ([]lsp.MarkedString, error) {
 	sql := p.cache.Get(uri)
 	parsedFile := p.analyzer.ParseFile(uri, sql.RawText)
 
