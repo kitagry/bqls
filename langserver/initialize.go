@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 
 	"github.com/kitagry/bqls/langserver/internal/lsp"
-	"github.com/kitagry/bqls/langserver/internal/source"
 	"github.com/sourcegraph/jsonrpc2"
 )
 
@@ -26,11 +25,10 @@ func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req
 	}
 	h.initializeParams = params
 
-	p, err := source.NewProject(context.Background(), params.RootPath, params.InitializationOptions.ProjectID, h.logger)
+	err = h.setupByInitializeParams()
 	if err != nil {
 		return nil, err
 	}
-	h.project = p
 
 	return lsp.InitializeResult{
 		Capabilities: lsp.ServerCapabilities{

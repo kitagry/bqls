@@ -46,6 +46,16 @@ func NewHandler(isDebug bool) *Handler {
 	return handler
 }
 
+func (h *Handler) setupByInitializeParams() error {
+	p, err := source.NewProject(context.Background(), h.initializeParams.RootPath, h.initializeParams.InitializationOptions.ProjectID, h.logger)
+	if err != nil {
+		return err
+	}
+
+	h.project = p
+	return nil
+}
+
 func (h *Handler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	defer func() {
 		err := recover()
@@ -93,6 +103,8 @@ func (h *Handler) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2
 		return h.handleTextDocumentCodeAction(ctx, conn, req)
 	case "workspace/executeCommand":
 		return h.handleWorkspaceExecuteCommand(ctx, conn, req)
+	case "workspace/didChangeConfiguration":
+		return h.handleWorkspaceDidChangeConfiguration(ctx, conn, req)
 	case "bqls/virtualTextDocument":
 		return h.handleVirtualTextDocument(ctx, conn, req)
 	}
