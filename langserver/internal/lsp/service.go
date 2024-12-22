@@ -787,8 +787,8 @@ type LogMessageParams struct {
 	Message string      `json:"message"`
 }
 
-type DidChangeConfigurationParams struct {
-	Settings any `json:"settings"`
+type DidChangeConfigurationParams[T any] struct {
+	Settings T `json:"settings"`
 }
 
 type FileChangeType int
