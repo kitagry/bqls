@@ -34,7 +34,7 @@ func NewProject(ctx context.Context, rootPath string, projectID string, logger *
 	cache := cache.NewGlobalCache()
 
 	if projectID == "" {
-		out, err := exec.CommandContext(ctx, "gcloud", "config", "get", "project").Output()
+		out, err := exec.CommandContext(ctx, "gcloud", "config", "get", "project", "--format=json").Output()
 		if err != nil {
 			return nil, fmt.Errorf("You don't set Bigquery projectID. And fallback to run `gcloud config get project`, but got error: %w", err)
 		}
@@ -42,7 +42,12 @@ func NewProject(ctx context.Context, rootPath string, projectID string, logger *
 		if len(fields) == 0 {
 			return nil, fmt.Errorf("You don't set Bigquery projectID. And fallback to run `gcloud config get project`, but got empty output")
 		}
-		projectID = fields[0]
+		for _, field := range fields {
+			if strings.HasPrefix(field, "\"") && strings.HasSuffix(field, "\"") {
+				projectID = strings.Trim(field, "\"")
+				break
+			}
+		}
 		logger.Infof("You don't set Bigquery projectID. And fallback to run `gcloud config get project`. set projectID: %s", projectID)
 	}
 
