@@ -60,7 +60,7 @@ func (h *Handler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2
 	defer func() {
 		err := recover()
 		if err != nil {
-			h.logger.Errorf("panic: %v", err)
+			h.logger.Errorf("panic: %#v", err)
 		}
 	}()
 	jsonrpc2.HandlerWithError(h.handle).Handle(ctx, conn, req)
@@ -99,6 +99,8 @@ func (h *Handler) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2
 		return ignoreMiddleware(h.handleTextDocumentHover)(ctx, conn, req)
 	case "textDocument/completion":
 		return ignoreMiddleware(h.handleTextDocumentCompletion)(ctx, conn, req)
+	case "textDocument/definition":
+		return ignoreMiddleware(h.handleTextDocumentDefinition)(ctx, conn, req)
 	case "textDocument/codeAction":
 		return h.handleTextDocumentCodeAction(ctx, conn, req)
 	case "workspace/executeCommand":
