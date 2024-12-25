@@ -10,6 +10,7 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/bigquery/mock_bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source"
@@ -20,8 +21,8 @@ import (
 func TestProject_TermDocument(t *testing.T) {
 	tests := map[string]struct {
 		// prepare
-		files           map[string]string
-		bqTableMetadata *bq.TableMetadata
+		files                  map[string]string
+		bigqueryClientMockFunc func(t *testing.T) bigquery.Client
 
 		// output
 		expectMarkedStrings []lsp.MarkedString
@@ -31,18 +32,23 @@ func TestProject_TermDocument(t *testing.T) {
 			files: map[string]string{
 				"file1.sql": "SELECT * FROM |`project.dataset.table`",
 			},
-			bqTableMetadata: &bq.TableMetadata{
-				FullID:           "project.dataset.table",
-				Description:      "table description",
-				CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
-				LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
-				Schema: bq.Schema{
-					{
-						Name:        "name",
-						Type:        bq.StringFieldType,
-						Description: "name description",
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID:           "project.dataset.table",
+					Description:      "table description",
+					CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+					LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+					Schema: bq.Schema{
+						{
+							Name:        "name",
+							Type:        bq.StringFieldType,
+							Description: "name description",
+						},
 					},
-				},
+				}, nil).MinTimes(0)
+				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
@@ -74,17 +80,22 @@ table description
 			files: map[string]string{
 				"file1.sql": "SELECT * FROM `project.dataset.table` table1 JOIN |`project.dataset.table` table2 ON table1.name = table2.name",
 			},
-			bqTableMetadata: &bq.TableMetadata{
-				FullID:           "project.dataset.table",
-				CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
-				LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
-				Schema: bq.Schema{
-					{
-						Name:        "name",
-						Type:        bq.StringFieldType,
-						Description: "name description",
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID:           "project.dataset.table",
+					CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+					LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+					Schema: bq.Schema{
+						{
+							Name:        "name",
+							Type:        bq.StringFieldType,
+							Description: "name description",
+						},
 					},
-				},
+				}, nil).MinTimes(0)
+				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
@@ -115,22 +126,27 @@ table description
 			files: map[string]string{
 				"file1.sql": "SELECT id, |name FROM `project.dataset.table`",
 			},
-			bqTableMetadata: &bq.TableMetadata{
-				FullID:           "project.dataset.table",
-				CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
-				LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
-				Schema: bq.Schema{
-					{
-						Name:        "id",
-						Type:        bq.IntegerFieldType,
-						Description: "id description",
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID:           "project.dataset.table",
+					CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+					LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Type:        bq.IntegerFieldType,
+							Description: "id description",
+						},
+						{
+							Name:        "name",
+							Type:        bq.StringFieldType,
+							Description: "name description",
+						},
 					},
-					{
-						Name:        "name",
-						Type:        bq.StringFieldType,
-						Description: "name description",
-					},
-				},
+				}, nil).MinTimes(0)
+				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
@@ -146,17 +162,22 @@ table description
 			files: map[string]string{
 				"file1.sql": "SELECT |name AS alias_name FROM `project.dataset.table`",
 			},
-			bqTableMetadata: &bq.TableMetadata{
-				FullID:           "project.dataset.table",
-				CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
-				LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
-				Schema: bq.Schema{
-					{
-						Name:        "name",
-						Type:        bq.StringFieldType,
-						Description: "name description",
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID:           "project.dataset.table",
+					CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+					LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+					Schema: bq.Schema{
+						{
+							Name:        "name",
+							Type:        bq.StringFieldType,
+							Description: "name description",
+						},
 					},
-				},
+				}, nil).MinTimes(0)
+				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
@@ -172,15 +193,20 @@ table description
 			files: map[string]string{
 				"file1.sql": "SELECT a.|name FROM `project.dataset.table` AS a",
 			},
-			bqTableMetadata: &bq.TableMetadata{
-				FullID: "project.dataset.table",
-				Schema: bq.Schema{
-					{
-						Name:        "name",
-						Type:        bq.StringFieldType,
-						Description: "name description",
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{
+							Name:        "name",
+							Type:        bq.StringFieldType,
+							Description: "name description",
+						},
 					},
-				},
+				}, nil).MinTimes(0)
+				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
@@ -196,25 +222,30 @@ table description
 			files: map[string]string{
 				"file1.sql": "SELECT param.|key FROM `project.dataset.table`, UNNEST(params) AS param",
 			},
-			bqTableMetadata: &bq.TableMetadata{
-				FullID: "project.dataset.table",
-				Schema: bq.Schema{
-					{
-						Name:     "params",
-						Type:     bq.RecordFieldType,
-						Repeated: true,
-						Schema: bq.Schema{
-							{
-								Name: "key",
-								Type: bq.StringFieldType,
-							},
-							{
-								Name: "value",
-								Type: bq.StringFieldType,
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{
+							Name:     "params",
+							Type:     bq.RecordFieldType,
+							Repeated: true,
+							Schema: bq.Schema{
+								{
+									Name: "key",
+									Type: bq.StringFieldType,
+								},
+								{
+									Name: "value",
+									Type: bq.StringFieldType,
+								},
 							},
 						},
 					},
-				},
+				}, nil).MinTimes(0)
+				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
@@ -227,17 +258,22 @@ table description
 			files: map[string]string{
 				"file1.sql": "SELECT name AS alias_name FROM `project.dataset.table` WHERE |name = 'test'",
 			},
-			bqTableMetadata: &bq.TableMetadata{
-				FullID:           "project.dataset.table",
-				CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
-				LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
-				Schema: bq.Schema{
-					{
-						Name:        "name",
-						Type:        bq.StringFieldType,
-						Description: "name description",
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID:           "project.dataset.table",
+					CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+					LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+					Schema: bq.Schema{
+						{
+							Name:        "name",
+							Type:        bq.StringFieldType,
+							Description: "name description",
+						},
 					},
-				},
+				}, nil).MinTimes(0)
+				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
@@ -253,26 +289,31 @@ table description
 			files: map[string]string{
 				"file1.sql": "SELECT param.key FROM `project.dataset.table`, UNNEST(|params) AS param",
 			},
-			bqTableMetadata: &bq.TableMetadata{
-				FullID: "project.dataset.table",
-				Schema: bq.Schema{
-					{
-						Name:        "params",
-						Description: "params description",
-						Type:        bq.RecordFieldType,
-						Repeated:    true,
-						Schema: bq.Schema{
-							{
-								Name: "key",
-								Type: bq.StringFieldType,
-							},
-							{
-								Name: "value",
-								Type: bq.StringFieldType,
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{
+							Name:        "params",
+							Description: "params description",
+							Type:        bq.RecordFieldType,
+							Repeated:    true,
+							Schema: bq.Schema{
+								{
+									Name: "key",
+									Type: bq.StringFieldType,
+								},
+								{
+									Name: "value",
+									Type: bq.StringFieldType,
+								},
 							},
 						},
 					},
-				},
+				}, nil).MinTimes(0)
+				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
@@ -293,14 +334,19 @@ table description
 			files: map[string]string{
 				"file1.sql": "SELECT |JSON_VALUE(json, '$.name') FROM `project.dataset.table`",
 			},
-			bqTableMetadata: &bq.TableMetadata{
-				FullID: "project.dataset.table",
-				Schema: bq.Schema{
-					{
-						Name: "json",
-						Type: bq.JSONFieldType,
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{
+							Name: "json",
+							Type: bq.JSONFieldType,
+						},
 					},
-				},
+				}, nil).MinTimes(0)
+				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
@@ -329,15 +375,20 @@ table description
 			files: map[string]string{
 				"file1.sql": "SELECT JSON_VALUE(|json, '$.name') FROM `project.dataset.table`",
 			},
-			bqTableMetadata: &bq.TableMetadata{
-				FullID: "project.dataset.table",
-				Schema: bq.Schema{
-					{
-						Name:        "json",
-						Description: "json description",
-						Type:        bq.JSONFieldType,
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{
+							Name:        "json",
+							Description: "json description",
+							Type:        bq.JSONFieldType,
+						},
 					},
-				},
+				}, nil).MinTimes(0)
+				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
@@ -353,14 +404,19 @@ table description
 			files: map[string]string{
 				"file1.sql": "WITH data AS (SELECT id FROM `project.dataset.table`)\nSELECT id| FROM data",
 			},
-			bqTableMetadata: &bq.TableMetadata{
-				FullID: "project.dataset.table",
-				Schema: bq.Schema{
-					{
-						Name: "id",
-						Type: bq.IntegerFieldType,
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
 					},
-				},
+				}, nil).MinTimes(0)
+				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
@@ -375,15 +431,20 @@ table description
 			files: map[string]string{
 				"file1.sql": "WITH data AS (SELECT id| FROM `project.dataset.table`)\nSELECT id FROM data",
 			},
-			bqTableMetadata: &bq.TableMetadata{
-				FullID: "project.dataset.table",
-				Schema: bq.Schema{
-					{
-						Name:        "id",
-						Type:        bq.IntegerFieldType,
-						Description: "id description",
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Type:        bq.IntegerFieldType,
+							Description: "id description",
+						},
 					},
-				},
+				}, nil).MinTimes(0)
+				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
@@ -399,15 +460,20 @@ table description
 			files: map[string]string{
 				"file1.sql": "WITH data AS (SELECT id AS hoge FROM `project.dataset.table`)\nSELECT * FROM data|",
 			},
-			bqTableMetadata: &bq.TableMetadata{
-				FullID: "project.dataset.table",
-				Schema: bq.Schema{
-					{
-						Name:        "id",
-						Type:        bq.IntegerFieldType,
-						Description: "id description",
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Type:        bq.IntegerFieldType,
+							Description: "id description",
+						},
 					},
-				},
+				}, nil).MinTimes(0)
+				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
@@ -426,15 +492,20 @@ table description
 			files: map[string]string{
 				"file1.sql": "DECLARE target_id INT64 DEFAULT 1;\nWITH data AS (SELECT id FROM `project.dataset.table`)\nSELECT * FROM data| WHERE id = target_id",
 			},
-			bqTableMetadata: &bq.TableMetadata{
-				FullID: "project.dataset.table",
-				Schema: bq.Schema{
-					{
-						Name:        "id",
-						Type:        bq.IntegerFieldType,
-						Description: "id description",
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Type:        bq.IntegerFieldType,
+							Description: "id description",
+						},
 					},
-				},
+				}, nil).MinTimes(0)
+				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
 				{
@@ -453,9 +524,7 @@ table description
 
 	for n, tt := range tests {
 		t.Run(n, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			bqClient := mock_bigquery.NewMockClient(ctrl)
-			bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.bqTableMetadata, nil).MinTimes(0)
+			bqClient := tt.bigqueryClientMockFunc(t)
 			logger := logrus.New()
 			logger.SetLevel(logrus.DebugLevel)
 			p := source.NewProjectWithBQClient("/", bqClient, logger)
