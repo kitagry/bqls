@@ -76,6 +76,55 @@ table description
 				},
 			},
 		},
+		"hover default project table": {
+			files: map[string]string{
+				"file1.sql": "SELECT * FROM |`dataset.table`",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetDefaultProject().Return("project").MinTimes(0)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID:           "project.dataset.table",
+					Description:      "table description",
+					CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+					LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+					Schema: bq.Schema{
+						{
+							Name:        "name",
+							Type:        bq.StringFieldType,
+							Description: "name description",
+						},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{
+					Language: "markdown",
+					Value: `## project.dataset.table
+table description
+
+### Table info
+
+* Created: 2023-06-17 00:00:00
+* Last modified: 2023-06-17 00:00:00
+
+### Storage info
+
+* Number of rows: 0
+* Total logical bytes: 0 bytes
+`,
+				},
+				{
+					Language: "yaml",
+					Value: `- name: name
+  type: STRING
+  description: name description
+`,
+				},
+			},
+		},
 		"hover joined table": {
 			files: map[string]string{
 				"file1.sql": "SELECT * FROM `project.dataset.table` table1 JOIN |`project.dataset.table` table2 ON table1.name = table2.name",
@@ -292,6 +341,7 @@ table description
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
 				ctrl := gomock.NewController(t)
 				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetDefaultProject().Return("project").MinTimes(0)
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
 					FullID: "project.dataset.table",
 					Schema: bq.Schema{

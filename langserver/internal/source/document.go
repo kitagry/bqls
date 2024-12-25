@@ -333,6 +333,9 @@ func (p *Project) findInputScan(name string, scanNode rast.ScanNode) (rast.ScanN
 			if n.Table().Name() == name {
 				return n, true
 			}
+			if n.Table().Name() == strings.Join([]string{p.bqClient.GetDefaultProject(), name}, ".") {
+				return n, true
+			}
 			return nil, false
 		case *rast.WithRefScanNode:
 			if n.WithQueryName() == name {
