@@ -2,6 +2,7 @@ package completion
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -31,6 +32,8 @@ func (c *completor) completeTablePath(ctx context.Context, parsedFile file.Parse
 	}
 
 	splittedTablePath := strings.Split(tablePath, ".")
+
+	// for `project.dataset.table` completion
 	params := tablePathParams{}
 	if len(splittedTablePath) >= 1 {
 		params.ProjectID = splittedTablePath[0]
@@ -42,11 +45,32 @@ func (c *completor) completeTablePath(ctx context.Context, parsedFile file.Parse
 		params.TableID = splittedTablePath[2]
 	}
 
+	// for `dataset.table` completion
+	defaultParams := tablePathParams{
+		ProjectID: c.bqClient.GetDefaultProject(),
+	}
+	if len(splittedTablePath) >= 1 {
+		defaultParams.DatasetID = splittedTablePath[0]
+	}
+	if len(splittedTablePath) >= 2 {
+		defaultParams.TableID = splittedTablePath[1]
+	}
+
 	switch len(splittedTablePath) {
 	case 0, 1:
-		return c.completeProjectForTablePath(ctx, params)
+		result1, err1 := c.completeProjectForTablePath(ctx, params)
+		result2, err2 := c.completeDatasetForTablePath(ctx, defaultParams)
+		if len(result1) == 0 && len(result2) == 0 {
+			return nil, errors.Join(err1, err2)
+		}
+		return append(result1, result2...), nil
 	case 2:
-		return c.completeDatasetForTablePath(ctx, params)
+		result1, err1 := c.completeDatasetForTablePath(ctx, params)
+		result2, err2 := c.completeTableForTablePath(ctx, defaultParams)
+		if len(result1) == 0 && len(result2) == 0 {
+			return nil, errors.Join(err1, err2)
+		}
+		return append(result1, result2...), nil
 	case 3:
 		return c.completeTableForTablePath(ctx, params)
 	}

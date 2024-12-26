@@ -34,6 +34,7 @@ func TestProject_CompleteTablePath(t *testing.T) {
 				ctrl := gomock.NewController(t)
 				bqClient := mock_bigquery.NewMockClient(ctrl)
 
+				bqClient.EXPECT().GetDefaultProject().Return("project")
 				bqClient.EXPECT().ListTables(gomock.Any(), "project", "dataset").Return([]*bq.Table{
 					{
 						ProjectID: "project",
@@ -76,6 +77,7 @@ func TestProject_CompleteTablePath(t *testing.T) {
 				ctrl := gomock.NewController(t)
 				bqClient := mock_bigquery.NewMockClient(ctrl)
 
+				bqClient.EXPECT().GetDefaultProject().Return("project")
 				bqClient.EXPECT().ListTables(gomock.Any(), "project", "dataset").Return([]*bq.Table{
 					{
 						ProjectID: "project",
@@ -116,7 +118,8 @@ func TestProject_CompleteTablePath(t *testing.T) {
 						DatasetID: "dataset2",
 					},
 				}, nil)
-				bqClient.EXPECT().GetDefaultProject().Return("").MinTimes(0)
+				bqClient.EXPECT().ListTables(gomock.Any(), "default_project", "project").Return([]*bq.Table{}, nil)
+				bqClient.EXPECT().GetDefaultProject().Return("default_project").MinTimes(0)
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
 				return bqClient
 			},
@@ -157,6 +160,8 @@ func TestProject_CompleteTablePath(t *testing.T) {
 						Name:      "project name",
 					},
 				}, nil)
+				bqClient.EXPECT().GetDefaultProject().Return("default_project")
+				bqClient.EXPECT().ListDatasets(gomock.Any(), "default_project").Return([]*bq.Dataset{}, nil)
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
 				return bqClient
 			},
