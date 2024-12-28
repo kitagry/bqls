@@ -18,7 +18,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.24
 	github.com/sirupsen/logrus v1.9.3
 	golang.org/x/text v0.21.0
-	google.golang.org/api v0.213.0
+	google.golang.org/api v0.214.0
 )
 
 require (
