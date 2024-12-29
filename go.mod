@@ -10,7 +10,7 @@ require (
 )
 
 require (
-	cloud.google.com/go/bigquery v1.64.0
+	cloud.google.com/go/bigquery v1.65.0
 	github.com/JohannesKaufmann/html-to-markdown v1.5.0
 	github.com/PuerkitoBio/goquery v1.10.1
 	github.com/goccy/go-zetasql v0.5.5
