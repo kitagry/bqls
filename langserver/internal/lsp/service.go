@@ -41,16 +41,6 @@ func (p *InitializeParams[T]) Root() DocumentURI {
 	return DocumentURI("file://" + p.RootPath)
 }
 
-type DocumentURI string
-
-func NewDocumentURI(uri string) DocumentURI {
-	return DocumentURI("file://" + uri)
-}
-
-func (d DocumentURI) ToURI() string {
-	return string(d)[len("file://"):]
-}
-
 type ClientInfo struct {
 	Name    string `json:"name,omitempty"`
 	Version string `json:"version,omitempty"`
