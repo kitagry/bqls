@@ -7,7 +7,7 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/source/completion"
 )
 
-func (p *Project) Complete(ctx context.Context, uri string, position lsp.Position) ([]completion.CompletionItem, error) {
+func (p *Project) Complete(ctx context.Context, uri lsp.DocumentURI, position lsp.Position) ([]completion.CompletionItem, error) {
 	sql := p.cache.Get(uri)
 	parsedFile := p.analyzer.ParseFile(uri, sql.RawText)
 

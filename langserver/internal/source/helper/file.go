@@ -9,8 +9,8 @@ import (
 
 var ErrNoPosition = errors.New("no position")
 
-func GetLspPosition(files map[string]string) (formattedFiles map[string]string, path string, position lsp.Position, err error) {
-	formattedFiles = make(map[string]string)
+func GetLspPosition(files map[lsp.DocumentURI]string) (formattedFiles map[lsp.DocumentURI]string, path lsp.DocumentURI, position lsp.Position, err error) {
+	formattedFiles = make(map[lsp.DocumentURI]string)
 	for filePath, file := range files {
 		if ind := strings.Index(file, "|"); ind != -1 {
 			file = strings.Replace(file, "|", "", 1)

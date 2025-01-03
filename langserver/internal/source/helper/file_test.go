@@ -11,28 +11,28 @@ import (
 
 func TestGetLspPosition(t *testing.T) {
 	tests := map[string]struct {
-		files         map[string]string
-		expectedFiles map[string]string
-		expectedPath  string
+		files         map[lsp.DocumentURI]string
+		expectedFiles map[lsp.DocumentURI]string
+		expectedPath  lsp.DocumentURI
 		expectedPos   lsp.Position
 		expectedErr   error
 	}{
 		"position exists": {
-			files:         map[string]string{"file.sql": "SELECT |* FROM table"},
-			expectedFiles: map[string]string{"file.sql": "SELECT * FROM table"}, // remove "|"
+			files:         map[lsp.DocumentURI]string{"file.sql": "SELECT |* FROM table"},
+			expectedFiles: map[lsp.DocumentURI]string{"file.sql": "SELECT * FROM table"}, // remove "|"
 			expectedPath:  "file.sql",
 			expectedPos:   lsp.Position{Line: 0, Character: 7},
 		},
 		"position exists in multiline": {
-			files: map[string]string{"file.sql": `SELECT
+			files: map[lsp.DocumentURI]string{"file.sql": `SELECT
   * |FROM table`},
-			expectedFiles: map[string]string{"file.sql": `SELECT
+			expectedFiles: map[lsp.DocumentURI]string{"file.sql": `SELECT
   * FROM table`}, // remove "|"
 			expectedPath: "file.sql",
 			expectedPos:  lsp.Position{Line: 1, Character: 4},
 		},
 		"no position": {
-			files:         map[string]string{"file.sql": "SELECT * FROM table"},
+			files:         map[lsp.DocumentURI]string{"file.sql": "SELECT * FROM table"},
 			expectedFiles: nil,
 			expectedPath:  "",
 			expectedPos:   lsp.Position{},

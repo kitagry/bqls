@@ -18,5 +18,5 @@ func (h *Handler) handleTextDocumentDefinition(ctx context.Context, _ *jsonrpc2.
 		return nil, err
 	}
 
-	return h.project.LookupIdent(ctx, params.TextDocument.URI.ToURI(), params.Position)
+	return h.project.LookupIdent(ctx, params.TextDocument.URI, params.Position)
 }

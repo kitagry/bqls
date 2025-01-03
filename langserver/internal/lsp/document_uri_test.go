@@ -1,22 +1,21 @@
-package langserver_test
+package lsp_test
 
 import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/kitagry/bqls/langserver"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 )
 
 func TestParseVirtualTextDocument(t *testing.T) {
 	tests := map[string]struct {
 		uri         string
-		expected    langserver.VirtualTextDocumentInfo
+		expected    lsp.VirtualTextDocumentInfo
 		expectedErr error
 	}{
 		"Parse project/dataset/table": {
 			uri: "bqls://project/p/dataset/d/table/t",
-			expected: langserver.VirtualTextDocumentInfo{
+			expected: lsp.VirtualTextDocumentInfo{
 				ProjectID: "p",
 				DatasetID: "d",
 				TableID:   "t",
@@ -24,7 +23,7 @@ func TestParseVirtualTextDocument(t *testing.T) {
 		},
 		"Parse project job": {
 			uri: "bqls://project/p/job/j",
-			expected: langserver.VirtualTextDocumentInfo{
+			expected: lsp.VirtualTextDocumentInfo{
 				ProjectID: "p",
 				JobID:     "j",
 			},
@@ -33,7 +32,7 @@ func TestParseVirtualTextDocument(t *testing.T) {
 
 	for n, tt := range tests {
 		t.Run(n, func(t *testing.T) {
-			got, err := langserver.ParseVirtualTextDocument(lsp.DocumentURI(tt.uri))
+			got, err := lsp.DocumentURI(tt.uri).VirtualTextDocumentInfo()
 			if err != tt.expectedErr {
 				t.Fatalf("ParseVirtualTextDocument error expected %v, got %v", tt.expectedErr, err)
 			}

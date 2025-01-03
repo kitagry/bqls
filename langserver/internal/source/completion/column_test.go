@@ -17,13 +17,13 @@ import (
 
 func TestProject_CompleteColumns(t *testing.T) {
 	tests := map[string]struct {
-		files              map[string]string
+		files              map[lsp.DocumentURI]string
 		bqTableMetadataMap map[string]*bq.TableMetadata
 
 		expectCompletionItems []CompletionItem
 	}{
 		"Select columns with supportSunippet is true": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT id, | FROM `project.dataset.table`",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -61,7 +61,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"When file cannot be parsed": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT | FROM `project.dataset.table`",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -87,7 +87,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Consider selectable table": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM `project.dataset.table`;\n" +
 					"SELECT | FROM `project.dataset.table2`;",
 			},
@@ -122,7 +122,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Select WITH table": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "WITH data AS (SELECT id FROM `project.dataset.table`)\n" +
 					"SELECT | FROM data;",
 			},
@@ -153,7 +153,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete incomplete column": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT i| FROM `project.dataset.table`",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -180,7 +180,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete incomplete column2": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT id, i| id FROM `project.dataset.table`",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -207,7 +207,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete record column": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT record.| FROM `project.dataset.table`",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -239,7 +239,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete nested record column": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT record.record.| FROM `project.dataset.table`",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -277,7 +277,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete record column with incomplete word": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT record.i| FROM `project.dataset.table`",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -310,7 +310,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete record column with incomplete word and zetasql odd error": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT record.id, record.| FROM `project.dataset.table`",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -342,7 +342,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete record column with WITH clause": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "WITH data AS (SELECT * FROM `project.dataset.table`)\n" + "SELECT record.| FROM data",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -374,7 +374,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete column with table alias": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT t.| FROM `project.dataset.table` AS t",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -400,7 +400,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete column with table alias with join": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT t1.| FROM `project.dataset.table` AS t1 JOIN `project.dataset.table` AS t2 ON t1.id = t2.id",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -426,7 +426,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete incomplete column with table alias with join": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT t1.i| FROM `project.dataset.table` AS t1 JOIN `project.dataset.table` AS t2 ON t1.id = t2.id WHERE t1.id = 1",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -453,7 +453,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete column with with table": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "WITH data AS (SELECT * FROM `project.dataset.table`)\nSELECT data.| FROM data",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -479,7 +479,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete column with with table and join": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "WITH data1 AS (SELECT id AS hoge FROM `project.dataset.table`), data2 AS (SELECT id AS fuga FROM `project.dataset.table`)\nSELECT d| FROM data1 INNER JOIN data2 ON data1.hoge = data2.fuga",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -509,7 +509,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete table alias": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT t| FROM `project.dataset.table` AS table",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -535,7 +535,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete with scan alias": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "WITH data AS (SELECT * FROM `project.dataset.table`)\nSELECT d| FROM data",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -557,7 +557,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete column in where clause": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM `project.dataset.table` WHERE |",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -583,7 +583,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete column in where clause after AND": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM `project.dataset.table` WHERE id = 1 AND |",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -609,7 +609,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete column with table alias in where clause": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM `project.dataset.table` t WHERE t.|",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -635,7 +635,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete column in group by clause": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM `project.dataset.table` GROUP BY |",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -661,7 +661,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete incomplete column in group by clause": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM `project.dataset.table` GROUP BY i|",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -688,7 +688,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete column in where clause with group by clause": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT id, COUNT(name) FROM `project.dataset.table` WHERE n| GROUP BY id",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -720,7 +720,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete incomplete column in order by clause": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM `project.dataset.table` ORDER BY i|",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -747,7 +747,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete column on join clause": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM `project.dataset.table` AS t1\nJOIN `project.dataset.table2` AS t2\nON |",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -810,7 +810,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 		},
 		"Complete column on limit clause": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT | FROM `project.dataset.table` LIMIT 10",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
