@@ -10,7 +10,7 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
 
-func (p *Project) LookupIdent(ctx context.Context, uri string, position lsp.Position) ([]lsp.Location, error) {
+func (p *Project) LookupIdent(ctx context.Context, uri lsp.DocumentURI, position lsp.Position) ([]lsp.Location, error) {
 	sql := p.cache.Get(uri)
 	parsedFile := p.analyzer.ParseFile(uri, sql.RawText)
 
@@ -49,7 +49,7 @@ func (p *Project) LookupIdent(ctx context.Context, uri string, position lsp.Posi
 		}
 
 		return []lsp.Location{{
-			URI:   lsp.NewDocumentURI(uri),
+			URI:   uri,
 			Range: r,
 		}}, nil
 	}

@@ -118,9 +118,8 @@ func (h *Handler) showMessage(ctx context.Context, level lsp.MessageType, messag
 func (h *Handler) diagnose(ctx context.Context, uri lsp.DocumentURI) (map[lsp.DocumentURI][]lsp.Diagnostic, error) {
 	result := make(map[lsp.DocumentURI][]lsp.Diagnostic)
 
-	pathToErrs := h.project.GetErrors(documentURIToURI(uri))
-	for path, errs := range pathToErrs {
-		uri := uriToDocumentURI(path)
+	pathToErrs := h.project.GetErrors(uri)
+	for uri, errs := range pathToErrs {
 		result[uri] = convertErrorsToDiagnostics(errs)
 	}
 
@@ -128,7 +127,7 @@ func (h *Handler) diagnose(ctx context.Context, uri lsp.DocumentURI) (map[lsp.Do
 }
 
 func (h *Handler) dryrun(ctx context.Context, uri lsp.DocumentURI) (errs map[lsp.DocumentURI][]lsp.Diagnostic, totalProcessed string, err error) {
-	js, err := h.project.Dryrun(ctx, documentURIToURI(uri))
+	js, err := h.project.Dryrun(ctx, uri)
 	if err != nil {
 		return nil, "", err
 	}

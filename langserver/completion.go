@@ -18,7 +18,7 @@ func (h *Handler) handleTextDocumentCompletion(ctx context.Context, conn *jsonrp
 		return nil, err
 	}
 
-	items, err := h.project.Complete(ctx, documentURIToURI(params.TextDocument.URI), params.Position)
+	items, err := h.project.Complete(ctx, params.TextDocument.URI, params.Position)
 	if err != nil {
 		return nil, err
 	}

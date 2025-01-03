@@ -20,14 +20,14 @@ import (
 
 func TestProject_CompleteTablePath(t *testing.T) {
 	tests := map[string]struct {
-		files                  map[string]string
+		files                  map[lsp.DocumentURI]string
 		bigqueryClientMockFunc func(t *testing.T) bigquery.Client
 
 		expectCompletionItems []CompletionItem
 		expectErr             error
 	}{
 		"list table": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM `project.dataset.|`",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
@@ -70,7 +70,7 @@ func TestProject_CompleteTablePath(t *testing.T) {
 			},
 		},
 		"select latest suffix table": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM `project.dataset.|`",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
@@ -101,7 +101,7 @@ func TestProject_CompleteTablePath(t *testing.T) {
 			},
 		},
 		"complete datasetID": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM `project.|`",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
@@ -143,7 +143,7 @@ func TestProject_CompleteTablePath(t *testing.T) {
 			},
 		},
 		"complete projectID": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM `p|`",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {

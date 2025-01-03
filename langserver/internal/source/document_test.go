@@ -21,7 +21,7 @@ import (
 func TestProject_TermDocument(t *testing.T) {
 	tests := map[string]struct {
 		// prepare
-		files                  map[string]string
+		files                  map[lsp.DocumentURI]string
 		bigqueryClientMockFunc func(t *testing.T) bigquery.Client
 
 		// output
@@ -29,7 +29,7 @@ func TestProject_TermDocument(t *testing.T) {
 		expectErr           error
 	}{
 		"hover table": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM |`project.dataset.table`",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
@@ -77,7 +77,7 @@ table description
 			},
 		},
 		"hover default project table": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM |`dataset.table`",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
@@ -126,7 +126,7 @@ table description
 			},
 		},
 		"hover joined table": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM `project.dataset.table` table1 JOIN |`project.dataset.table` table2 ON table1.name = table2.name",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
@@ -172,7 +172,7 @@ table description
 			},
 		},
 		"hover column": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT id, |name FROM `project.dataset.table`",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
@@ -208,7 +208,7 @@ table description
 			},
 		},
 		"hover column with alias": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT |name AS alias_name FROM `project.dataset.table`",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
@@ -239,7 +239,7 @@ table description
 			},
 		},
 		"hover column with table alias": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT a.|name FROM `project.dataset.table` AS a",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
@@ -268,7 +268,7 @@ table description
 			},
 		},
 		"hover column unnest record": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT param.|key FROM `project.dataset.table`, UNNEST(params) AS param",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
@@ -304,7 +304,7 @@ table description
 			},
 		},
 		"hover column in where clouse": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT name AS alias_name FROM `project.dataset.table` WHERE |name = 'test'",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
@@ -335,7 +335,7 @@ table description
 			},
 		},
 		"hover unnest table": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT param.key FROM `project.dataset.table`, UNNEST(|params) AS param",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
@@ -381,7 +381,7 @@ table description
 			},
 		},
 		"hover function call": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT |JSON_VALUE(json, '$.name') FROM `project.dataset.table`",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
@@ -422,7 +422,7 @@ table description
 			},
 		},
 		"hover function argument": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT JSON_VALUE(|json, '$.name') FROM `project.dataset.table`",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
@@ -451,7 +451,7 @@ table description
 			},
 		},
 		"hover with WITH clause": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "WITH data AS (SELECT id FROM `project.dataset.table`)\nSELECT id| FROM data",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
@@ -478,7 +478,7 @@ table description
 			},
 		},
 		"hover in WITH clause": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "WITH data AS (SELECT id| FROM `project.dataset.table`)\nSELECT id FROM data",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
@@ -507,7 +507,7 @@ table description
 			},
 		},
 		"hover WITH clause reference name": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "WITH data AS (SELECT id AS hoge FROM `project.dataset.table`)\nSELECT * FROM data|",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
@@ -539,7 +539,7 @@ table description
 			},
 		},
 		"hover with declaration": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "DECLARE target_id INT64 DEFAULT 1;\nWITH data AS (SELECT id FROM `project.dataset.table`)\nSELECT * FROM data| WHERE id = target_id",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {

@@ -84,40 +84,40 @@ func (p *Project) Close() error {
 	return p.bqClient.Close()
 }
 
-func (p *Project) UpdateFile(path string, text string, version int) error {
-	p.cache.Put(path, text)
+func (p *Project) UpdateFile(uri lsp.DocumentURI, text string, version int) error {
+	p.cache.Put(uri, text)
 
 	return nil
 }
 
-func (p *Project) GetFile(path string) (string, bool) {
-	sql := p.cache.Get(path)
+func (p *Project) GetFile(uri lsp.DocumentURI) (string, bool) {
+	sql := p.cache.Get(uri)
 	if sql == nil {
 		return "", false
 	}
 	return sql.RawText, true
 }
 
-func (p *Project) DeleteFile(path string) {
-	p.cache.Delete(path)
+func (p *Project) DeleteFile(uri lsp.DocumentURI) {
+	p.cache.Delete(uri)
 }
 
-func (p *Project) GetErrors(path string) map[string][]file.Error {
-	sql := p.cache.Get(path)
+func (p *Project) GetErrors(uri lsp.DocumentURI) map[lsp.DocumentURI][]file.Error {
+	sql := p.cache.Get(uri)
 	if sql == nil {
 		return nil
 	}
 
-	parsedFile := p.analyzer.ParseFile(path, sql.RawText)
+	parsedFile := p.analyzer.ParseFile(uri, sql.RawText)
 	if len(parsedFile.Errors) > 0 {
-		return map[string][]file.Error{path: parsedFile.Errors}
+		return map[lsp.DocumentURI][]file.Error{uri: parsedFile.Errors}
 	}
 
-	return map[string][]file.Error{path: nil}
+	return map[lsp.DocumentURI][]file.Error{uri: nil}
 }
 
-func (p *Project) Dryrun(ctx context.Context, path string) (*bq.JobStatus, error) {
-	sql := p.cache.Get(path)
+func (p *Project) Dryrun(ctx context.Context, uri lsp.DocumentURI) (*bq.JobStatus, error) {
+	sql := p.cache.Get(uri)
 	if sql == nil {
 		return nil, nil
 	}
@@ -131,8 +131,8 @@ func (p *Project) Dryrun(ctx context.Context, path string) (*bq.JobStatus, error
 	return result.LastStatus(), nil
 }
 
-func (p *Project) Run(ctx context.Context, path string) (bigquery.BigqueryJob, error) {
-	sql := p.cache.Get(path)
+func (p *Project) Run(ctx context.Context, uri lsp.DocumentURI) (bigquery.BigqueryJob, error) {
+	sql := p.cache.Get(uri)
 	if sql == nil {
 		return nil, nil
 	}

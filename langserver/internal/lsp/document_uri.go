@@ -1,31 +1,12 @@
 package lsp
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 )
 
 type DocumentURI string
-
-func (d *DocumentURI) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return err
-	}
-
-	d = toPtr(DocumentURI(s))
-	return nil
-}
-
-func NewDocumentURI(uri string) DocumentURI {
-	return DocumentURI("file://" + uri)
-}
-
-func (d DocumentURI) ToURI() string {
-	return string(d)[len("file://"):]
-}
 
 func (d DocumentURI) IsVirtualTextDocument() bool {
 	return strings.HasPrefix(string(d), "bqls://")

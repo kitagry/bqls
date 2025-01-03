@@ -16,7 +16,7 @@ import (
 var lastDotRegex = regexp.MustCompile(`[\w.]+\.\s`)
 
 type ParsedFile struct {
-	URI string
+	URI lsp.DocumentURI
 	Src string
 
 	Node ast.ScriptNode

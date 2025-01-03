@@ -17,13 +17,13 @@ import (
 
 func TestProject_CompleteDeclaration(t *testing.T) {
 	tests := map[string]struct {
-		files              map[string]string
+		files              map[lsp.DocumentURI]string
 		bqTableMetadataMap map[string]*bq.TableMetadata
 
 		expectCompletionItems []CompletionItem
 	}{
 		"Complete variable declaration": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "DECLARE a INT64;\n" + "SELECT | FROM `project.dataset.table`",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{

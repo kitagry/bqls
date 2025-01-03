@@ -79,7 +79,7 @@ func (h *Handler) commandExecuteQuery(ctx context.Context, params lsp.ExecuteCom
 		return nil, fmt.Errorf("arguments should be string, but got %T", params.Arguments[0])
 	}
 
-	path := documentURIToURI(lsp.DocumentURI(uri))
+	path := lsp.DocumentURI(uri)
 
 	workDoneToken := lsp.ProgressToken("execute_query")
 	h.workDoneProgressBegin(ctx, workDoneToken, lsp.WorkDoneProgressBegin{

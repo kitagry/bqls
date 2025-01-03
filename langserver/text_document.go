@@ -48,7 +48,7 @@ func (h *Handler) handleTextDocumentDidClose(ctx context.Context, conn *jsonrpc2
 		return nil, err
 	}
 
-	h.project.DeleteFile(documentURIToURI(params.TextDocument.URI))
+	h.project.DeleteFile(params.TextDocument.URI)
 
 	return nil, nil
 }
@@ -70,6 +70,6 @@ func (h *Handler) handleTextDocumentDidSave(ctx context.Context, conn *jsonrpc2.
 }
 
 func (h *Handler) updateDocument(uri lsp.DocumentURI, text string, version int) {
-	h.project.UpdateFile(documentURIToURI(uri), text, version)
+	h.project.UpdateFile(uri, text, version)
 	h.diagnosticRequest <- uri
 }

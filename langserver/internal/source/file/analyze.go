@@ -73,7 +73,7 @@ func (a *Analyzer) parseScript(src string) (ast.ScriptNode, error) {
 	return zetasql.ParseScript(src, opts, zetasql.ErrorMessageOneLine)
 }
 
-func (a *Analyzer) ParseFile(uri string, src string) ParsedFile {
+func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 	fixedSrc, errs, fixOffsets := fixDot(src)
 
 	var node ast.ScriptNode

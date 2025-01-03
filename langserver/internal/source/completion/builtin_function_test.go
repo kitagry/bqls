@@ -9,6 +9,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/bigquery/mock_bigquery"
+	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
 	"github.com/kitagry/bqls/langserver/internal/source/helper"
 	"github.com/sirupsen/logrus"
@@ -16,13 +17,13 @@ import (
 
 func TestCompletor_CompleteBuiltinFunction(t *testing.T) {
 	tests := map[string]struct {
-		files                  map[string]string
+		files                  map[lsp.DocumentURI]string
 		bigqueryClientMockFunc func(t *testing.T) bigquery.Client
 
 		expectCompletionItems []CompletionItem
 	}{
 		"Don't complete in table completion": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT FROM `bigquery-public-data.samples.|`\n",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {

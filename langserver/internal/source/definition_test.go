@@ -18,7 +18,7 @@ import (
 func TestProject_LookupIdent(t *testing.T) {
 	tests := map[string]struct {
 		// prepare
-		files           map[string]string
+		files           map[lsp.DocumentURI]string
 		bqTableMetadata *bq.TableMetadata
 
 		// output
@@ -26,7 +26,7 @@ func TestProject_LookupIdent(t *testing.T) {
 		expectErr       error
 	}{
 		"definition to with clause": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"a.sql": `WITH data AS ( SELECT 1 AS a )
 SELECT a FROM data|`,
 			},
@@ -36,7 +36,7 @@ SELECT a FROM data|`,
 			},
 			expectLocations: []lsp.Location{
 				{
-					URI: lsp.NewDocumentURI("a.sql"),
+					URI: "a.sql",
 					Range: lsp.Range{
 						Start: lsp.Position{
 							Line:      0,
@@ -51,7 +51,7 @@ SELECT a FROM data|`,
 			},
 		},
 		"definition to 2 with clause": {
-			files: map[string]string{
+			files: map[lsp.DocumentURI]string{
 				"a.sql": `WITH data AS ( SELECT 1 AS a ),
 data2 AS (SELECT * FROM data )
 SELECT a FROM data2|`,
@@ -62,7 +62,7 @@ SELECT a FROM data2|`,
 			},
 			expectLocations: []lsp.Location{
 				{
-					URI: lsp.NewDocumentURI("a.sql"),
+					URI: "a.sql",
 					Range: lsp.Range{
 						Start: lsp.Position{
 							Line:      1,
