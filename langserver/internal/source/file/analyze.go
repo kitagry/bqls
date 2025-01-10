@@ -90,6 +90,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			if strings.Contains(pErr.Msg, "Unexpected end of script") {
 				fixedSrc, pErr, fo = fixUnexpectedEndOfScript(fixedSrc, pErr)
 			}
+			if strings.Contains(pErr.Msg, `Syntax error: Expected "(" or "," or keyword SELECT but got end of script`) {
+				fixedSrc, pErr, fo = fixOnlyWithClauseSyntaxError(fixedSrc, pErr)
+			}
 			errs = append(errs, pErr)
 			if len(fo) > 0 {
 				// retry

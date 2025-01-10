@@ -307,6 +307,17 @@ func fixUnexpectedEndOfScript(src string, parsedErr Error) (fixedSrc string, err
 	return src, parsedErr, nil
 }
 
+// `WITH t1 AS (SELECT 1)` return error Expected "(" or "," or keyword SELECT but got end of script
+func fixOnlyWithClauseSyntaxError(src string, parsedErr Error) (fixedSrc string, err Error, fixOffsets []FixOffset) {
+	errOffset := positionToByteOffset(src, parsedErr.Position)
+	return src[:errOffset] + " SELECT 1 " + src[errOffset:], parsedErr, []FixOffset{
+		{
+			Offset: errOffset,
+			Length: len(" SELECT 1 "),
+		},
+	}
+}
+
 // fix Unexpected end of script with deletion
 //
 //	SELECT * FROM table GROUP BY

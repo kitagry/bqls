@@ -598,6 +598,28 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{},
 		},
+		"parse with clause only": {
+			file: "WITH t1 AS (SELECT * FROM `project.dataset.table` t1)\n",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg: `INVALID_ARGUMENT: Syntax error: Expected "(" or "," or keyword SELECT but got end of script`,
+					Position: lsp.Position{
+						Line:      0,
+						Character: 53,
+					},
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {
