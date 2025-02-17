@@ -11,7 +11,7 @@ import (
 	"google.golang.org/api/iterator"
 )
 
-func (h *Handler) handleVirtualTextDocument(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
+func (h *Handler) handleVirtualTextDocument(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (any, error) {
 	if req.Params == nil {
 		return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams}
 	}
@@ -33,40 +33,49 @@ func (h *Handler) handleVirtualTextDocument(ctx context.Context, conn *jsonrpc2.
 	})
 	defer h.workDoneProgressEnd(ctx, workDoneToken, lsp.WorkDoneProgressEnd{})
 
+	var markedStrings []lsp.MarkedString
+	var it *bigquery.RowIterator
 	if virtualTextDocument.TableID != "" {
 		h.workDoneProgressReport(ctx, workDoneToken, lsp.WorkDoneProgressReport{
 			Message: "Fetching table info...",
 		})
-		result, err := h.project.GetTableInfo(ctx, virtualTextDocument.ProjectID, virtualTextDocument.DatasetID, virtualTextDocument.TableID)
+		markedStrings, it, err = h.project.GetTableInfo(ctx, virtualTextDocument.ProjectID, virtualTextDocument.DatasetID, virtualTextDocument.TableID)
 		if err != nil {
 			return nil, err
 		}
-
-		return result, nil
 	}
 
 	if virtualTextDocument.JobID != "" {
 		h.workDoneProgressReport(ctx, workDoneToken, lsp.WorkDoneProgressReport{
 			Message: "Fetching job info...",
 		})
-		result, err := h.project.GetJobInfo(ctx, virtualTextDocument.ProjectID, virtualTextDocument.JobID)
+		markedStrings, it, err = h.project.GetJobInfo(ctx, virtualTextDocument.ProjectID, virtualTextDocument.JobID)
 		if err != nil {
 			return nil, err
 		}
-		return result, nil
 	}
 
-	return nil, nil
+	result := lsp.VirtualTextDocument{Contents: markedStrings}
+
+	if it != nil {
+		builtResult, err := buildQueryResult(it, 100)
+		if err != nil {
+			h.logger.Printf("failed to build query result: %v", err)
+		}
+		result.Result = builtResult
+	}
+
+	return result, nil
 }
 
-func buildQueryResult(it *bigquery.RowIterator) (lsp.QueryResult, error) {
+func buildQueryResult(it *bigquery.RowIterator, maxRowNum int) (lsp.QueryResult, error) {
 	var result lsp.QueryResult
 
 	for _, field := range it.Schema {
 		result.Columns = append(result.Columns, field.Name)
 	}
 
-	for {
+	for i := 0; i < maxRowNum; i++ {
 		var values []bigquery.Value
 		err := it.Next(&values)
 		if errors.Is(err, iterator.Done) {
