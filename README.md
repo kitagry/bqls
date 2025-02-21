@@ -24,141 +24,17 @@ You can change project_id with `workspace/didChangeConfiguration`.
 vim.lsp.get_clients({ name = "bqls" })[1].settings = { project_id="ANOTHER_PROJECT_ID" }
 ```
 
-## Some Protocols
+## Supported Protocol
 
-### `workspace/executeCommand`
-
-#### `executeQuery`
-
-Execute a query and return the virtual text document url.
-
-Request:
-
-```json
-{
-    "command": "executeQuery",
-    "arguments": ["YOUR_DOCUMENT_URI"]
-}
-```
-
-Response:
-
-```json
-{
-    "textDocument": {
-        "uri": "bqls://project/${project}/job/${job}"
-    }
-}
-```
-
-You can get the result of the query by requesting the `bqls/virtualTextDocument`.
-
-#### `listDatasets`
-
-list up all datasets in the project.
-
-Request:
-
-```json
-{
-    "command": "listDatasets",
-    "arguments": ["YOUR_PROJECT_ID"]
-}
-```
-
-Response:
-
-```json
-{
-    "datasets": ["dataset1", "dataset2", "dataset3"]
-}
-```
-
-#### `listTables`
-
-list up all tables in the dataset.
-
-Request:
-
-```json
-{
-    "command": "listTables",
-    "arguments": ["YOUR_PROJECT_ID", "YOUR_DATASET_ID"]
-}
-```
-
-Response:
-
-```json
-{
-    "tables": ["table1", "table2", "table3"]
-}
-```
-
-#### `listJobHistories`
-
-list up job histories in the project.
-
-Arguments:
-
-* `--all-user`: list up all jobs in the project. When this flag is not set, list up only jobs submitted by the user.
-
-Request:
-
-```json
-{
-    "command": "listJobHistories",
-}
-```
-
-Response:
-
-```json
-{
-    "jobs": [
-        {
-            "textDocument": { "uri": "bqls://..."},
-            "id": "job_id",
-            "owner": "user@example.com",
-            "summary": "job summary"
-        },
-    ]
-}
-```
-
-
-## Custom API
-
-### `bqls/virtualTextDocument`
-
-Requests a virtual text document from the LSP, which is a read only document that can be displayed in the client.
-`bqls` will encode all virtual files under custom schema `bqls:`, so clients should route all requests for the `bqls:` schema back to the `bqls/virtualTextDocument`.
-I used [deno language server protocol](https://docs.deno.com/runtime/manual/advanced/language_server/overview) below as reference.
-
-For example, bqls can provide a virtual text document for a table information.
-Currently, `bqls://` schema supported the following path:
-
-* table: `bqls://project/${project}/dataset/${dataset}/table/${table}`
-* job: `bqls://project/${project}/job/${job}`
-
-Requests:
-
-```ts
-interface VirtualTextDocumentParams {
-    textDocument: TextDocumentIdentifier;
-}
-```
-
-Response:
-
-```ts
-interface VirtualTextDocument {
-    contents: MarkedString[];
-    result: QueryResult;
-}
-
-interface QueryResult {
-    columns: string[];
-    rows: any[][];
-}
-```
+- textDocument/formatting
+- textDocument/hover
+- textDocument/completion
+- textDocument/definition
+- textDocument/codeAction
+- [workspace/executeCommand](./docs/api_reference.md#workspaceexecutecommand)
+    - [executeQuery](./docs/api_reference.md#executequery)
+    - [listDatasets](./docs/api_reference.md#listdatasets)
+    - [listTables](./docs/api_reference.md#listtables)
+    - [listjobhistories](./docs/api_reference.md#listjobhistories)
+- workspace/didChangeConfiguration
+- [bqls/virtualTextDocument](./docs/api_reference.md#bqlsvirtualtextdocument)
