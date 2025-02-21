@@ -214,28 +214,23 @@ func (p *Project) ListJobs(ctx context.Context, projectID string, allUsers bool)
 	return result, nil
 }
 
-func (p *Project) GetJobInfo(ctx context.Context, projectID, jobID string) (lsp.VirtualTextDocument, error) {
+func (p *Project) GetJobInfo(ctx context.Context, projectID, jobID string) ([]lsp.MarkedString, *bq.RowIterator, error) {
 	job, err := p.bqClient.JobFromProject(ctx, projectID, jobID)
 	if err != nil {
-		return lsp.VirtualTextDocument{}, err
+		return nil, nil, err
 	}
 
 	// FIXME: region should be dynamic
 	markedStrings, err := buildBigQueryJobMarkedString(projectID, "US", job)
 	if err != nil {
-		return lsp.VirtualTextDocument{}, err
+		return nil, nil, err
 	}
 
 	it, err := job.Read(ctx)
 	if err != nil {
-		return lsp.VirtualTextDocument{Contents: markedStrings}, nil
+		return markedStrings, nil, nil
 	}
-	queryResult, err := buildQueryResult(it)
-	if err != nil {
-		return lsp.VirtualTextDocument{}, err
-	}
-
-	return lsp.VirtualTextDocument{Contents: markedStrings, Result: queryResult}, nil
+	return markedStrings, it, nil
 }
 
 func buildBigQueryJobMarkedString(projectID, region string, job bigquery.BigqueryJob) ([]lsp.MarkedString, error) {
@@ -293,57 +288,29 @@ func buildBigQueryJobMarkedString(projectID, region string, job bigquery.Bigquer
 	return result, nil
 }
 
-func (p *Project) GetTableInfo(ctx context.Context, projectID, datasetID, tableID string) (lsp.VirtualTextDocument, error) {
+func (p *Project) GetTableInfo(ctx context.Context, projectID, datasetID, tableID string) ([]lsp.MarkedString, *bq.RowIterator, error) {
 	tableMetadata, err := p.bqClient.GetTableMetadata(ctx, projectID, datasetID, tableID)
 	if err != nil {
-		return lsp.VirtualTextDocument{}, err
+		return nil, nil, err
 	}
 
 	markedStrings, err := buildBigQueryTableMetadataMarkedString(tableMetadata)
 	if err != nil {
-		return lsp.VirtualTextDocument{}, err
+		return nil, nil, err
 	}
 
 	if tableMetadata.Type != bq.RegularTable {
-		return lsp.VirtualTextDocument{Contents: markedStrings}, nil
+		return markedStrings, nil, nil
 	}
 
 	it, err := p.bqClient.GetTableRecord(ctx, projectID, datasetID, tableID)
 	if err != nil {
-		return lsp.VirtualTextDocument{}, err
+		return markedStrings, nil, err
 	}
 	it.Schema = tableMetadata.Schema
-	queryResult, err := buildQueryResult(it)
-	if err != nil {
-		return lsp.VirtualTextDocument{}, err
-	}
-
-	return lsp.VirtualTextDocument{Contents: markedStrings, Result: queryResult}, nil
+	return markedStrings, it, nil
 }
 
 func (p *Project) GetTablePreview(ctx context.Context, projectID, datasetID, tableID string) (*bq.RowIterator, error) {
 	return p.bqClient.GetTableRecord(ctx, projectID, datasetID, tableID)
-}
-
-func buildQueryResult(it *bq.RowIterator) (lsp.QueryResult, error) {
-	var result lsp.QueryResult
-
-	for _, field := range it.Schema {
-		result.Columns = append(result.Columns, field.Name)
-	}
-
-	for i := 0; i < 100; i++ {
-		var values []bq.Value
-		err := it.Next(&values)
-		if errors.Is(err, iterator.Done) {
-			break
-		}
-		if err != nil {
-			return result, err
-		}
-
-		result.Data = append(result.Data, values)
-	}
-
-	return result, nil
 }
