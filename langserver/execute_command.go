@@ -2,12 +2,18 @@ package langserver
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"os"
+	"strings"
 
+	"cloud.google.com/go/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/sourcegraph/jsonrpc2"
+	"google.golang.org/api/iterator"
 )
 
 const (
@@ -15,6 +21,7 @@ const (
 	CommandListDatasets     = "listDatasets"
 	CommandListTables       = "listTables"
 	CommandListJobHistories = "listJobHistories"
+	CommandSaveResult       = "saveResult"
 )
 
 func (h *Handler) handleTextDocumentCodeAction(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
@@ -27,23 +34,36 @@ func (h *Handler) handleTextDocumentCodeAction(ctx context.Context, conn *jsonrp
 		return nil, err
 	}
 
-	commands := []lsp.Command{
-		{
-			Title:     "Execute Query",
-			Command:   CommandExecuteQuery,
-			Arguments: []any{params.TextDocument.URI},
-		},
-		{
-			Title:   "List Personal Job Histories",
-			Command: CommandListJobHistories,
-		},
-		{
-			Title:     "List Project Job Histories",
-			Command:   CommandListJobHistories,
-			Arguments: []any{"--all-user"},
-		},
+	if params.TextDocument.URI.IsVirtualTextDocument() {
+		commands := []lsp.Command{
+			{
+				Title:     "Save Result",
+				Command:   CommandSaveResult,
+				Arguments: []any{params.TextDocument.URI},
+			},
+		}
+		return commands, nil
 	}
-	return commands, nil
+	if params.TextDocument.URI.IsFile() && strings.HasSuffix(string(params.TextDocument.URI), ".sql") {
+		commands := []lsp.Command{
+			{
+				Title:     "Execute Query",
+				Command:   CommandExecuteQuery,
+				Arguments: []any{params.TextDocument.URI},
+			},
+			{
+				Title:   "List Personal Job Histories",
+				Command: CommandListJobHistories,
+			},
+			{
+				Title:     "List Project Job Histories",
+				Command:   CommandListJobHistories,
+				Arguments: []any{"--all-user"},
+			},
+		}
+		return commands, nil
+	}
+	return nil, nil
 }
 
 func (h *Handler) handleWorkspaceExecuteCommand(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
@@ -65,6 +85,8 @@ func (h *Handler) handleWorkspaceExecuteCommand(ctx context.Context, conn *jsonr
 		return h.commandListTables(ctx, params)
 	case CommandListJobHistories:
 		return h.commandListJobHistories(ctx, params)
+	case CommandSaveResult:
+		return h.commandSaveResult(ctx, params)
 	default:
 		return nil, fmt.Errorf("unknown command: %s", params.Command)
 	}
@@ -195,4 +217,108 @@ func (h *Handler) commandListJobHistories(ctx context.Context, params lsp.Execut
 		return nil, err
 	}
 	return lsp.ListJobHistoryResult{Jobs: jobs}, nil
+}
+
+// params.Arguments[0]: document uri
+// params.Arguments[1]: file uri e.x) file:///path/to/file.csv
+func (h *Handler) commandSaveResult(ctx context.Context, params lsp.ExecuteCommandParams) (any, error) {
+	if len(params.Arguments) != 2 {
+		return nil, fmt.Errorf("file uri arguments is not provided")
+	}
+
+	args0, ok := params.Arguments[0].(string)
+	if !ok {
+		return nil, fmt.Errorf("arguments should be string, but got %T", params.Arguments[0])
+	}
+	documentURI := lsp.DocumentURI(args0)
+	if !documentURI.IsVirtualTextDocument() {
+		return nil, fmt.Errorf("document uri should be virtual text document")
+	}
+	virtualTextDocumentInfo, err := documentURI.VirtualTextDocumentInfo()
+	if err != nil {
+		return nil, err
+	}
+
+	args1, ok := params.Arguments[1].(string)
+	if !ok {
+		return nil, fmt.Errorf("arguments should be string, but got %T", params.Arguments[1])
+	}
+	fileURI := lsp.DocumentURI(args1)
+	filePath, err := fileURI.FilePath()
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasSuffix(filePath, ".csv") {
+		return nil, fmt.Errorf("file uri should be csv file")
+	}
+
+	workDoneToken := lsp.ProgressToken("save result")
+	h.workDoneProgressBegin(ctx, workDoneToken, lsp.WorkDoneProgressBegin{
+		Title:   "Fetch virtual text document",
+		Message: "Loading virtual text document info...",
+	})
+	defer h.workDoneProgressEnd(ctx, workDoneToken, lsp.WorkDoneProgressEnd{})
+
+	var it *bigquery.RowIterator
+	if virtualTextDocumentInfo.DatasetID != "" {
+		_, it, err = h.project.GetTableInfo(ctx, virtualTextDocumentInfo.ProjectID, virtualTextDocumentInfo.DatasetID, virtualTextDocumentInfo.TableID)
+	} else if virtualTextDocumentInfo.JobID != "" {
+		_, it, err = h.project.GetJobInfo(ctx, virtualTextDocumentInfo.ProjectID, virtualTextDocumentInfo.JobID)
+	} else {
+		return nil, fmt.Errorf("invalid virtual text document uri")
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	f, err := os.Create(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	cw := csv.NewWriter(f)
+	h.workDoneProgressReport(ctx, workDoneToken, lsp.WorkDoneProgressReport{
+		Message: "Scanning rows...",
+	})
+
+	// write header
+	schemas := make([]string, 0, len(it.Schema))
+	for _, s := range it.Schema {
+		schemas = append(schemas, s.Name)
+	}
+	err = cw.Write(schemas)
+	if err != nil {
+		return nil, err
+	}
+
+	for {
+		var values []bigquery.Value
+		err := it.Next(&values)
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if values == nil {
+			break
+		}
+		var record []string
+		for _, v := range values {
+			record = append(record, fmt.Sprint(v))
+		}
+		err = cw.Write(record)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	cw.Flush()
+
+	if err := cw.Error(); err != nil {
+		return nil, err
+	}
+
+	return nil, nil
 }
