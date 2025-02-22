@@ -8,6 +8,18 @@ import (
 
 type DocumentURI string
 
+func (d DocumentURI) IsFile() bool {
+	return strings.HasPrefix(string(d), "file://")
+}
+
+func (d DocumentURI) FilePath() (string, error) {
+	suffix, ok := strings.CutPrefix(string(d), "file://")
+	if !ok {
+		return "", errors.New("invalid file URI")
+	}
+	return suffix, nil
+}
+
 func (d DocumentURI) IsVirtualTextDocument() bool {
 	return strings.HasPrefix(string(d), "bqls://")
 }
