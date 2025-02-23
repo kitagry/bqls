@@ -116,7 +116,7 @@ func (h *Handler) commandExecuteQuery(ctx context.Context, params lsp.ExecuteCom
 
 	return &lsp.ExecuteQueryResult{
 		TextDocument: lsp.TextDocumentIdentifier{
-			URI: lsp.NewJobVirtualTextDocumentURI(h.project.BigQueryProjectID, job.ID()),
+			URI: lsp.NewJobVirtualTextDocumentURI(job.ProjectID(), job.ID()),
 		},
 	}, nil
 }
@@ -138,7 +138,7 @@ func (h *Handler) commandListDatasets(ctx context.Context, params lsp.ExecuteCom
 	})
 	defer h.workDoneProgressEnd(ctx, workDoneToken, lsp.WorkDoneProgressEnd{})
 
-	datasets, err := h.project.ListDatasets(ctx, projectID)
+	datasets, err := h.bqClient.ListDatasets(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +184,7 @@ func (h *Handler) commandListTables(ctx context.Context, params lsp.ExecuteComma
 	})
 	defer h.workDoneProgressEnd(ctx, workDoneToken, lsp.WorkDoneProgressEnd{})
 
-	tables, err := h.project.ListTables(ctx, projectID, datasetID)
+	tables, err := h.bqClient.ListTables(ctx, projectID, datasetID)
 	if err != nil {
 		return nil, err
 	}

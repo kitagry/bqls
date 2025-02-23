@@ -3,9 +3,11 @@ package bigquery
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/sirupsen/logrus"
 	"google.golang.org/api/cloudresourcemanager/v1"
 	"google.golang.org/api/iterator"
 )
@@ -46,7 +48,15 @@ type client struct {
 	cloudresourcemanagerService *cloudresourcemanager.Service
 }
 
-func New(ctx context.Context, projectID string, withCache bool) (Client, error) {
+func New(ctx context.Context, projectID string, withCache bool, looger *logrus.Logger) (Client, error) {
+	if projectID == "" {
+		var err error
+		projectID, err = getDefaultProjectID(ctx, looger)
+		if err != nil {
+			return nil, fmt.Errorf("getDefaultProjectID: %w", err)
+		}
+	}
+
 	cloudresourcemanagerService, err := cloudresourcemanager.NewService(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("cloudresourcemanager.NewService: %w", err)
@@ -66,6 +76,25 @@ func New(ctx context.Context, projectID string, withCache bool) (Client, error) 
 	}
 
 	return client, nil
+}
+
+func getDefaultProjectID(ctx context.Context, logger *logrus.Logger) (projectID string, err error) {
+	out, err := exec.CommandContext(ctx, "gcloud", "config", "get", "project", "--format=json").Output()
+	if err != nil {
+		return "", fmt.Errorf("You don't set Bigquery projectID. And fallback to run `gcloud config get project`, but got error: %w", err)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 {
+		return "", fmt.Errorf("You don't set Bigquery projectID. And fallback to run `gcloud config get project`, but got empty output")
+	}
+	for _, field := range fields {
+		if strings.HasPrefix(field, "\"") && strings.HasSuffix(field, "\"") {
+			projectID = strings.Trim(field, "\"")
+			break
+		}
+	}
+	logger.Infof("You don't set Bigquery projectID. And fallback to run `gcloud config get project`. set projectID: %s", projectID)
+	return
 }
 
 func (c *client) Close() error {
@@ -161,6 +190,7 @@ func (c *client) GetTableRecord(ctx context.Context, projectID, datasetID, table
 
 type BigqueryJob interface {
 	ID() string
+	ProjectID() string
 	Read(context.Context) (*bigquery.RowIterator, error)
 	LastStatus() *bigquery.JobStatus
 	Config() (bigquery.JobConfig, error)
