@@ -2,7 +2,6 @@ package source
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -12,7 +11,6 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
 	"github.com/sirupsen/logrus"
-	"google.golang.org/api/iterator"
 )
 
 type Project struct {
@@ -117,67 +115,6 @@ func (p *Project) Run(ctx context.Context, uri lsp.DocumentURI) (bigquery.Bigque
 		return nil, err
 	}
 
-	return result, nil
-}
-
-// TODO: implement as handler method
-func (p *Project) ListJobs(ctx context.Context, projectID string, allUsers bool) ([]lsp.JobHistory, error) {
-	it := p.bqClient.Jobs(ctx)
-	it.ProjectID = projectID
-	it.AllUsers = allUsers
-
-	result := make([]lsp.JobHistory, 0)
-	for i := 0; i < 100; i++ {
-		job, err := it.Next()
-		if errors.Is(err, iterator.Done) {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		config, err := job.Config()
-		if err != nil {
-			return nil, err
-		}
-
-		var summary string
-		switch c := config.(type) {
-		case *bq.QueryConfig:
-			summary = c.Q
-		case *bq.ExtractConfig:
-			var src, dest string
-			if c.Src != nil {
-				src = fmt.Sprintf("%s:%s.%s", c.Src.ProjectID, c.Src.DatasetID, c.Src.TableID)
-			}
-			if c.SrcModel != nil {
-				src = fmt.Sprintf("%s:%s.%s", c.SrcModel.ProjectID, c.SrcModel.DatasetID, c.SrcModel.ModelID)
-			}
-			if c.Dst != nil && len(c.Dst.URIs) > 0 {
-				dest = fmt.Sprintf("%v", c.Dst.URIs)
-			}
-			summary = fmt.Sprintf("Extract from %s to %s", src, dest)
-		case *bq.LoadConfig:
-			summary = fmt.Sprintf("Load to %s:%s.%s", c.Dst.ProjectID, c.Dst.DatasetID, c.Dst.TableID)
-		case *bq.CopyConfig:
-			if len(c.Srcs) == 0 {
-				continue
-			}
-			src := c.Srcs[0]
-			summary = fmt.Sprintf("Copy from %s:%s.%s to %s:%s.%s", src.ProjectID, src.DatasetID, src.TableID, c.Dst.ProjectID, c.Dst.DatasetID, c.Dst.TableID)
-		default:
-			continue
-		}
-
-		result = append(result, lsp.JobHistory{
-			TextDocument: lsp.TextDocumentIdentifier{
-				URI: lsp.NewJobVirtualTextDocumentURI(projectID, job.ID()),
-			},
-			ID:      job.ID(),
-			Owner:   job.Email(),
-			Summary: summary,
-		})
-	}
 	return result, nil
 }
 
