@@ -10,10 +10,10 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            lower_os: linux
             asset_name: bqls_linux_amd64
           - os: macos-latest
-            lower_os: macos
+            asset_name: bqls_darwin_arm64
+          - os: macos-13
             asset_name: bqls_darwin_amd64
     name: Release Go Binary
     runs-on: ${{ matrix.os }}

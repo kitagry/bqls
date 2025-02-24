@@ -198,6 +198,7 @@ func (h *Handler) commandListTables(ctx context.Context, params lsp.ExecuteComma
 func (h *Handler) commandListJobHistories(ctx context.Context, params lsp.ExecuteCommandParams) (any, error) {
 	f := flag.NewFlagSet("listJobHistory", flag.ContinueOnError)
 	allUser := f.Bool("all-user", false, "list personal job histories")
+	pageSize := f.Int("page-size", 100, "job histories page size")
 
 	strArgs := make([]string, 0, len(params.Arguments))
 	for _, a := range params.Arguments {
@@ -208,11 +209,71 @@ func (h *Handler) commandListJobHistories(ctx context.Context, params lsp.Execut
 		return nil, err
 	}
 
-	jobs, err := h.project.ListJobs(ctx, h.bqClient.GetDefaultProject(), *allUser)
+	jobs, err := h.listJobs(ctx, h.bqClient.GetDefaultProject(), *allUser, *pageSize)
 	if err != nil {
 		return nil, err
 	}
 	return lsp.ListJobHistoryResult{Jobs: jobs}, nil
+}
+
+func (h *Handler) listJobs(ctx context.Context, projectID string, allUsers bool, pageSize int) ([]lsp.JobHistory, error) {
+	it := h.bqClient.Jobs(ctx)
+	it.ProjectID = projectID
+	it.AllUsers = allUsers
+
+	result := make([]lsp.JobHistory, 0)
+	for i := 0; i < pageSize; i++ {
+		job, err := it.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		config, err := job.Config()
+		if err != nil {
+			return nil, err
+		}
+
+		var summary string
+		switch c := config.(type) {
+		case *bigquery.QueryConfig:
+			summary = c.Q
+		case *bigquery.ExtractConfig:
+			var src, dest string
+			if c.Src != nil {
+				src = fmt.Sprintf("%s:%s.%s", c.Src.ProjectID, c.Src.DatasetID, c.Src.TableID)
+			}
+			if c.SrcModel != nil {
+				src = fmt.Sprintf("%s:%s.%s", c.SrcModel.ProjectID, c.SrcModel.DatasetID, c.SrcModel.ModelID)
+			}
+			if c.Dst != nil && len(c.Dst.URIs) > 0 {
+				dest = fmt.Sprintf("%v", c.Dst.URIs)
+			}
+			summary = fmt.Sprintf("Extract from %s to %s", src, dest)
+		case *bigquery.LoadConfig:
+			summary = fmt.Sprintf("Load to %s:%s.%s", c.Dst.ProjectID, c.Dst.DatasetID, c.Dst.TableID)
+		case *bigquery.CopyConfig:
+			if len(c.Srcs) == 0 {
+				continue
+			}
+			src := c.Srcs[0]
+			summary = fmt.Sprintf("Copy from %s:%s.%s to %s:%s.%s", src.ProjectID, src.DatasetID, src.TableID, c.Dst.ProjectID, c.Dst.DatasetID, c.Dst.TableID)
+		default:
+			continue
+		}
+
+		result = append(result, lsp.JobHistory{
+			TextDocument: lsp.TextDocumentIdentifier{
+				URI: lsp.NewJobVirtualTextDocumentURI(projectID, job.ID()),
+			},
+			ID:      job.ID(),
+			Owner:   job.Email(),
+			Summary: summary,
+		})
+	}
+	return result, nil
 }
 
 // params.Arguments[0]: document uri
