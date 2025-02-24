@@ -37,13 +37,7 @@ func (h *Handler) handleTextDocumentCodeAction(ctx context.Context, conn *jsonrp
 	}
 
 	if params.TextDocument.URI.IsVirtualTextDocument() {
-		commands := []lsp.Command{
-			{
-				Title:     "Save Result",
-				Command:   CommandSaveResult,
-				Arguments: []any{params.TextDocument.URI},
-			},
-		}
+		commands := []lsp.Command{}
 		return commands, nil
 	}
 	if params.TextDocument.URI.IsFile() && strings.HasSuffix(string(params.TextDocument.URI), ".sql") {

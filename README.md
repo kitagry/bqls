@@ -35,6 +35,7 @@ vim.lsp.get_clients({ name = "bqls" })[1].settings = { project_id="ANOTHER_PROJE
     - [executeQuery](./docs/api_reference.md#executequery)
     - [listDatasets](./docs/api_reference.md#listdatasets)
     - [listTables](./docs/api_reference.md#listtables)
-    - [listjobhistories](./docs/api_reference.md#listjobhistories)
+    - [listJobHistories](./docs/api_reference.md#listjobhistories)
+    - [saveResult](./docs/api_reference.md#saveResult)
 - workspace/didChangeConfiguration
 - [bqls/virtualTextDocument](./docs/api_reference.md#bqlsvirtualtextdocument)
