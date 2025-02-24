@@ -198,6 +198,7 @@ func (h *Handler) commandListTables(ctx context.Context, params lsp.ExecuteComma
 func (h *Handler) commandListJobHistories(ctx context.Context, params lsp.ExecuteCommandParams) (any, error) {
 	f := flag.NewFlagSet("listJobHistory", flag.ContinueOnError)
 	allUser := f.Bool("all-user", false, "list personal job histories")
+	pageSize := f.Int("page-size", 100, "job histories page size")
 
 	strArgs := make([]string, 0, len(params.Arguments))
 	for _, a := range params.Arguments {
@@ -208,20 +209,20 @@ func (h *Handler) commandListJobHistories(ctx context.Context, params lsp.Execut
 		return nil, err
 	}
 
-	jobs, err := h.listJobs(ctx, h.bqClient.GetDefaultProject(), *allUser)
+	jobs, err := h.listJobs(ctx, h.bqClient.GetDefaultProject(), *allUser, *pageSize)
 	if err != nil {
 		return nil, err
 	}
 	return lsp.ListJobHistoryResult{Jobs: jobs}, nil
 }
 
-func (h *Handler) listJobs(ctx context.Context, projectID string, allUsers bool) ([]lsp.JobHistory, error) {
+func (h *Handler) listJobs(ctx context.Context, projectID string, allUsers bool, pageSize int) ([]lsp.JobHistory, error) {
 	it := h.bqClient.Jobs(ctx)
 	it.ProjectID = projectID
 	it.AllUsers = allUsers
 
 	result := make([]lsp.JobHistory, 0)
-	for i := 0; i < 100; i++ {
+	for i := 0; i < pageSize; i++ {
 		job, err := it.Next()
 		if errors.Is(err, iterator.Done) {
 			break
