@@ -185,7 +185,17 @@ func (c *client) GetTableMetadata(ctx context.Context, projectID, datasetID, tab
 }
 
 func (c *client) GetTableRecord(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.RowIterator, error) {
-	return c.bqClient.DatasetInProject(projectID, datasetID).Table(tableID).Read(ctx), nil
+	md, err := c.bqClient.DatasetInProject(projectID, datasetID).Table(tableID).Metadata(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("fail to get metadata: %w", err)
+	}
+
+	it, err := c.bqClient.DatasetInProject(projectID, datasetID).Table(tableID).Read(ctx), nil
+	if err != nil {
+		return nil, fmt.Errorf("failed to get iterator: %w", err)
+	}
+	it.Schema = md.Schema
+	return it, nil
 }
 
 type BigqueryJob interface {

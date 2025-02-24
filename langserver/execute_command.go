@@ -1,6 +1,7 @@
 package langserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
@@ -122,7 +124,7 @@ func (h *Handler) commandExecuteQuery(ctx context.Context, params lsp.ExecuteCom
 }
 
 func (h *Handler) commandListDatasets(ctx context.Context, params lsp.ExecuteCommandParams) (*lsp.ListDatasetsResult, error) {
-	projectID := h.initializeParams.InitializationOptions.ProjectID
+	projectID := h.bqClient.GetDefaultProject()
 	if len(params.Arguments) > 0 {
 		var ok bool
 		projectID, ok = params.Arguments[0].(string)
@@ -154,7 +156,7 @@ func (h *Handler) commandListDatasets(ctx context.Context, params lsp.ExecuteCom
 }
 
 func (h *Handler) commandListTables(ctx context.Context, params lsp.ExecuteCommandParams) (*lsp.ListTablesResult, error) {
-	projectID := h.initializeParams.InitializationOptions.ProjectID
+	projectID := h.bqClient.GetDefaultProject()
 	var datasetID string
 	if len(params.Arguments) == 0 {
 		return nil, fmt.Errorf("datasetID arguments is not provided")
@@ -212,7 +214,7 @@ func (h *Handler) commandListJobHistories(ctx context.Context, params lsp.Execut
 		return nil, err
 	}
 
-	jobs, err := h.project.ListJobs(ctx, h.initializeParams.InitializationOptions.ProjectID, *allUser)
+	jobs, err := h.project.ListJobs(ctx, h.bqClient.GetDefaultProject(), *allUser)
 	if err != nil {
 		return nil, err
 	}
@@ -261,14 +263,22 @@ func (h *Handler) commandSaveResult(ctx context.Context, params lsp.ExecuteComma
 
 	var it *bigquery.RowIterator
 	if virtualTextDocumentInfo.DatasetID != "" {
-		_, it, err = h.project.GetTableInfo(ctx, virtualTextDocumentInfo.ProjectID, virtualTextDocumentInfo.DatasetID, virtualTextDocumentInfo.TableID)
+		it, err = h.bqClient.GetTableRecord(ctx, virtualTextDocumentInfo.ProjectID, virtualTextDocumentInfo.DatasetID, virtualTextDocumentInfo.TableID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get table record: %w", err)
+		}
 	} else if virtualTextDocumentInfo.JobID != "" {
-		_, it, err = h.project.GetJobInfo(ctx, virtualTextDocumentInfo.ProjectID, virtualTextDocumentInfo.JobID)
+		job, err := h.bqClient.JobFromProject(ctx, virtualTextDocumentInfo.ProjectID, virtualTextDocumentInfo.JobID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get job: %w", err)
+		}
+
+		it, err = job.Read(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read job: %w", err)
+		}
 	} else {
 		return nil, fmt.Errorf("invalid virtual text document uri")
-	}
-	if err != nil {
-		return nil, err
 	}
 
 	f, err := os.Create(filePath)
@@ -278,47 +288,202 @@ func (h *Handler) commandSaveResult(ctx context.Context, params lsp.ExecuteComma
 	defer f.Close()
 
 	cw := csv.NewWriter(f)
-	h.workDoneProgressReport(ctx, workDoneToken, lsp.WorkDoneProgressReport{
-		Message: "Scanning rows...",
-	})
 
-	// write header
-	schemas := make([]string, 0, len(it.Schema))
+	headers := make([]string, 0, len(it.Schema))
 	for _, s := range it.Schema {
-		schemas = append(schemas, s.Name)
+		headers = append(headers, s.Name)
 	}
-	err = cw.Write(schemas)
+	err = cw.Write(headers)
 	if err != nil {
 		return nil, err
 	}
 
 	for {
-		var values []bigquery.Value
-		err := it.Next(&values)
+		var record []bigquery.Value
+		err := it.Next(&record)
 		if errors.Is(err, iterator.Done) {
 			break
 		}
 		if err != nil {
 			return nil, err
 		}
-		if values == nil {
-			break
-		}
-		var record []string
-		for _, v := range values {
-			record = append(record, fmt.Sprint(v))
-		}
-		err = cw.Write(record)
+
+		row, err := formatCSV(record, it.Schema)
 		if err != nil {
 			return nil, err
+		}
+
+		err = cw.Write(row)
+		if err != nil {
+			return nil, fmt.Errorf("failed to write csv: %w", err)
 		}
 	}
 
 	cw.Flush()
 
 	if err := cw.Error(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to flush csv: %w", err)
 	}
 
 	return nil, nil
+}
+
+func formatCSV(record []bigquery.Value, schema bigquery.Schema) ([]string, error) {
+	row := make([]string, 0, len(record))
+	for i, v := range record {
+		fieldSchema := schema[i]
+
+		column, err := formatCSVSingleRecord(v, fieldSchema)
+		if err != nil {
+			return nil, fmt.Errorf("schema(name=%s, row=%d) failed: %w", fieldSchema.Name, i, err)
+		}
+		row = append(row, column)
+	}
+	return row, nil
+}
+
+func formatCSVSingleRecord(record bigquery.Value, fieldSchema *bigquery.FieldSchema) (string, error) {
+	if record == nil {
+		return "", nil
+	}
+
+	if fieldSchema.Repeated {
+		record, ok := record.([]bigquery.Value)
+		if !ok {
+			return "", fmt.Errorf("record should be array, but got %T", record)
+		}
+
+		fieldSchema.Repeated = false
+		defer func() {
+			fieldSchema.Repeated = true
+		}()
+		columns := make([]string, 0, len(record))
+		for i, r := range record {
+			column, err := formatCSVSingleRecord(r, fieldSchema)
+			if err != nil {
+				return "", fmt.Errorf("failed to format record[%d]: %w", i, err)
+			}
+			columns = append(columns, column)
+		}
+		return fmt.Sprintf("[%s]", strings.Join(columns, ",")), nil
+	}
+
+	switch value := record.(type) {
+	case int64:
+		return fmt.Sprint(value), nil
+	case float64:
+		return fmt.Sprint(value), nil
+	case bool:
+		return fmt.Sprint(value), nil
+	case string:
+		return value, nil
+	case []byte:
+		return string(value), nil
+	case time.Time:
+		return value.Format(time.RFC3339), nil
+	case []bigquery.Value:
+		if fieldSchema.Schema == nil {
+			return "", fmt.Errorf("schema should be provided for record")
+		}
+		return formatRecordJson(value, fieldSchema.Schema)
+	default:
+		return fmt.Sprint(record), nil
+	}
+}
+
+func formatRecordJson(record []bigquery.Value, schema bigquery.Schema) (string, error) {
+	if len(record) != len(schema) {
+		return "", fmt.Errorf("record length(=%d) should be equal to schema length(=%d)", len(record), len(schema))
+	}
+
+	sb := &strings.Builder{}
+	_, err := sb.WriteString("{")
+	if err != nil {
+		return "", err
+	}
+
+	writeSingleJson := func(key string, valueJson []byte) error {
+		keyJson, err := json.Marshal(key)
+		if err != nil {
+			return fmt.Errorf("failed to encode key: %w", err)
+		}
+		_, err = sb.Write(keyJson)
+		if err != nil {
+			return err
+		}
+		_, err = sb.WriteString(":")
+		if err != nil {
+			return err
+		}
+		_, err = sb.Write(valueJson)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	for i, v := range record {
+		fieldSchema := schema[i]
+		s, err := formatSingleRecordJson(v, fieldSchema)
+		if err != nil {
+			return "", fmt.Errorf("schema(name=%s, row=%d) failed: %w", fieldSchema.Name, i, err)
+		}
+		err = writeSingleJson(fieldSchema.Name, s)
+		if err != nil {
+			return "", err
+		}
+
+		if i != len(record)-1 {
+			_, err = sb.WriteString(",")
+			if err != nil {
+				return "", err
+			}
+		}
+	}
+
+	_, err = sb.WriteString("}")
+	if err != nil {
+		return "", err
+	}
+
+	return sb.String(), nil
+}
+
+func formatSingleRecordJson(record bigquery.Value, schema *bigquery.FieldSchema) ([]byte, error) {
+	if schema.Repeated {
+		record, ok := record.([]bigquery.Value)
+		if !ok {
+			return nil, fmt.Errorf("record should be array, but got %T", record)
+		}
+		schema.Repeated = false
+		defer func() {
+			schema.Repeated = true
+		}()
+		columns := make([]string, 0, len(record))
+		for i, r := range record {
+			column, err := formatSingleRecordJson(r, schema)
+			if err != nil {
+				return nil, fmt.Errorf("failed to format record[%d]: %w", i, err)
+			}
+			columns = append(columns, string(column))
+		}
+		return bytes.Join([][]byte{[]byte("["), []byte(strings.Join(columns, ",")), []byte("]")}, nil), nil
+	}
+
+	switch value := record.(type) {
+	case int64, float64, bool, string, []byte:
+		return json.Marshal(value)
+	case nil:
+		return []byte("null"), nil
+	case time.Time:
+		return []byte(fmt.Sprintf(`"%s"`, value.Format(time.RFC3339))), nil
+	case []bigquery.Value:
+		if schema.Schema == nil {
+			return nil, fmt.Errorf("schema should be provided for record")
+		}
+		result, err := formatRecordJson(value, schema.Schema)
+		return []byte(result), err
+	default:
+		return nil, fmt.Errorf("unsupported type: %T", record)
+	}
 }

@@ -274,7 +274,6 @@ func (p *Project) GetTableInfo(ctx context.Context, projectID, datasetID, tableI
 	if err != nil {
 		return markedStrings, nil, err
 	}
-	it.Schema = tableMetadata.Schema
 	return markedStrings, it, nil
 }
 
