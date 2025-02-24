@@ -12,8 +12,8 @@ import (
 )
 
 type cache struct {
+	Client
 	db                     *database
-	bqClient               Client
 	tableMetadataCacheLock sync.Mutex
 	tableMetadataCache     map[string]*bigquery.TableMetadata
 
@@ -34,8 +34,8 @@ func newCache(bqClient Client) (*cache, error) {
 	}
 
 	return &cache{
+		Client:                 bqClient,
 		db:                     db,
-		bqClient:               bqClient,
 		tableMetadataCacheLock: sync.Mutex{},
 		tableMetadataCache:     make(map[string]*bigquery.TableMetadata),
 		onceListProjects:       &sync.Once{},
@@ -47,12 +47,8 @@ func newCache(bqClient Client) (*cache, error) {
 func (c *cache) Close() error {
 	var errs []error
 	errs = append(errs, c.db.Close())
-	errs = append(errs, c.bqClient.Close())
+	errs = append(errs, c.Client.Close())
 	return errors.Join(errs...)
-}
-
-func (c *cache) GetDefaultProject() string {
-	return c.bqClient.GetDefaultProject()
 }
 
 func (c *cache) ListProjects(ctx context.Context) ([]*cloudresourcemanager.Project, error) {
@@ -77,7 +73,7 @@ func (c *cache) ListProjects(ctx context.Context) ([]*cloudresourcemanager.Proje
 }
 
 func (c *cache) callListProjects(ctx context.Context) ([]*cloudresourcemanager.Project, error) {
-	result, err := c.bqClient.ListProjects(ctx)
+	result, err := c.Client.ListProjects(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +116,7 @@ func (c *cache) ListDatasets(ctx context.Context, projectID string) ([]*bigquery
 }
 
 func (c *cache) callListDatasets(ctx context.Context, projectID string) ([]*bigquery.Dataset, error) {
-	result, err := c.bqClient.ListDatasets(ctx, projectID)
+	result, err := c.Client.ListDatasets(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +159,7 @@ func (c *cache) ListTables(ctx context.Context, projectID, datasetID string) ([]
 
 func (c *cache) callListTables(ctx context.Context, projectID, datasetID string) ([]*bigquery.Table, error) {
 	// onlyLatestSuffix is ignored for cache.
-	result, err := c.bqClient.ListTables(ctx, projectID, datasetID)
+	result, err := c.Client.ListTables(ctx, projectID, datasetID)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +184,7 @@ func (c *cache) GetTableMetadata(ctx context.Context, projectID, datasetID, tabl
 		return cache, nil
 	}
 
-	result, err := c.bqClient.GetTableMetadata(ctx, projectID, datasetID, tableID)
+	result, err := c.Client.GetTableMetadata(ctx, projectID, datasetID, tableID)
 	if err != nil {
 		return nil, err
 	}
@@ -197,20 +193,4 @@ func (c *cache) GetTableMetadata(ctx context.Context, projectID, datasetID, tabl
 		c.tableMetadataCache[cacheKey] = result
 	}
 	return result, nil
-}
-
-func (c *cache) GetTableRecord(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.RowIterator, error) {
-	return c.bqClient.GetTableRecord(ctx, projectID, datasetID, tableID)
-}
-
-func (c *cache) Run(ctx context.Context, q string, dryrun bool) (BigqueryJob, error) {
-	return c.bqClient.Run(ctx, q, dryrun)
-}
-
-func (c *cache) JobFromProject(ctx context.Context, projectID, id string) (BigqueryJob, error) {
-	return c.bqClient.JobFromProject(ctx, projectID, id)
-}
-
-func (c *cache) Jobs(ctx context.Context) *bigquery.JobIterator {
-	return c.bqClient.Jobs(ctx)
 }

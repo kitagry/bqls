@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source"
 	"github.com/sirupsen/logrus"
@@ -18,7 +19,8 @@ type Handler struct {
 	conn   *jsonrpc2.Conn
 	logger *logrus.Logger
 
-	project *source.Project
+	bqClient bigquery.Client
+	project  *source.Project
 
 	diagnosticRequest chan lsp.DocumentURI
 	dryrunRequest     chan lsp.DocumentURI
@@ -47,11 +49,14 @@ func NewHandler(isDebug bool) *Handler {
 }
 
 func (h *Handler) setupByInitializeParams() error {
-	p, err := source.NewProject(context.Background(), h.initializeParams.RootPath, h.initializeParams.InitializationOptions.ProjectID, h.logger)
+	bqClient, err := bigquery.New(context.Background(), h.initializeParams.InitializationOptions.ProjectID, false, h.logger)
 	if err != nil {
 		return err
 	}
 
+	p := source.NewProject(context.Background(), h.initializeParams.RootPath, bqClient, h.logger)
+
+	h.bqClient = bqClient
 	h.project = p
 	return nil
 }

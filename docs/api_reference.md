@@ -100,6 +100,33 @@ Response:
 }
 ```
 
+### `saveResult`
+
+save bqls/virtualTextDocument result to file.
+
+arguments:
+
+* 1st: target virtualTextDocument to save from.
+* 2nd: target file to save. (currently, only csv file is supported)
+
+Request:
+
+```json
+{
+    "command": "saveResult",
+    "arguments": [
+        "bqls://project/${project}/job/${job}",
+        "file://path/to/target.csv"
+    ],
+}
+```
+
+Response:
+
+```json
+null
+```
+
 
 # Custom API
 

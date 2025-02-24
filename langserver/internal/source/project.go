@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	bq "cloud.google.com/go/bigquery"
@@ -17,12 +16,11 @@ import (
 )
 
 type Project struct {
-	BigQueryProjectID string
-	rootPath          string
-	logger            *logrus.Logger
-	cache             *cache.GlobalCache
-	bqClient          bigquery.Client
-	analyzer          *file.Analyzer
+	rootPath string
+	logger   *logrus.Logger
+	cache    *cache.GlobalCache
+	bqClient bigquery.Client
+	analyzer *file.Analyzer
 }
 
 type File struct {
@@ -30,42 +28,18 @@ type File struct {
 	Version int
 }
 
-func NewProject(ctx context.Context, rootPath string, projectID string, logger *logrus.Logger) (*Project, error) {
+func NewProject(ctx context.Context, rootPath string, bqClient bigquery.Client, logger *logrus.Logger) *Project {
 	cache := cache.NewGlobalCache()
-
-	if projectID == "" {
-		out, err := exec.CommandContext(ctx, "gcloud", "config", "get", "project", "--format=json").Output()
-		if err != nil {
-			return nil, fmt.Errorf("You don't set Bigquery projectID. And fallback to run `gcloud config get project`, but got error: %w", err)
-		}
-		fields := strings.Fields(string(out))
-		if len(fields) == 0 {
-			return nil, fmt.Errorf("You don't set Bigquery projectID. And fallback to run `gcloud config get project`, but got empty output")
-		}
-		for _, field := range fields {
-			if strings.HasPrefix(field, "\"") && strings.HasSuffix(field, "\"") {
-				projectID = strings.Trim(field, "\"")
-				break
-			}
-		}
-		logger.Infof("You don't set Bigquery projectID. And fallback to run `gcloud config get project`. set projectID: %s", projectID)
-	}
-
-	bqClient, err := bigquery.New(ctx, projectID, true)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create bigquery client: %w", err)
-	}
 
 	analyzer := file.NewAnalyzer(logger, bqClient)
 
 	return &Project{
-		BigQueryProjectID: projectID,
-		rootPath:          rootPath,
-		logger:            logger,
-		cache:             cache,
-		bqClient:          bqClient,
-		analyzer:          analyzer,
-	}, nil
+		rootPath: rootPath,
+		logger:   logger,
+		cache:    cache,
+		bqClient: bqClient,
+		analyzer: analyzer,
+	}
 }
 
 func NewProjectWithBQClient(rootPath string, bqClient bigquery.Client, logger *logrus.Logger) *Project {
@@ -146,14 +120,7 @@ func (p *Project) Run(ctx context.Context, uri lsp.DocumentURI) (bigquery.Bigque
 	return result, nil
 }
 
-func (p *Project) ListDatasets(ctx context.Context, projectID string) ([]*bq.Dataset, error) {
-	return p.bqClient.ListDatasets(ctx, projectID)
-}
-
-func (p *Project) ListTables(ctx context.Context, projectID, datasetID string) ([]*bq.Table, error) {
-	return p.bqClient.ListTables(ctx, projectID, datasetID)
-}
-
+// TODO: implement as handler method
 func (p *Project) ListJobs(ctx context.Context, projectID string, allUsers bool) ([]lsp.JobHistory, error) {
 	it := p.bqClient.Jobs(ctx)
 	it.ProjectID = projectID
@@ -307,7 +274,6 @@ func (p *Project) GetTableInfo(ctx context.Context, projectID, datasetID, tableI
 	if err != nil {
 		return markedStrings, nil, err
 	}
-	it.Schema = tableMetadata.Schema
 	return markedStrings, it, nil
 }
 

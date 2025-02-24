@@ -49,6 +49,7 @@ func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req
 					CommandListDatasets,
 					CommandListTables,
 					CommandListJobHistories,
+					CommandSaveResult,
 				},
 			},
 		},
