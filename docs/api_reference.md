@@ -76,6 +76,7 @@ list up job histories in the project.
 Arguments:
 
 * `--all-user`: list up all jobs in the project. When this flag is not set, list up only jobs submitted by the user.
+* `--page-size`: job histories size. default is 100.
 
 Request:
 
