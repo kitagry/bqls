@@ -2,6 +2,8 @@
 
 BigQuery language server
 
+https://github.com/user-attachments/assets/3e980a26-bc9b-4c2b-8c5b-1e9582a6a644
+
 ## Settings
 
 ### Neovim
