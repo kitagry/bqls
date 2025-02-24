@@ -49,7 +49,7 @@ func NewHandler(isDebug bool) *Handler {
 }
 
 func (h *Handler) setupByInitializeParams() error {
-	bqClient, err := bigquery.New(context.Background(), h.initializeParams.InitializationOptions.ProjectID, false, h.logger)
+	bqClient, err := bigquery.New(context.Background(), h.initializeParams.InitializationOptions.ProjectID, true, h.logger)
 	if err != nil {
 		return err
 	}
