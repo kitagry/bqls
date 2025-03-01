@@ -16,6 +16,7 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/sourcegraph/jsonrpc2"
 	"google.golang.org/api/iterator"
+	"google.golang.org/api/sheets/v4"
 )
 
 const (
@@ -24,6 +25,11 @@ const (
 	CommandListTables       = "listTables"
 	CommandListJobHistories = "listJobHistories"
 	CommandSaveResult       = "saveResult"
+)
+
+const (
+	// uri for spreadsheet
+	spreadsheetURI = "sheet://new"
 )
 
 func (h *Handler) handleTextDocumentCodeAction(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
@@ -43,6 +49,11 @@ func (h *Handler) handleTextDocumentCodeAction(ctx context.Context, conn *jsonrp
 				Title:     fmt.Sprintf("Save Result to %s", csvPath),
 				Command:   CommandSaveResult,
 				Arguments: []any{params.TextDocument.URI, fmt.Sprintf("file://%s", csvPath)},
+			},
+			{
+				Title:     "Save Result to Spreadsheet",
+				Command:   CommandSaveResult,
+				Arguments: []any{params.TextDocument.URI, spreadsheetURI},
 			},
 		}
 		return commands, nil
@@ -308,13 +319,6 @@ func (h *Handler) commandSaveResult(ctx context.Context, params lsp.ExecuteComma
 		return nil, fmt.Errorf("arguments should be string, but got %T", params.Arguments[1])
 	}
 	fileURI := lsp.DocumentURI(args1)
-	filePath, err := fileURI.FilePath()
-	if err != nil {
-		return nil, err
-	}
-	if !strings.HasSuffix(filePath, ".csv") {
-		return nil, fmt.Errorf("file uri should be csv file")
-	}
 
 	workDoneToken := lsp.ProgressToken("save result")
 	h.workDoneProgressBegin(ctx, workDoneToken, lsp.WorkDoneProgressBegin{
@@ -323,12 +327,14 @@ func (h *Handler) commandSaveResult(ctx context.Context, params lsp.ExecuteComma
 	})
 	defer h.workDoneProgressEnd(ctx, workDoneToken, lsp.WorkDoneProgressEnd{})
 
+	var sheetTitle string
 	var it *bigquery.RowIterator
 	if virtualTextDocumentInfo.DatasetID != "" {
 		it, err = h.bqClient.GetTableRecord(ctx, virtualTextDocumentInfo.ProjectID, virtualTextDocumentInfo.DatasetID, virtualTextDocumentInfo.TableID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get table record: %w", err)
 		}
+		sheetTitle = fmt.Sprintf("%s.%s.%s", virtualTextDocumentInfo.ProjectID, virtualTextDocumentInfo.DatasetID, virtualTextDocumentInfo.TableID)
 	} else if virtualTextDocumentInfo.JobID != "" {
 		job, err := h.bqClient.JobFromProject(ctx, virtualTextDocumentInfo.ProjectID, virtualTextDocumentInfo.JobID)
 		if err != nil {
@@ -339,20 +345,39 @@ func (h *Handler) commandSaveResult(ctx context.Context, params lsp.ExecuteComma
 		if err != nil {
 			return nil, fmt.Errorf("failed to read job: %w", err)
 		}
+		sheetTitle = job.URL()
 	} else {
 		return nil, fmt.Errorf("invalid virtual text document uri")
 	}
 
+	h.workDoneProgressReport(ctx, workDoneToken, lsp.WorkDoneProgressReport{
+		Message: "Load rows from BigQuery...",
+	})
+
+	resultURL := ""
 	switch {
-	case strings.HasSuffix(filePath, ".csv"):
+	case strings.HasSuffix(string(fileURI), ".csv"):
+		filePath, err := fileURI.FilePath()
+		if err != nil {
+			return nil, err
+		}
 		if err := saveCsv(filePath, it); err != nil {
 			return nil, fmt.Errorf("failed to save csv: %w", err)
 		}
+		resultURL = filePath
+	case string(fileURI) == spreadsheetURI:
+		sheetURL, err := saveSpreadsheet(ctx, it, sheetTitle)
+		if err != nil {
+			return nil, fmt.Errorf("failed to save spreadsheet: %w", err)
+		}
+		resultURL = sheetURL
 	default:
-		return nil, fmt.Errorf("unsupported file extension: %s", filePath)
+		return nil, fmt.Errorf("unsupported file extension: %s", fileURI)
 	}
 
-	return nil, nil
+	return lsp.SaveResultResult{
+		URL: resultURL,
+	}, nil
 }
 
 func saveCsv(filePath string, it *bigquery.RowIterator) error {
@@ -396,6 +421,58 @@ func saveCsv(filePath string, it *bigquery.RowIterator) error {
 		return fmt.Errorf("failed to flush csv: %w", err)
 	}
 	return nil
+}
+
+func saveSpreadsheet(ctx context.Context, it *bigquery.RowIterator, sheetTitle string) (sheetURL string, err error) {
+	svc, err := sheets.NewService(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to create sheets service: %w", err)
+	}
+
+	spreadsheet := &sheets.Spreadsheet{
+		Properties: &sheets.SpreadsheetProperties{
+			Title: sheetTitle,
+		},
+	}
+	sheet, err := svc.Spreadsheets.Create(spreadsheet).Do()
+	if err != nil {
+		return "", err
+	}
+
+	valueRange := &sheets.ValueRange{Values: make([][]any, 0)}
+	headers := make([]any, 0, len(it.Schema))
+	for _, s := range it.Schema {
+		headers = append(headers, s.Name)
+	}
+	valueRange.Values = append(valueRange.Values, headers)
+
+	for {
+		var record []bigquery.Value
+		err := it.Next(&record)
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+		row, err := formatCSV(record, it.Schema)
+		if err != nil {
+			return "", err
+		}
+
+		value := make([]any, 0, len(row))
+		for _, v := range row {
+			value = append(value, v)
+		}
+		valueRange.Values = append(valueRange.Values, value)
+	}
+
+	_, err = svc.Spreadsheets.Values.Update(sheet.SpreadsheetId, sheet.Sheets[0].Properties.Title, valueRange).ValueInputOption("RAW").Do()
+	if err != nil {
+		return "", err
+	}
+
+	return sheet.SpreadsheetUrl, nil
 }
 
 func formatCSV(record []bigquery.Value, schema bigquery.Schema) ([]string, error) {
