@@ -27,3 +27,7 @@ type JobHistory struct {
 	// When the job is a query job, it is the query string.
 	Summary string `json:"summary"`
 }
+
+type SaveResultResult struct {
+	URL string `json:"url"`
+}

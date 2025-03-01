@@ -125,7 +125,9 @@ Request:
 Response:
 
 ```json
-null
+{
+    "url": "https://docs.google.com/spreadsheets/d/1...."
+}
 ```
 
 

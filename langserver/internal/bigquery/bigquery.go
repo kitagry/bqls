@@ -204,6 +204,19 @@ type BigqueryJob interface {
 	Read(context.Context) (*bigquery.RowIterator, error)
 	LastStatus() *bigquery.JobStatus
 	Config() (bigquery.JobConfig, error)
+	URL() string
+}
+
+type bqJobWrapper struct {
+	*bigquery.Job
+}
+
+func newJobWrapper(job *bigquery.Job) BigqueryJob {
+	return &bqJobWrapper{job}
+}
+
+func (j *bqJobWrapper) URL() string {
+	return fmt.Sprintf("https://console.cloud.google.com/bigquery?project=%s&ws=!1m5!1m4!1m3!1s%s!2s%s!3s%s", j.Job.ProjectID(), j.Job.ProjectID(), j.Job.ID(), j.Job.Location())
 }
 
 func (c *client) Run(ctx context.Context, q string, dryrun bool) (BigqueryJob, error) {
@@ -215,11 +228,15 @@ func (c *client) Run(ctx context.Context, q string, dryrun bool) (BigqueryJob, e
 		return nil, fmt.Errorf("fail to run query: %w", err)
 	}
 
-	return job, nil
+	return newJobWrapper(job), nil
 }
 
 func (c *client) JobFromProject(ctx context.Context, projectID, id string) (BigqueryJob, error) {
-	return c.bqClient.JobFromProject(ctx, projectID, id, c.bqClient.Location)
+	job, err := c.bqClient.JobFromProject(ctx, projectID, id, c.bqClient.Location)
+	if err != nil {
+		return nil, fmt.Errorf("fail to get job: %w", err)
+	}
+	return newJobWrapper(job), nil
 }
 
 func (c *client) Jobs(ctx context.Context) *bigquery.JobIterator {

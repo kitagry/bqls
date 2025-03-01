@@ -169,7 +169,7 @@ func buildBigQueryJobMarkedString(projectID, region string, job bigquery.Bigquer
 		sb.WriteString(fmt.Sprintf("* Slot milliseconds: %d\n", details.SlotMillis))
 	}
 
-	sb.WriteString(fmt.Sprintf("\n[Query URL](https://console.cloud.google.com/bigquery?project=%s&ws=!1m5!1m4!1m3!1s%s!2s%s!3s%s)\n", projectID, projectID, job.ID(), region))
+	sb.WriteString(fmt.Sprintf("\n[Query URL](%s)\n", job.URL()))
 
 	result = append(result, lsp.MarkedString{
 		Language: "markdown",
