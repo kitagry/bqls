@@ -37,7 +37,14 @@ func (h *Handler) handleTextDocumentCodeAction(ctx context.Context, conn *jsonrp
 	}
 
 	if params.TextDocument.URI.IsVirtualTextDocument() {
-		commands := []lsp.Command{}
+		csvPath := fmt.Sprintf("%s/Downloads/%d.csv", os.Getenv("HOME"), time.Now().Unix())
+		commands := []lsp.Command{
+			{
+				Title:     fmt.Sprintf("Save Result to %s", csvPath),
+				Command:   CommandSaveResult,
+				Arguments: []any{params.TextDocument.URI, fmt.Sprintf("file://%s", csvPath)},
+			},
+		}
 		return commands, nil
 	}
 	if params.TextDocument.URI.IsFile() && strings.HasSuffix(string(params.TextDocument.URI), ".sql") {
@@ -336,9 +343,22 @@ func (h *Handler) commandSaveResult(ctx context.Context, params lsp.ExecuteComma
 		return nil, fmt.Errorf("invalid virtual text document uri")
 	}
 
+	switch {
+	case strings.HasSuffix(filePath, ".csv"):
+		if err := saveCsv(filePath, it); err != nil {
+			return nil, fmt.Errorf("failed to save csv: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported file extension: %s", filePath)
+	}
+
+	return nil, nil
+}
+
+func saveCsv(filePath string, it *bigquery.RowIterator) error {
 	f, err := os.Create(filePath)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer f.Close()
 
@@ -350,7 +370,7 @@ func (h *Handler) commandSaveResult(ctx context.Context, params lsp.ExecuteComma
 	}
 	err = cw.Write(headers)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	for {
@@ -360,27 +380,22 @@ func (h *Handler) commandSaveResult(ctx context.Context, params lsp.ExecuteComma
 			break
 		}
 		if err != nil {
-			return nil, err
+			return err
 		}
-
 		row, err := formatCSV(record, it.Schema)
 		if err != nil {
-			return nil, err
+			return err
 		}
-
 		err = cw.Write(row)
 		if err != nil {
-			return nil, fmt.Errorf("failed to write csv: %w", err)
+			return fmt.Errorf("failed to write csv: %w", err)
 		}
 	}
-
 	cw.Flush()
-
 	if err := cw.Error(); err != nil {
-		return nil, fmt.Errorf("failed to flush csv: %w", err)
+		return fmt.Errorf("failed to flush csv: %w", err)
 	}
-
-	return nil, nil
+	return nil
 }
 
 func formatCSV(record []bigquery.Value, schema bigquery.Schema) ([]string, error) {
