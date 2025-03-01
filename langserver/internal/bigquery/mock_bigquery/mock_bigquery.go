@@ -65,20 +65,6 @@ func (mr *MockClientMockRecorder) GetDefaultProject() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDefaultProject", reflect.TypeOf((*MockClient)(nil).GetDefaultProject))
 }
 
-// GetTable mocks base method.
-func (m *MockClient) GetTable(projectID, datasetID, tableID string) *bigquery.Table {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTable", projectID, datasetID, tableID)
-	ret0, _ := ret[0].(*bigquery.Table)
-	return ret0
-}
-
-// GetTable indicates an expected call of GetTable.
-func (mr *MockClientMockRecorder) GetTable(projectID, datasetID, tableID interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTable", reflect.TypeOf((*MockClient)(nil).GetTable), projectID, datasetID, tableID)
-}
-
 // GetTableMetadata mocks base method.
 func (m *MockClient) GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.TableMetadata, error) {
 	m.ctrl.T.Helper()
@@ -181,20 +167,6 @@ func (m *MockClient) ListTables(ctx context.Context, projectID, datasetID string
 func (mr *MockClientMockRecorder) ListTables(ctx, projectID, datasetID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTables", reflect.TypeOf((*MockClient)(nil).ListTables), ctx, projectID, datasetID)
-}
-
-// Query mocks base method.
-func (m *MockClient) Query(query string) *bigquery.Query {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Query", query)
-	ret0, _ := ret[0].(*bigquery.Query)
-	return ret0
-}
-
-// Query indicates an expected call of Query.
-func (mr *MockClientMockRecorder) Query(query interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Query", reflect.TypeOf((*MockClient)(nil).Query), query)
 }
 
 // Run mocks base method.
@@ -305,4 +277,18 @@ func (m *MockBigqueryJob) Read(arg0 context.Context) (*bigquery.RowIterator, err
 func (mr *MockBigqueryJobMockRecorder) Read(arg0 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Read", reflect.TypeOf((*MockBigqueryJob)(nil).Read), arg0)
+}
+
+// URL mocks base method.
+func (m *MockBigqueryJob) URL() string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "URL")
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// URL indicates an expected call of URL.
+func (mr *MockBigqueryJobMockRecorder) URL() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "URL", reflect.TypeOf((*MockBigqueryJob)(nil).URL))
 }
