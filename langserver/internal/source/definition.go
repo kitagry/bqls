@@ -2,7 +2,6 @@ package source
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/goccy/go-zetasql/ast"
@@ -17,13 +16,17 @@ func (p *Project) LookupIdent(ctx context.Context, uri lsp.DocumentURI, position
 	termOffset := parsedFile.TermOffset(position)
 
 	tablePathExpression, ok := file.SearchAstNode[*ast.TablePathExpressionNode](parsedFile.Node, termOffset)
-	if !ok {
-		return nil, fmt.Errorf("not found")
+	if ok {
+		return p.lookupTablePathExpressionNode(uri, parsedFile, tablePathExpression)
 	}
 
+	return nil, nil
+}
+
+func (p *Project) lookupTablePathExpressionNode(uri lsp.DocumentURI, parsedFile file.ParsedFile, tablePathExpression *ast.TablePathExpressionNode) ([]lsp.Location, error) {
 	pathExpr := tablePathExpression.PathExpr()
 	if pathExpr == nil {
-		return nil, fmt.Errorf("not found")
+		return nil, nil
 	}
 
 	tableNames := make([]string, len(pathExpr.Names()))
@@ -32,27 +35,31 @@ func (p *Project) LookupIdent(ctx context.Context, uri lsp.DocumentURI, position
 	}
 	tableName := strings.Join(tableNames, ".")
 
+	// Search table name in table path expression
+	result := listupTargetWithClauseEntries(parsedFile, uri, tableName)
+
+	return result, nil
+}
+
+func listupTargetWithClauseEntries(parsedFile file.ParsedFile, uri lsp.DocumentURI, tableName string) []lsp.Location {
 	withClauseEntries := file.ListAstNode[*ast.WithClauseEntryNode](parsedFile.Node)
+	result := make([]lsp.Location, 0, len(withClauseEntries))
 	for _, entry := range withClauseEntries {
 		if entry.Alias().Name() != tableName {
 			continue
 		}
-
 		locRange := entry.Alias().ParseLocationRange()
 		if locRange == nil {
 			continue
 		}
-
 		r, ok := parsedFile.ToLspRange(locRange)
 		if !ok {
 			continue
 		}
-
-		return []lsp.Location{{
+		result = append(result, lsp.Location{
 			URI:   uri,
 			Range: r,
-		}}, nil
+		})
 	}
-
-	return nil, fmt.Errorf("not found")
+	return result
 }
