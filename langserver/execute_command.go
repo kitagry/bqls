@@ -455,7 +455,7 @@ func saveSpreadsheet(ctx context.Context, it *bigquery.RowIterator, sheetTitle s
 		if err != nil {
 			return "", err
 		}
-		row, err := formatCSV(record, it.Schema)
+		row, err := formatSpreadsheet(record, it.Schema)
 		if err != nil {
 			return "", err
 		}
@@ -522,6 +522,69 @@ func formatCSVSingleRecord(record bigquery.Value, fieldSchema *bigquery.FieldSch
 		return fmt.Sprint(value), nil
 	case bool:
 		return fmt.Sprint(value), nil
+	case string:
+		return value, nil
+	case []byte:
+		return string(value), nil
+	case time.Time:
+		return value.Format(time.RFC3339), nil
+	case []bigquery.Value:
+		if fieldSchema.Schema == nil {
+			return "", fmt.Errorf("schema should be provided for record")
+		}
+		return formatRecordJson(value, fieldSchema.Schema)
+	default:
+		return fmt.Sprint(record), nil
+	}
+}
+
+func formatSpreadsheet(record []bigquery.Value, schema bigquery.Schema) ([]any, error) {
+	row := make([]any, 0, len(record))
+	for i, v := range record {
+		fieldSchema := schema[i]
+
+		column, err := formatSpreadsheetSingleRecord(v, fieldSchema)
+		if err != nil {
+			return nil, fmt.Errorf("schema(name=%s, row=%d) failed: %w", fieldSchema.Name, i, err)
+		}
+		row = append(row, column)
+	}
+	return row, nil
+}
+
+func formatSpreadsheetSingleRecord(record bigquery.Value, fieldSchema *bigquery.FieldSchema) (any, error) {
+	if record == nil {
+		return "", nil
+	}
+
+	if fieldSchema.Repeated {
+		record, ok := record.([]bigquery.Value)
+		if !ok {
+			return "", fmt.Errorf("record should be array, but got %T", record)
+		}
+
+		fieldSchema.Repeated = false
+		defer func() {
+			fieldSchema.Repeated = true
+		}()
+		columns := make([]string, 0, len(record))
+		for i, r := range record {
+			column, err := formatCSVSingleRecord(r, fieldSchema)
+			if err != nil {
+				return "", fmt.Errorf("failed to format record[%d]: %w", i, err)
+			}
+			columns = append(columns, column)
+		}
+		return fmt.Sprintf("[%s]", strings.Join(columns, ",")), nil
+	}
+
+	switch value := record.(type) {
+	case int64:
+		return value, nil
+	case float64:
+		return value, nil
+	case bool:
+		return value, nil
 	case string:
 		return value, nil
 	case []byte:
