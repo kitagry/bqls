@@ -77,8 +77,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 	fixedSrc, errs, fixOffsets := fixDot(src)
 
 	var node ast.ScriptNode
-	rnode := make([]*zetasql.AnalyzerOutput, 0)
+	var rnode []*zetasql.AnalyzerOutput
 	for _retry := 0; _retry < 10; _retry++ {
+		rnode = make([]*zetasql.AnalyzerOutput, 0)
 		var err error
 		var fo []FixOffset
 		node, err = a.parseScript(fixedSrc)
