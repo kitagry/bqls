@@ -31,7 +31,7 @@ func TestProject_LookupIdent(t *testing.T) {
 SELECT a FROM data|`,
 			},
 			bqTableMetadata: &bq.TableMetadata{
-				FullID: "project.dataset.table",
+				FullID: "project:dataset.table",
 				Schema: bq.Schema{},
 			},
 			expectLocations: []lsp.Location{
@@ -57,7 +57,7 @@ data2 AS (SELECT * FROM data )
 SELECT a FROM data2|`,
 			},
 			bqTableMetadata: &bq.TableMetadata{
-				FullID: "project.dataset.table",
+				FullID: "project:dataset.table",
 				Schema: bq.Schema{},
 			},
 			expectLocations: []lsp.Location{
@@ -71,6 +71,66 @@ SELECT a FROM data2|`,
 						End: lsp.Position{
 							Line:      1,
 							Character: 5,
+						},
+					},
+				},
+			},
+		},
+		"definition to bq table": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT * FROM `project.dataset.table|`",
+			},
+			bqTableMetadata: &bq.TableMetadata{
+				FullID: "project:dataset.table",
+				Schema: bq.Schema{
+					{
+						Name:        "id",
+						Type:        bq.IntegerFieldType,
+						Description: "id description",
+					},
+				},
+			},
+			expectLocations: []lsp.Location{
+				{
+					URI: lsp.NewTableVirtualTextDocumentURI("project", "dataset", "table"),
+					Range: lsp.Range{
+						Start: lsp.Position{
+							Line:      0,
+							Character: 0,
+						},
+						End: lsp.Position{
+							Line:      0,
+							Character: 0,
+						},
+					},
+				},
+			},
+		},
+		"definition to bq table in other scan node": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "WITH data AS (SELECT * FROM `project.dataset.table|`) SELECT * FROM data",
+			},
+			bqTableMetadata: &bq.TableMetadata{
+				FullID: "project:dataset.table",
+				Schema: bq.Schema{
+					{
+						Name:        "id",
+						Type:        bq.IntegerFieldType,
+						Description: "id description",
+					},
+				},
+			},
+			expectLocations: []lsp.Location{
+				{
+					URI: lsp.NewTableVirtualTextDocumentURI("project", "dataset", "table"),
+					Range: lsp.Range{
+						Start: lsp.Position{
+							Line:      0,
+							Character: 0,
+						},
+						End: lsp.Position{
+							Line:      0,
+							Character: 0,
 						},
 					},
 				},
