@@ -2,8 +2,6 @@ module github.com/kitagry/bqls
 
 go 1.24
 
-toolchain go1.24.0
-
 require (
 	github.com/google/go-cmp v0.7.0
 	github.com/sourcegraph/jsonrpc2 v0.2.0
@@ -15,7 +13,7 @@ require (
 	github.com/PuerkitoBio/goquery v1.10.2
 	github.com/goccy/go-zetasql v0.5.5
 	github.com/golang/mock v1.6.0
-	github.com/mattn/go-sqlite3 v1.14.24
+	github.com/mattn/go-sqlite3 v1.14.25
 	github.com/sirupsen/logrus v1.9.3
 	golang.org/x/text v0.23.0
 	google.golang.org/api v0.227.0
