@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime/debug"
 	"strings"
 
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
@@ -63,9 +64,9 @@ func (h *Handler) setupByInitializeParams() error {
 
 func (h *Handler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	defer func() {
-		err := recover()
-		if err != nil {
-			h.logger.Errorf("panic: %#v", err)
+		if err := recover(); err != nil {
+			h.logger.Errorf("panic! %#v", err)
+			h.logger.Errorf("stack trace: %s", string(debug.Stack()))
 		}
 	}()
 	jsonrpc2.HandlerWithError(h.handle).Handle(ctx, conn, req)
