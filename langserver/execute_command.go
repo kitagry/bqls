@@ -58,26 +58,23 @@ func (h *Handler) handleTextDocumentCodeAction(ctx context.Context, conn *jsonrp
 		}
 		return commands, nil
 	}
-	if params.TextDocument.URI.IsFile() && strings.HasSuffix(string(params.TextDocument.URI), ".sql") {
-		commands := []lsp.Command{
-			{
-				Title:     "Execute Query",
-				Command:   CommandExecuteQuery,
-				Arguments: []any{params.TextDocument.URI},
-			},
-			{
-				Title:   "List Personal Job Histories",
-				Command: CommandListJobHistories,
-			},
-			{
-				Title:     "List Project Job Histories",
-				Command:   CommandListJobHistories,
-				Arguments: []any{"--all-user"},
-			},
-		}
-		return commands, nil
+	commands := []lsp.Command{
+		{
+			Title:     "Execute Query",
+			Command:   CommandExecuteQuery,
+			Arguments: []any{params.TextDocument.URI},
+		},
+		{
+			Title:   "List Personal Job Histories",
+			Command: CommandListJobHistories,
+		},
+		{
+			Title:     "List Project Job Histories",
+			Command:   CommandListJobHistories,
+			Arguments: []any{"--all-user"},
+		},
 	}
-	return nil, nil
+	return commands, nil
 }
 
 func (h *Handler) handleWorkspaceExecuteCommand(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
