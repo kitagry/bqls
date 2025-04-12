@@ -2,7 +2,7 @@
 
 ## `workspace/executeCommand`
 
-### `executeQuery`
+### `bqls.executeQuery`
 
 Execute a query and return the virtual text document url.
 
@@ -10,7 +10,7 @@ Request:
 
 ```json
 {
-    "command": "executeQuery",
+    "command": "bqls.executeQuery",
     "arguments": ["YOUR_DOCUMENT_URI"]
 }
 ```
@@ -27,7 +27,7 @@ Response:
 
 You can get the result of the query by requesting the `bqls/virtualTextDocument`.
 
-### `listDatasets`
+### `bqls.listDatasets`
 
 list up all datasets in the project.
 
@@ -35,7 +35,7 @@ Request:
 
 ```json
 {
-    "command": "listDatasets",
+    "command": "bqls.listDatasets",
     "arguments": ["YOUR_PROJECT_ID"]
 }
 ```
@@ -48,7 +48,7 @@ Response:
 }
 ```
 
-### `listTables`
+### `bqls.listTables`
 
 list up all tables in the dataset.
 
@@ -56,7 +56,7 @@ Request:
 
 ```json
 {
-    "command": "listTables",
+    "command": "bqls.listTables",
     "arguments": ["YOUR_PROJECT_ID", "YOUR_DATASET_ID"]
 }
 ```
@@ -69,7 +69,7 @@ Response:
 }
 ```
 
-### `listJobHistories`
+### `bqls.listJobHistories`
 
 list up job histories in the project.
 
@@ -82,7 +82,7 @@ Request:
 
 ```json
 {
-    "command": "listJobHistories",
+    "command": "bqls.listJobHistories",
 }
 ```
 
@@ -96,12 +96,12 @@ Response:
             "id": "job_id",
             "owner": "user@example.com",
             "summary": "job summary"
-        },
+        }
     ]
 }
 ```
 
-### `saveResult`
+### `bqls.saveResult`
 
 save bqls/virtualTextDocument result to file.
 
@@ -114,11 +114,11 @@ Request:
 
 ```json
 {
-    "command": "saveResult",
+    "command": "bqls.saveResult",
     "arguments": [
         "bqls://project/${project}/job/${job}",
         "file://path/to/target.csv"
-    ],
+    ]
 }
 ```
 

@@ -48,10 +48,10 @@ In order to save for spreadsheet, you should enable Google Drive API.
 - textDocument/definition
 - textDocument/codeAction
 - [workspace/executeCommand](./docs/api_reference.md#workspaceexecutecommand)
-    - [executeQuery](./docs/api_reference.md#executequery)
-    - [listDatasets](./docs/api_reference.md#listdatasets)
-    - [listTables](./docs/api_reference.md#listtables)
-    - [listJobHistories](./docs/api_reference.md#listjobhistories)
-    - [saveResult](./docs/api_reference.md#saveResult)
+    - [bqls.executeQuery](./docs/api_reference.md#bqlsexecutequery)
+    - [bqls.listDatasets](./docs/api_reference.md#bqlslistdatasets)
+    - [bqls.listTables](./docs/api_reference.md#bqlslisttables)
+    - [bqls.listJobHistories](./docs/api_reference.md#bqlslistjobhistories)
+    - [bqls.saveResult](./docs/api_reference.md#bqlssaveresult)
 - workspace/didChangeConfiguration
 - [bqls/virtualTextDocument](./docs/api_reference.md#bqlsvirtualtextdocument)
