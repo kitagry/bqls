@@ -8,6 +8,45 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
+func TestParseSpreadsheetURL(t *testing.T) {
+	tests := map[string]struct {
+		sheetURL              string
+		expectedSpreadsheetID string
+		expectedSheetID       int
+	}{
+		"parse spreadsheetID": {
+			sheetURL:              "https://docs.google.com/spreadsheets/d/asdf_asdfasdf/edit",
+			expectedSpreadsheetID: "asdf_asdfasdf",
+			expectedSheetID:       0,
+		},
+		"parse sheetID": {
+			sheetURL:              "https://docs.google.com/spreadsheets/d/asdf_asdfasdf/edit?gid=123#gid=123",
+			expectedSpreadsheetID: "asdf_asdfasdf",
+			expectedSheetID:       123,
+		},
+		"has extra query params": {
+			sheetURL:              "https://docs.google.com/spreadsheets/d/asdf_asdfasdf/edit?gid=123&foo=bar#gid=123",
+			expectedSpreadsheetID: "asdf_asdfasdf",
+			expectedSheetID:       123,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			gotSpreadsheetID, gotSheetID, err := parseSpreadsheetURL(tt.sheetURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotSpreadsheetID != tt.expectedSpreadsheetID {
+				t.Errorf("got %q, want %q", gotSpreadsheetID, tt.expectedSpreadsheetID)
+			}
+			if gotSheetID != tt.expectedSheetID {
+				t.Errorf("got %d, want %d", gotSheetID, tt.expectedSheetID)
+			}
+		})
+	}
+}
+
 func TestFormatCSV(t *testing.T) {
 	tests := map[string]struct {
 		record []bigquery.Value

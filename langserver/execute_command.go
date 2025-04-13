@@ -8,7 +8,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -363,7 +365,28 @@ func (h *Handler) commandSaveResult(ctx context.Context, params lsp.ExecuteComma
 		}
 		resultURL = filePath
 	case string(fileURI) == spreadsheetURI:
-		sheetURL, err := saveSpreadsheet(ctx, it, sheetTitle)
+		spreadsheet, err := createSpreadsheet(ctx, sheetTitle)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create spreadsheet: %w", err)
+		}
+
+		sheetURL, err := saveSpreadsheet(ctx, it, spreadsheet, 0)
+		if err != nil {
+			return nil, fmt.Errorf("failed to save spreadsheet: %w", err)
+		}
+		resultURL = sheetURL
+	case strings.HasPrefix(string(fileURI), "https://docs.google.com/spreadsheets/d/"):
+		spreadsheetID, sheetID, err := parseSpreadsheetURL(string(fileURI))
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse spreadsheet url: %w", err)
+		}
+
+		spreadsheet, err := findSpreadsheet(ctx, spreadsheetID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find spreadsheet: %w", err)
+		}
+
+		sheetURL, err := saveSpreadsheet(ctx, it, spreadsheet, sheetID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to save spreadsheet: %w", err)
 		}
@@ -420,10 +443,10 @@ func saveCsv(filePath string, it *bigquery.RowIterator) error {
 	return nil
 }
 
-func saveSpreadsheet(ctx context.Context, it *bigquery.RowIterator, sheetTitle string) (sheetURL string, err error) {
+func createSpreadsheet(ctx context.Context, sheetTitle string) (*sheets.Spreadsheet, error) {
 	svc, err := sheets.NewService(ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to create sheets service: %w", err)
+		return nil, fmt.Errorf("failed to create sheets service: %w", err)
 	}
 
 	spreadsheet := &sheets.Spreadsheet{
@@ -433,7 +456,41 @@ func saveSpreadsheet(ctx context.Context, it *bigquery.RowIterator, sheetTitle s
 	}
 	sheet, err := svc.Spreadsheets.Create(spreadsheet).Do()
 	if err != nil {
-		return "", err
+		return nil, err
+	}
+	return sheet, nil
+}
+
+func parseSpreadsheetURL(sheetURL string) (spreadsheetID string, sheetID int, err error) {
+	parsedURL, err := url.Parse(sheetURL)
+	if err != nil {
+		return "", 0, err
+	}
+
+	spreadsheetID = strings.TrimPrefix(parsedURL.Path, "/spreadsheets/d/")
+	if ind := strings.Index(spreadsheetID, "/"); ind != -1 {
+		spreadsheetID = spreadsheetID[:ind]
+	}
+
+	if gid := parsedURL.Query().Get("gid"); gid != "" {
+		sheetID, err = strconv.Atoi(gid)
+	}
+	return
+}
+
+func findSpreadsheet(ctx context.Context, sheetID string) (*sheets.Spreadsheet, error) {
+	svc, err := sheets.NewService(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create sheets service: %w", err)
+	}
+
+	return svc.Spreadsheets.Get(sheetID).Do()
+}
+
+func saveSpreadsheet(ctx context.Context, it *bigquery.RowIterator, spreadsheet *sheets.Spreadsheet, sheetID int) (sheetURL string, err error) {
+	svc, err := sheets.NewService(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to create sheets service: %w", err)
 	}
 
 	valueRange := &sheets.ValueRange{Values: make([][]any, 0)}
@@ -464,12 +521,20 @@ func saveSpreadsheet(ctx context.Context, it *bigquery.RowIterator, sheetTitle s
 		valueRange.Values = append(valueRange.Values, value)
 	}
 
-	_, err = svc.Spreadsheets.Values.Update(sheet.SpreadsheetId, sheet.Sheets[0].Properties.Title, valueRange).ValueInputOption("RAW").Do()
+	sheet := spreadsheet.Sheets[0]
+	for _, s := range spreadsheet.Sheets {
+		if s.Properties.SheetId != int64(sheetID) {
+			continue
+		}
+		sheet = s
+	}
+
+	_, err = svc.Spreadsheets.Values.Update(spreadsheet.SpreadsheetId, sheet.Properties.Title, valueRange).ValueInputOption("RAW").Do()
 	if err != nil {
 		return "", err
 	}
 
-	return sheet.SpreadsheetUrl, nil
+	return spreadsheet.SpreadsheetUrl, nil
 }
 
 func formatCSV(record []bigquery.Value, schema bigquery.Schema) ([]string, error) {
