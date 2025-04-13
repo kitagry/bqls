@@ -108,7 +108,11 @@ save bqls/virtualTextDocument result to file.
 arguments:
 
 * 1st: target virtualTextDocument to save from.
-* 2nd: target file to save. (currently, only csv file is supported)
+* 2nd: target file to save. (currently, only csv file and spreadsheet is supported)
+    * csv: `file://path/to/target.csv`
+    * spreadsheet:
+        * `sheet://new`: create new spreadsheet and save result
+        * `https://docs.google.com/spreadsheets/d/asdf_asdfasdf/edit?gid=123`: overwrite result to existing spreadsheet
 
 Request:
 
