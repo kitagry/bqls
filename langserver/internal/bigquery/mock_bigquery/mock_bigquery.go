@@ -51,6 +51,21 @@ func (mr *MockClientMockRecorder) Close() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockClient)(nil).Close))
 }
 
+// GetDatasetMetadata mocks base method.
+func (m *MockClient) GetDatasetMetadata(ctx context.Context, projectID, datasetID string) (*bigquery.DatasetMetadata, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetDatasetMetadata", ctx, projectID, datasetID)
+	ret0, _ := ret[0].(*bigquery.DatasetMetadata)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetDatasetMetadata indicates an expected call of GetDatasetMetadata.
+func (mr *MockClientMockRecorder) GetDatasetMetadata(ctx, projectID, datasetID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDatasetMetadata", reflect.TypeOf((*MockClient)(nil).GetDatasetMetadata), ctx, projectID, datasetID)
+}
+
 // GetDefaultProject mocks base method.
 func (m *MockClient) GetDefaultProject() string {
 	m.ctrl.T.Helper()
