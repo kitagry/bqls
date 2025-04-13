@@ -33,6 +33,10 @@ You can change project_id with `workspace/didChangeConfiguration`.
 vim.lsp.get_clients({ name = "bqls" })[1].settings = { project_id="ANOTHER_PROJECT_ID" }
 ```
 
+### VSCode
+
+You can use [bqls-vscode](https://github.com/yokomotod/bqls-vscode).
+
 ## Save Result
 
 In order to save for spreadsheet, you should enable Google Drive API.
