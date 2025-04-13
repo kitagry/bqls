@@ -103,6 +103,8 @@ func (h *Handler) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2
 		return h.handleTextDocumentHover(ctx, conn, req)
 	case "textDocument/completion":
 		return h.handleTextDocumentCompletion(ctx, conn, req)
+	case "completionItem/resolve":
+		return h.handleCompletionItemResolve(ctx, conn, req)
 	case "textDocument/definition":
 		return h.handleTextDocumentDefinition(ctx, conn, req)
 	case "textDocument/codeAction":
