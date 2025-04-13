@@ -20,11 +20,11 @@ import (
 )
 
 const (
-	CommandExecuteQuery     = "executeQuery"
-	CommandListDatasets     = "listDatasets"
-	CommandListTables       = "listTables"
-	CommandListJobHistories = "listJobHistories"
-	CommandSaveResult       = "saveResult"
+	CommandExecuteQuery     = "bqls.executeQuery"
+	CommandListDatasets     = "bqls.listDatasets"
+	CommandListTables       = "bqls.listTables"
+	CommandListJobHistories = "bqls.listJobHistories"
+	CommandSaveResult       = "bqls.saveResult"
 )
 
 const (
