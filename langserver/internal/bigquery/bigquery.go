@@ -27,6 +27,9 @@ type Client interface {
 	// ListTables lists all tables in the specified dataset.
 	ListTables(ctx context.Context, projectID, datasetID string) ([]*bigquery.Table, error)
 
+	// GetDatasetMetadata returns the metadata of the specified dataset.
+	GetDatasetMetadata(ctx context.Context, projectID, datasetID string) (*bigquery.DatasetMetadata, error)
+
 	// GetTableMetadata returns the metadata of the specified table.
 	GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.TableMetadata, error)
 
@@ -173,6 +176,15 @@ func (c *client) ListTables(ctx context.Context, projectID, datasetID string) ([
 	tables = extractLatestSuffixTables(tables)
 
 	return tables, nil
+}
+
+func (c *client) GetDatasetMetadata(ctx context.Context, projectID, datasetID string) (*bigquery.DatasetMetadata, error) {
+	md, err := c.bqClient.DatasetInProject(projectID, datasetID).Metadata(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("fail to get metadata: %w", err)
+	}
+
+	return md, nil
 }
 
 func (c *client) GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.TableMetadata, error) {
