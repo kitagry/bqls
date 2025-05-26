@@ -111,18 +111,18 @@ func (mr *MockClientMockRecorder) GetTableRecord(ctx, projectID, datasetID, tabl
 }
 
 // JobFromProject mocks base method.
-func (m *MockClient) JobFromProject(ctx context.Context, projectID, id string) (bigquery0.BigqueryJob, error) {
+func (m *MockClient) JobFromProject(ctx context.Context, projectID, jobID, location string) (bigquery0.BigqueryJob, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "JobFromProject", ctx, projectID, id)
+	ret := m.ctrl.Call(m, "JobFromProject", ctx, projectID, jobID, location)
 	ret0, _ := ret[0].(bigquery0.BigqueryJob)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // JobFromProject indicates an expected call of JobFromProject.
-func (mr *MockClientMockRecorder) JobFromProject(ctx, projectID, id interface{}) *gomock.Call {
+func (mr *MockClientMockRecorder) JobFromProject(ctx, projectID, jobID, location interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "JobFromProject", reflect.TypeOf((*MockClient)(nil).JobFromProject), ctx, projectID, id)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "JobFromProject", reflect.TypeOf((*MockClient)(nil).JobFromProject), ctx, projectID, jobID, location)
 }
 
 // Jobs mocks base method.
@@ -263,6 +263,20 @@ func (m *MockBigqueryJob) LastStatus() *bigquery.JobStatus {
 func (mr *MockBigqueryJobMockRecorder) LastStatus() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LastStatus", reflect.TypeOf((*MockBigqueryJob)(nil).LastStatus))
+}
+
+// Location mocks base method.
+func (m *MockBigqueryJob) Location() string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Location")
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// Location indicates an expected call of Location.
+func (mr *MockBigqueryJobMockRecorder) Location() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Location", reflect.TypeOf((*MockBigqueryJob)(nil).Location))
 }
 
 // ProjectID mocks base method.

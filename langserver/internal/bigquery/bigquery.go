@@ -12,6 +12,10 @@ import (
 	"google.golang.org/api/iterator"
 )
 
+const (
+	defaultLocation = "US" // Default location for BigQuery if not specified
+)
+
 type Client interface {
 	Close() error
 
@@ -40,7 +44,7 @@ type Client interface {
 	Run(ctx context.Context, q string, dryrun bool) (BigqueryJob, error)
 
 	// JobFromID returns the job with the specified ID.
-	JobFromProject(ctx context.Context, projectID, id string) (BigqueryJob, error)
+	JobFromProject(ctx context.Context, projectID, jobID, location string) (BigqueryJob, error)
 
 	// Jobs returns the iterator of all jobs.
 	Jobs(ctx context.Context) *bigquery.JobIterator
@@ -51,7 +55,7 @@ type client struct {
 	cloudresourcemanagerService *cloudresourcemanager.Service
 }
 
-func New(ctx context.Context, projectID string, withCache bool, looger *logrus.Logger) (Client, error) {
+func New(ctx context.Context, projectID, location string, withCache bool, looger *logrus.Logger) (Client, error) {
 	if projectID == "" {
 		var err error
 		projectID, err = getDefaultProjectID(ctx, looger)
@@ -69,6 +73,11 @@ func New(ctx context.Context, projectID string, withCache bool, looger *logrus.L
 	if err != nil {
 		return nil, fmt.Errorf("bigquery.NewClient: %w", err)
 	}
+
+	if location == "" {
+		location = defaultLocation
+	}
+	bqClient.Location = location
 
 	var client Client = &client{bqClient, cloudresourcemanagerService}
 	if withCache {
@@ -212,6 +221,7 @@ func (c *client) GetTableRecord(ctx context.Context, projectID, datasetID, table
 
 type BigqueryJob interface {
 	ID() string
+	Location() string
 	ProjectID() string
 	Read(context.Context) (*bigquery.RowIterator, error)
 	LastStatus() *bigquery.JobStatus
@@ -243,8 +253,8 @@ func (c *client) Run(ctx context.Context, q string, dryrun bool) (BigqueryJob, e
 	return newJobWrapper(job), nil
 }
 
-func (c *client) JobFromProject(ctx context.Context, projectID, id string) (BigqueryJob, error) {
-	job, err := c.bqClient.JobFromProject(ctx, projectID, id, c.bqClient.Location)
+func (c *client) JobFromProject(ctx context.Context, projectID, jobID, location string) (BigqueryJob, error) {
+	job, err := c.bqClient.JobFromProject(ctx, projectID, jobID, location)
 	if err != nil {
 		return nil, fmt.Errorf("fail to get job: %w", err)
 	}

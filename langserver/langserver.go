@@ -48,7 +48,13 @@ func NewHandler(isDebug bool) *Handler {
 }
 
 func (h *Handler) setupByInitializeParams() error {
-	bqClient, err := bigquery.New(context.Background(), h.initializeParams.InitializationOptions.ProjectID, true, h.logger)
+	bqClient, err := bigquery.New(
+		context.Background(),
+		h.initializeParams.InitializationOptions.ProjectID,
+		h.initializeParams.InitializationOptions.Location,
+		true,
+		h.logger,
+	)
 	if err != nil {
 		return err
 	}
@@ -117,12 +123,4 @@ func (h *Handler) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2
 		return h.handleVirtualTextDocument(ctx, conn, req)
 	}
 	return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeMethodNotFound, Message: fmt.Sprintf("method not supported: %s", req.Method)}
-}
-
-func uriToDocumentURI(uri string) lsp.DocumentURI {
-	return lsp.DocumentURI(fmt.Sprintf("file://%s", uri))
-}
-
-func documentURIToURI(duri lsp.DocumentURI) string {
-	return string(duri)[len("file://"):]
 }
