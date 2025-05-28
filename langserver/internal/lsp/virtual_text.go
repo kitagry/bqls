@@ -20,8 +20,8 @@ type QueryResult struct {
 	Data    [][]bigquery.Value `json:"data"`
 }
 
-func NewJobVirtualTextDocumentURI(projectID, jobID string) DocumentURI {
-	return DocumentURI(fmt.Sprintf("bqls://project/%s/job/%s", projectID, jobID))
+func NewJobVirtualTextDocumentURI(projectID, jobID, location string) DocumentURI {
+	return DocumentURI(fmt.Sprintf("bqls://project/%s/job/%s/location/%s", projectID, jobID, location))
 }
 
 func NewTableVirtualTextDocumentURI(projectID, datasetID, tableID string) DocumentURI {

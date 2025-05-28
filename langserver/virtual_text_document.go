@@ -49,7 +49,7 @@ func (h *Handler) handleVirtualTextDocument(ctx context.Context, conn *jsonrpc2.
 		h.workDoneProgressReport(ctx, workDoneToken, lsp.WorkDoneProgressReport{
 			Message: "Fetching job info...",
 		})
-		markedStrings, it, err = h.project.GetJobInfo(ctx, virtualTextDocument.ProjectID, virtualTextDocument.JobID)
+		markedStrings, it, err = h.project.GetJobInfo(ctx, virtualTextDocument.ProjectID, virtualTextDocument.JobID, virtualTextDocument.Location)
 		if err != nil {
 			return nil, err
 		}

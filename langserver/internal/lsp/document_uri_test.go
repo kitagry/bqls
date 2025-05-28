@@ -22,10 +22,11 @@ func TestParseVirtualTextDocument(t *testing.T) {
 			},
 		},
 		"Parse project job": {
-			uri: "bqls://project/p/job/j",
+			uri: "bqls://project/p/job/j/location/l",
 			expected: lsp.VirtualTextDocumentInfo{
 				ProjectID: "p",
 				JobID:     "j",
+				Location:  "l",
 			},
 		},
 	}

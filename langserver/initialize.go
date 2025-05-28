@@ -10,6 +10,7 @@ import (
 
 type InitializeOption struct {
 	ProjectID string `json:"project_id"`
+	Location  string `json:"location"`
 }
 
 func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {

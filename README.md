@@ -15,14 +15,15 @@ gcloud auth application-default login
 
 ### Neovim
 
-You can use [bqls.nvim](https://github.com/kitagry/bqls.nvim).
+You can use [bqls.nvim](https://github.com/kitagry/bqls.nvim) to integrate BigQuery with Neovim.
 
-You can set Bigquery Project ID. If you don't specify it, `gcloud config get project` will be used.
+You can specify your BigQuery Project ID and location in the configuration. If not specified, the plugin will use `gcloud config get project` for the Project ID and `US` as the default location.
 
 ```lua
 require("lspconfig").bqls.setup({
   settings = {
     project_id = "YOUR_PROJECT_ID",
+    location = "YOUR_LOCATION",
   },
 })
 ```
@@ -30,7 +31,7 @@ require("lspconfig").bqls.setup({
 You can change project_id with `workspace/didChangeConfiguration`.
 
 ```lua
-vim.lsp.get_clients({ name = "bqls" })[1].settings = { project_id="ANOTHER_PROJECT_ID" }
+vim.lsp.buf_notify(0, "workspace/didChangeConfiguration", { settings = { project_id = "ANOTHER_PROJECT_ID", location = "ANOTHER_LOCATION" } })
 ```
 
 ### VSCode

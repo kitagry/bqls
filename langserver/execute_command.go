@@ -129,7 +129,7 @@ func (h *Handler) commandExecuteQuery(ctx context.Context, params lsp.ExecuteCom
 
 	return &lsp.ExecuteQueryResult{
 		TextDocument: lsp.TextDocumentIdentifier{
-			URI: lsp.NewJobVirtualTextDocumentURI(job.ProjectID(), job.ID()),
+			URI: lsp.NewJobVirtualTextDocumentURI(job.ProjectID(), job.ID(), job.Location()),
 		},
 	}, nil
 }
@@ -283,7 +283,7 @@ func (h *Handler) listJobs(ctx context.Context, projectID string, allUsers bool,
 
 		result = append(result, lsp.JobHistory{
 			TextDocument: lsp.TextDocumentIdentifier{
-				URI: lsp.NewJobVirtualTextDocumentURI(projectID, job.ID()),
+				URI: lsp.NewJobVirtualTextDocumentURI(projectID, job.ID(), job.Location()),
 			},
 			ID:      job.ID(),
 			Owner:   job.Email(),
@@ -335,7 +335,7 @@ func (h *Handler) commandSaveResult(ctx context.Context, params lsp.ExecuteComma
 		}
 		sheetTitle = fmt.Sprintf("%s.%s.%s", virtualTextDocumentInfo.ProjectID, virtualTextDocumentInfo.DatasetID, virtualTextDocumentInfo.TableID)
 	} else if virtualTextDocumentInfo.JobID != "" {
-		job, err := h.bqClient.JobFromProject(ctx, virtualTextDocumentInfo.ProjectID, virtualTextDocumentInfo.JobID)
+		job, err := h.bqClient.JobFromProject(ctx, virtualTextDocumentInfo.ProjectID, virtualTextDocumentInfo.JobID, virtualTextDocumentInfo.Location)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get job: %w", err)
 		}

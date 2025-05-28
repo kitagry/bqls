@@ -118,14 +118,13 @@ func (p *Project) Run(ctx context.Context, uri lsp.DocumentURI) (bigquery.Bigque
 	return result, nil
 }
 
-func (p *Project) GetJobInfo(ctx context.Context, projectID, jobID string) ([]lsp.MarkedString, *bq.RowIterator, error) {
-	job, err := p.bqClient.JobFromProject(ctx, projectID, jobID)
+func (p *Project) GetJobInfo(ctx context.Context, projectID, jobID, location string) ([]lsp.MarkedString, *bq.RowIterator, error) {
+	job, err := p.bqClient.JobFromProject(ctx, projectID, jobID, location)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// FIXME: region should be dynamic
-	markedStrings, err := buildBigQueryJobMarkedString(projectID, "US", job)
+	markedStrings, err := buildBigQueryJobMarkedString(job)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -137,7 +136,7 @@ func (p *Project) GetJobInfo(ctx context.Context, projectID, jobID string) ([]ls
 	return markedStrings, it, nil
 }
 
-func buildBigQueryJobMarkedString(projectID, region string, job bigquery.BigqueryJob) ([]lsp.MarkedString, error) {
+func buildBigQueryJobMarkedString(job bigquery.BigqueryJob) ([]lsp.MarkedString, error) {
 	var result []lsp.MarkedString
 
 	sb := strings.Builder{}

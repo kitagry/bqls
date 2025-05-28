@@ -32,7 +32,7 @@ func (d DocumentURI) VirtualTextDocumentInfo() (VirtualTextDocumentInfo, error) 
 
 	result := VirtualTextDocumentInfo{}
 	for suffix != "" {
-		for _, prefix := range []string{"project/", "dataset/", "table/", "job/"} {
+		for _, prefix := range []string{"project/", "dataset/", "table/", "job/", "location/"} {
 			after, ok := strings.CutPrefix(suffix, prefix)
 			if !ok {
 				continue
@@ -56,6 +56,8 @@ func (d DocumentURI) VirtualTextDocumentInfo() (VirtualTextDocumentInfo, error) 
 				result.TableID = val
 			} else if prefix == "job/" {
 				result.JobID = val
+			} else if prefix == "location/" {
+				result.Location = val
 			}
 		}
 	}
@@ -72,6 +74,7 @@ type VirtualTextDocumentInfo struct {
 	DatasetID string
 	TableID   string
 	JobID     string
+	Location  string
 }
 
 func (v VirtualTextDocumentInfo) validate() error {
@@ -83,11 +86,11 @@ func (v VirtualTextDocumentInfo) validate() error {
 		return nil
 	}
 
-	if v.JobID != "" {
+	if v.JobID != "" && v.Location != "" {
 		return nil
 	}
 
-	return fmt.Errorf("either dataset ID and table ID or job ID is required")
+	return fmt.Errorf("either dataset ID and table ID or job ID and location ID is required")
 }
 
 func toPtr[T any](t T) *T {
