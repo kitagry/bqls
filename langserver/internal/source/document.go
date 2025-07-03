@@ -475,6 +475,27 @@ func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([
 		}
 	}
 
+	if metadata.TimePartitioning != nil {
+		sb.WriteString("* Time Partitioning:\n")
+		fmt.Fprintf(&sb, "  * Type: %s\n", metadata.TimePartitioning.Type)
+		if metadata.TimePartitioning.Field != "" {
+			fmt.Fprintf(&sb, "  * Field: %s\n", metadata.TimePartitioning.Field)
+		}
+		if metadata.TimePartitioning.RequirePartitionFilter {
+			fmt.Fprintf(&sb, "  * Partition Filter: required\n")
+		}
+	}
+
+	if metadata.RangePartitioning != nil {
+		sb.WriteString("* Range Partitioning:\n")
+		fmt.Fprintf(&sb, "  * Field: %s\n", metadata.RangePartitioning.Field)
+		if metadata.RangePartitioning.Range != nil {
+			fmt.Fprintf(&sb, "  * Start: %d\n", metadata.RangePartitioning.Range.Start)
+			fmt.Fprintf(&sb, "  * End: %d\n", metadata.RangePartitioning.Range.End)
+			fmt.Fprintf(&sb, "  * Interval: %d\n", metadata.RangePartitioning.Range.Interval)
+		}
+	}
+
 	sb.WriteString("\n### Storage info\n\n")
 
 	p := message.NewPrinter(language.English)
