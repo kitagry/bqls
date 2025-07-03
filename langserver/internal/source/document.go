@@ -420,17 +420,17 @@ func createBigQuerySchemaYamlString(schema bigquery.Schema, depth int) string {
 func createBigQueryFieldYamlString(field *bigquery.FieldSchema, depth int) string {
 	indent := strings.Repeat("  ", depth)
 	builder := &strings.Builder{}
-	builder.WriteString(fmt.Sprintf("%s- name: %s\n", indent, field.Name))
-	builder.WriteString(fmt.Sprintf("%s  type: %s\n", indent, field.Type))
+	fmt.Fprintf(builder, "%s- name: %s\n", indent, field.Name)
+	fmt.Fprintf(builder, "%s  type: %s\n", indent, field.Type)
 
 	if field.Repeated {
-		builder.WriteString(fmt.Sprintf("%s  mode: REPEATED\n", indent))
+		fmt.Fprintf(builder, "%s  mode: REPEATED\n", indent)
 	} else if field.Required {
-		builder.WriteString(fmt.Sprintf("%s  mode: REQUIRED\n", indent))
+		fmt.Fprintf(builder, "%s  mode: REQUIRED\n", indent)
 	}
 
 	if field.Description != "" {
-		builder.WriteString(fmt.Sprintf("%s  description: %s\n", indent, field.Description))
+		fmt.Fprintf(builder, "%s  description: %s\n", indent, field.Description)
 	}
 
 	if len(field.Schema) > 0 {
@@ -443,26 +443,26 @@ func createBigQueryFieldYamlString(field *bigquery.FieldSchema, depth int) strin
 func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([]lsp.MarkedString, error) {
 	var sb strings.Builder
 	sb.Grow(1024)
-	sb.WriteString(fmt.Sprintf("## %s\n", metadata.FullID))
+	fmt.Fprintf(&sb, "## %s\n", metadata.FullID)
 
 	if len(metadata.Description) > 0 {
-		sb.WriteString(fmt.Sprintf("%s\n", metadata.Description))
+		fmt.Fprintf(&sb, "%s\n", metadata.Description)
 	}
 
 	sb.WriteString("\n### Table info\n\n")
 
-	sb.WriteString(fmt.Sprintf("* Created: %s\n", metadata.CreationTime.Format("2006-01-02 15:04:05")))
+	fmt.Fprintf(&sb, "* Created: %s\n", metadata.CreationTime.Format("2006-01-02 15:04:05"))
 	// If cache the metadata, we should delete last modified time because it is confusing.
-	sb.WriteString(fmt.Sprintf("* Last modified: %s\n", metadata.LastModifiedTime.Format("2006-01-02 15:04:05")))
+	fmt.Fprintf(&sb, "* Last modified: %s\n", metadata.LastModifiedTime.Format("2006-01-02 15:04:05"))
 
 	if !metadata.ExpirationTime.IsZero() {
-		sb.WriteString(fmt.Sprintf("* Expired: %s\n", metadata.ExpirationTime.Format("2006-01-02 15:04:05")))
+		fmt.Fprintf(&sb, "* Expired: %s\n", metadata.ExpirationTime.Format("2006-01-02 15:04:05"))
 	}
 
 	if len(metadata.Labels) > 0 {
 		sb.WriteString("* Labels:\n")
 		for k, v := range metadata.Labels {
-			sb.WriteString(fmt.Sprintf(" * %s: %s\n", k, v))
+			fmt.Fprintf(&sb, " * %s: %s\n", k, v)
 		}
 	}
 
@@ -470,7 +470,7 @@ func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([
 		if len(metadata.TableConstraints.PrimaryKey.Columns) > 0 {
 			sb.WriteString("* Primary Key:\n")
 			for _, c := range metadata.TableConstraints.PrimaryKey.Columns {
-				sb.WriteString(fmt.Sprintf("  * %s\n", c))
+				fmt.Fprintf(&sb, "  * %s\n", c)
 			}
 		}
 	}
@@ -479,11 +479,11 @@ func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([
 
 	p := message.NewPrinter(language.English)
 	sb.WriteString(p.Sprintf("* Number of rows: %d\n", metadata.NumRows))
-	sb.WriteString(fmt.Sprintf("* Total logical bytes: %s\n", bytesConvert(metadata.NumBytes)))
+	fmt.Fprintf(&sb, "* Total logical bytes: %s\n", bytesConvert(metadata.NumBytes))
 
 	projectID, datasetID, tableID, ok := extractTableIDsFromMedatada(metadata)
 	if ok {
-		sb.WriteString(fmt.Sprintf("\n[Docs](https://console.cloud.google.com/bigquery?project=%[1]s&ws=!1m5!1m4!4m3!1s%[1]s!2s%[2]s!3s%[3]s)\n", projectID, datasetID, tableID))
+		fmt.Fprintf(&sb, "\n[Docs](https://console.cloud.google.com/bigquery?project=%[1]s&ws=!1m5!1m4!4m3!1s%[1]s!2s%[2]s!3s%[3]s)\n", projectID, datasetID, tableID)
 	}
 
 	return []lsp.MarkedString{
