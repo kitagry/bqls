@@ -125,6 +125,134 @@ table description
 				},
 			},
 		},
+		"hover table with time partitioning": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT * FROM |`project.dataset.partitioned_table`",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "partitioned_table").Return(&bq.TableMetadata{
+					FullID:           "project.dataset.partitioned_table",
+					Description:      "partitioned table description",
+					CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+					LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+					TimePartitioning: &bq.TimePartitioning{
+						Type:  bq.DayPartitioningType,
+						Field: "created_at",
+					},
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Type:        bq.IntegerFieldType,
+							Description: "id description",
+						},
+						{
+							Name: "created_at",
+							Type: bq.TimestampFieldType,
+						},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{
+					Language: "markdown",
+					Value: `## project.dataset.partitioned_table
+partitioned table description
+
+### Table info
+
+* Created: 2023-06-17 00:00:00
+* Last modified: 2023-06-17 00:00:00
+* Time Partitioning:
+  * Type: DAY
+  * Field: created_at
+
+### Storage info
+
+* Number of rows: 0
+* Total logical bytes: 0 bytes
+`,
+				},
+				{
+					Language: "yaml",
+					Value: `- name: id
+  type: INTEGER
+  description: id description
+- name: created_at
+  type: TIMESTAMP
+`,
+				},
+			},
+		},
+		"hover table with range partitioning": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT * FROM |`project.dataset.range_partitioned_table`",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "range_partitioned_table").Return(&bq.TableMetadata{
+					FullID:           "project.dataset.range_partitioned_table",
+					Description:      "range partitioned table description",
+					CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+					LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+					RangePartitioning: &bq.RangePartitioning{
+						Field: "customer_id",
+						Range: &bq.RangePartitioningRange{
+							Start:    0,
+							End:      1000,
+							Interval: 100,
+						},
+					},
+					Schema: bq.Schema{
+						{
+							Name:        "customer_id",
+							Type:        bq.IntegerFieldType,
+							Description: "customer id description",
+						},
+						{
+							Name: "order_date",
+							Type: bq.DateFieldType,
+						},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{
+					Language: "markdown",
+					Value: `## project.dataset.range_partitioned_table
+range partitioned table description
+
+### Table info
+
+* Created: 2023-06-17 00:00:00
+* Last modified: 2023-06-17 00:00:00
+* Range Partitioning:
+  * Field: customer_id
+  * Start: 0
+  * End: 1000
+  * Interval: 100
+
+### Storage info
+
+* Number of rows: 0
+* Total logical bytes: 0 bytes
+`,
+				},
+				{
+					Language: "yaml",
+					Value: `- name: customer_id
+  type: INTEGER
+  description: customer id description
+- name: order_date
+  type: DATE
+`,
+				},
+			},
+		},
 		"hover joined table": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM `project.dataset.table` table1 JOIN |`project.dataset.table` table2 ON table1.name = table2.name",
