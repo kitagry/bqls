@@ -13,7 +13,7 @@ require (
 	github.com/PuerkitoBio/goquery v1.10.2
 	github.com/goccy/go-zetasql v0.5.5
 	github.com/golang/mock v1.6.0
-	github.com/mattn/go-sqlite3 v1.14.28
+	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/sirupsen/logrus v1.9.3
 	golang.org/x/text v0.28.0
 	google.golang.org/api v0.248.0
