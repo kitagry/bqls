@@ -119,7 +119,7 @@ func (h *Handler) commandExecuteQuery(ctx context.Context, params lsp.ExecuteCom
 	workDoneToken := lsp.ProgressToken("execute_query")
 	h.workDoneProgressBegin(ctx, workDoneToken, lsp.WorkDoneProgressBegin{
 		Title:   "Execute Query",
-		Message: "Runing query...",
+		Message: "Running query...",
 	})
 	defer h.workDoneProgressEnd(ctx, workDoneToken, lsp.WorkDoneProgressEnd{})
 	job, err := h.project.Run(ctx, path)
