@@ -224,37 +224,62 @@ func parseZetaSQLError(err error) Error {
 //
 // SELECT true FROM table
 func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) {
-	// src is a word that ends with a dot.
-	loc := lastDotRegex.FindIndex([]byte(src + " "))
-	if len(loc) != 2 {
-		return src, make([]Error, 0), nil
-	}
-
+	fixedBuilder := strings.Builder{}
+	currentOffset := 0
 	errs = make([]Error, 0, 1)
 	fixOffsets = make([]FixOffset, 0, 1)
-	for len(loc) == 2 {
-		// sql.Rawtext[loc[1]] is a space or end of file.
-		targetWord := src[loc[0] : loc[1]-1]
-		src = src[:loc[0]] + "true" + src[loc[1]-1:]
-		pos, _ := byteOffsetToPosition(src, loc[0])
-		errs = append(errs, Error{
-			Msg:                  fmt.Sprintf("INVALID_ARGUMENT: Unrecognized name: %s", targetWord),
-			Position:             pos,
-			TermLength:           len(targetWord),
-			IncompleteColumnName: targetWord,
-		})
-		fixOffsets = append(fixOffsets, FixOffset{
-			Offset: loc[0] + len(targetWord),
-			Length: len("true") - len(targetWord),
-		})
-
-		oldLoc := loc
-		loc = lastDotRegex.FindIndex([]byte(src))
-		if len(loc) == 2 && loc[0] == oldLoc[0] {
-			break
+	for line := range strings.SplitSeq(src, "\n") {
+		ind := len(line)
+		// NOTE: to skip comments
+		// TODO: handle multi-line comments
+		if i := strings.Index(line, "--"); i != -1 {
+			ind = i
 		}
+		if i := strings.Index(line, "//"); i != -1 && i < ind {
+			ind = i
+		}
+
+		// src is a word that ends with a dot.
+		loc := lastDotRegex.FindIndex([]byte(line[:ind] + " "))
+		if len(loc) != 2 {
+			fixedBuilder.WriteString(line + "\n")
+			currentOffset += len(line) + 1
+			continue
+		}
+
+		for len(loc) == 2 {
+			// sql.Rawtext[loc[1]] is a space or end of file.
+			srcStart := currentOffset + loc[0]
+			targetWord := line[loc[0] : loc[1]-1]
+			line = line[:loc[0]] + "true" + line[loc[1]-1:]
+			pos, _ := byteOffsetToPosition(src, srcStart)
+			errs = append(errs, Error{
+				Msg:                  fmt.Sprintf("INVALID_ARGUMENT: Unrecognized name: %s", targetWord),
+				Position:             pos,
+				TermLength:           len(targetWord),
+				IncompleteColumnName: targetWord,
+			})
+			fixOffsets = append(fixOffsets, FixOffset{
+				Offset: srcStart + len(targetWord),
+				Length: len("true") - len(targetWord),
+			})
+
+			oldLoc := loc
+			ind -= len(targetWord) - len("true")
+			loc = lastDotRegex.FindIndex([]byte(line[:ind] + " "))
+			if len(loc) == 2 && loc[0] == oldLoc[0] {
+				break
+			}
+		}
+		fixedBuilder.WriteString(line + "\n")
+		currentOffset += len(line) + 1
 	}
-	return src, errs, fixOffsets
+
+	fixed := fixedBuilder.String()
+	if !strings.HasSuffix(src, "\n") && strings.HasSuffix(fixed, "\n") {
+		fixed = fixed[:len(fixed)-1]
+	}
+	return fixed, errs, fixOffsets
 }
 
 // fix SELECT list must not be empty

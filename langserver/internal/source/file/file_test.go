@@ -77,6 +77,11 @@ func TestProject_ParseFile(t *testing.T) {
 				},
 			},
 		},
+		"ignore dot comment": {
+			file:               "SELECT 1; -- last dot comment t.",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
 		"parse dot in where clause": {
 			file: "SELECT * FROM `project.dataset.table` t\nWHERE t.",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
