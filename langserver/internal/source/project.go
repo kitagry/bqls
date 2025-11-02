@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	bq "cloud.google.com/go/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
@@ -122,6 +123,15 @@ func (p *Project) GetJobInfo(ctx context.Context, projectID, jobID, location str
 	job, err := p.bqClient.JobFromProject(ctx, projectID, jobID, location)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	maxPendingChecks := 300
+	for i := 0; i < maxPendingChecks && job.LastStatus().State != bq.Done; i++ {
+		time.Sleep(100 * time.Millisecond)
+		job, err = p.bqClient.JobFromProject(ctx, projectID, jobID, location)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	markedStrings, err := buildBigQueryJobMarkedString(job)
