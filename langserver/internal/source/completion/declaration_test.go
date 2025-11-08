@@ -78,6 +78,7 @@ func TestProject_CompleteDeclaration(t *testing.T) {
 			}
 
 			parsedFile := analyzer.ParseFile(path, files[path])
+			defer parsedFile.Close()
 
 			got := completor.completeDeclaration(context.Background(), parsedFile, position)
 			if diff := cmp.Diff(got, tt.expectCompletionItems); diff != "" {

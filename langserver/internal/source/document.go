@@ -21,6 +21,7 @@ import (
 func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, position lsp.Position) ([]lsp.MarkedString, error) {
 	sql := p.cache.Get(uri)
 	parsedFile := p.analyzer.ParseFile(uri, sql.RawText)
+	defer parsedFile.Close()
 
 	termOffset := parsedFile.TermOffset(position)
 	targetNode, ok := file.SearchAstNode[*ast.PathExpressionNode](parsedFile.Node, termOffset)

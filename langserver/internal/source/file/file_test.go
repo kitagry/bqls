@@ -643,6 +643,7 @@ func TestProject_ParseFile(t *testing.T) {
 
 			analyzer := file.NewAnalyzer(logger, bqClient)
 			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
 			if diff := cmp.Diff(tt.expectedErrs, got.Errors, cmpopts.IgnoreUnexported()); diff != "" {
 				t.Errorf("ParseFile result diff (-expect, +got)\n%s", diff)
 			}
@@ -691,6 +692,7 @@ func TestProject_ParseFileWithIncompleteTable(t *testing.T) {
 			analyzer := file.NewAnalyzer(logger, bqClient)
 
 			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
 			if diff := cmp.Diff(tt.expectedErrs, got.Errors, cmpopts.IgnoreUnexported()); diff != "" {
 				t.Errorf("ParseFile result diff (-expect, +got)\n%s", diff)
 			}
@@ -812,6 +814,7 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 			analyzer := file.NewAnalyzer(logger, bqClient)
 
 			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
 			if diff := cmp.Diff(tt.expectedErrs, got.Errors, cmpopts.IgnoreUnexported()); diff != "" {
 				t.Errorf("ParseFile result diff (-expect, +got)\n%s", diff)
 			}

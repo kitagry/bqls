@@ -36,6 +36,7 @@ func (c *completor) Complete(ctx context.Context, parsedFile file.ParsedFile, po
 	result = append(result, c.completeColumns(ctx, parsedFile, position)...)
 	result = append(result, c.completeBuiltinFunction(ctx, parsedFile, position)...)
 	result = append(result, c.completeDeclaration(ctx, parsedFile, position)...)
+	result = append(result, c.completeKeyword(ctx, parsedFile, position)...)
 	return result, nil
 }
 

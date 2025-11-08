@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	bq "cloud.google.com/go/bigquery"
+	tssql "github.com/DerekStride/tree-sitter-sql/bindings/go"
 	"github.com/goccy/go-zetasql"
 	"github.com/goccy/go-zetasql/ast"
 	"github.com/goccy/go-zetasql/types"
@@ -13,6 +14,7 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/helper"
 	"github.com/sirupsen/logrus"
+	ts "github.com/tree-sitter/go-tree-sitter"
 )
 
 type Analyzer struct {
@@ -206,11 +208,18 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 	retry:
 	}
 
+	parser := ts.NewParser()
+	defer parser.Close()
+	parser.SetLanguage(ts.NewLanguage(tssql.Language()))
+
+	tree := parser.Parse([]byte(fixedSrc), nil)
+
 	return ParsedFile{
 		URI:        uri,
 		Src:        src,
 		Node:       node,
 		RNode:      rnode,
+		TsTree:     tree,
 		FixOffsets: fixOffsets,
 		Errors:     errs,
 	}
