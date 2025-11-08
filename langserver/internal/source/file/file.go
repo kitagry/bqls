@@ -11,6 +11,7 @@ import (
 	"github.com/goccy/go-zetasql/ast"
 	"github.com/goccy/go-zetasql/types"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
+	ts "github.com/tree-sitter/go-tree-sitter"
 )
 
 var lastDotRegex = regexp.MustCompile(`[\w.]+\.\s`)
@@ -19,12 +20,20 @@ type ParsedFile struct {
 	URI lsp.DocumentURI
 	Src string
 
+	// zetasql AST node
 	Node ast.ScriptNode
 	// index is Node's statement order
 	RNode []*zetasql.AnalyzerOutput
 
+	// tree-sitter node
+	TsTree *ts.Tree
+
 	FixOffsets []FixOffset
 	Errors     []Error
+}
+
+func (p ParsedFile) Close() {
+	p.TsTree.Close()
 }
 
 func (p ParsedFile) TermOffset(pos lsp.Position) int {

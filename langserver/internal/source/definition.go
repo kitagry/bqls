@@ -13,6 +13,7 @@ import (
 func (p *Project) LookupIdent(ctx context.Context, uri lsp.DocumentURI, position lsp.Position) ([]lsp.Location, error) {
 	sql := p.cache.Get(uri)
 	parsedFile := p.analyzer.ParseFile(uri, sql.RawText)
+	defer parsedFile.Close()
 
 	termOffset := parsedFile.TermOffset(position)
 

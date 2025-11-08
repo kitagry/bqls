@@ -52,6 +52,7 @@ func TestCompletor_CompleteBuiltinFunction(t *testing.T) {
 			}
 
 			parsedFile := analyzer.ParseFile(path, files[path])
+			defer parsedFile.Close()
 
 			got := completor.completeBuiltinFunction(context.Background(), parsedFile, position)
 			if diff := cmp.Diff(got, tt.expectCompletionItems); diff != "" {

@@ -203,6 +203,7 @@ func TestProject_CompleteTablePath(t *testing.T) {
 			}
 
 			parsedFile := analyzer.ParseFile(path, files[path])
+			defer parsedFile.Close()
 
 			got, err := completor.completeTablePath(context.Background(), parsedFile, position)
 			if !errors.Is(err, tt.expectErr) {

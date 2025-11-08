@@ -82,6 +82,7 @@ func (p *Project) GetErrors(uri lsp.DocumentURI) map[lsp.DocumentURI][]file.Erro
 	}
 
 	parsedFile := p.analyzer.ParseFile(uri, sql.RawText)
+	defer parsedFile.Close()
 	if len(parsedFile.Errors) > 0 {
 		return map[lsp.DocumentURI][]file.Error{uri: parsedFile.Errors}
 	}
