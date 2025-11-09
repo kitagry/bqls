@@ -56,18 +56,49 @@ func completeFromSingleErrorNode(rootNode *ts.Node, src string) []CompletionItem
 		// Extract typed prefix if the user has started typing
 		typedPrefix := extractTypedPrefixFromError(childNode, src)
 
+		// Check if we also have OFFSET keyword - this is the end of the query
+		if hasKeywordOffset(childNode, src) {
+			return []CompletionItem{}
+		}
+
+		// Check if we also have LIMIT keyword
+		if hasKeywordLimit(childNode, src) {
+			// We have LIMIT, so suggest OFFSET only
+			// Don't use typed prefix from ERROR node as it's likely a number, not a keyword prefix
+			return createOffsetKeywordCompletionItem("")
+		}
+
 		// Check if we also have ORDER BY keyword
 		if hasKeywordOrderBy(childNode, src) {
-			// We have ORDER BY, so suggest LIMIT only
+			// Check if we also have ASC or DESC
+			if hasKeywordAsc(childNode, src) || hasKeywordDesc(childNode, src) {
+				// We have ORDER BY with ASC/DESC, so suggest LIMIT only
+				return createLimitKeywordCompletionItem("")
+			}
+			// We have ORDER BY but no ASC/DESC, so suggest ASC, DESC, and LIMIT
 			// Don't use typed prefix from ERROR node as it's likely a column name, not a keyword prefix
-			return createLimitKeywordCompletionItem("")
+			result := []CompletionItem{}
+			result = append(result, createAscDescKeywordCompletionItems("")...)
+			result = append(result, createLimitKeywordCompletionItem("")...)
+			return result
+		}
+
+		// Check if we also have HAVING keyword
+		if hasKeywordHaving(childNode, src) {
+			// We have HAVING but no ORDER BY, so suggest ORDER BY and LIMIT
+			// Don't use typed prefix from ERROR node as it's likely a column name, not a keyword prefix
+			result := []CompletionItem{}
+			result = append(result, createOrderByKeywordCompletionItem("")...)
+			result = append(result, createLimitKeywordCompletionItem("")...)
+			return result
 		}
 
 		// Check if we also have GROUP BY keyword
 		if hasKeywordGroupBy(childNode, src) {
-			// We have GROUP BY but no ORDER BY, so suggest ORDER BY and LIMIT
+			// We have GROUP BY but no HAVING, so suggest HAVING, ORDER BY and LIMIT
 			// Don't use typed prefix from ERROR node as it's likely a column name, not a keyword prefix
 			result := []CompletionItem{}
+			result = append(result, createHavingKeywordCompletionItem("")...)
 			result = append(result, createOrderByKeywordCompletionItem("")...)
 			result = append(result, createLimitKeywordCompletionItem("")...)
 			return result
@@ -118,18 +149,49 @@ func completeFromMultipleNodes(rootNode *ts.Node, src string) []CompletionItem {
 		// Extract typed prefix from the ERROR node
 		typedPrefix := extractTypedPrefixFromError(lastChild, src)
 
+		// Check if we also have OFFSET keyword - this is the end of the query
+		if hasKeywordOffset(firstChild, src) || hasKeywordOffset(lastChild, src) {
+			return []CompletionItem{}
+		}
+
+		// Check if we also have LIMIT keyword
+		if hasKeywordLimit(firstChild, src) || hasKeywordLimit(lastChild, src) {
+			// We have LIMIT, so suggest OFFSET only
+			// Don't use typed prefix from ERROR node as it's likely a number, not a keyword prefix
+			return createOffsetKeywordCompletionItem("")
+		}
+
 		// Check if we also have ORDER BY keyword
 		if hasKeywordOrderBy(firstChild, src) || hasKeywordOrderBy(lastChild, src) {
-			// We have ORDER BY, so suggest LIMIT only
+			// Check if we also have ASC or DESC
+			if hasKeywordAsc(firstChild, src) || hasKeywordDesc(firstChild, src) || hasKeywordAsc(lastChild, src) || hasKeywordDesc(lastChild, src) {
+				// We have ORDER BY with ASC/DESC, so suggest LIMIT only
+				return createLimitKeywordCompletionItem("")
+			}
+			// We have ORDER BY but no ASC/DESC, so suggest ASC, DESC, and LIMIT
 			// Don't use typed prefix from ERROR node as it's likely a column name, not a keyword prefix
-			return createLimitKeywordCompletionItem("")
+			result := []CompletionItem{}
+			result = append(result, createAscDescKeywordCompletionItems("")...)
+			result = append(result, createLimitKeywordCompletionItem("")...)
+			return result
+		}
+
+		// Check if we also have HAVING keyword
+		if hasKeywordHaving(firstChild, src) || hasKeywordHaving(lastChild, src) {
+			// We have HAVING but no ORDER BY, so suggest ORDER BY and LIMIT
+			// Don't use typed prefix from ERROR node as it's likely a column name, not a keyword prefix
+			result := []CompletionItem{}
+			result = append(result, createOrderByKeywordCompletionItem("")...)
+			result = append(result, createLimitKeywordCompletionItem("")...)
+			return result
 		}
 
 		// Check if we also have GROUP BY keyword
 		if hasKeywordGroupBy(firstChild, src) || hasKeywordGroupBy(lastChild, src) {
-			// We have GROUP BY but no ORDER BY, so suggest ORDER BY and LIMIT
+			// We have GROUP BY but no HAVING, so suggest HAVING, ORDER BY and LIMIT
 			// Don't use typed prefix from ERROR node as it's likely a column name, not a keyword prefix
 			result := []CompletionItem{}
+			result = append(result, createHavingKeywordCompletionItem("")...)
 			result = append(result, createOrderByKeywordCompletionItem("")...)
 			result = append(result, createLimitKeywordCompletionItem("")...)
 			return result
@@ -166,14 +228,41 @@ func completeFromCursorPosition(rootNode *ts.Node, parsedFile file.ParsedFile, p
 		return []CompletionItem{}
 	}
 
+	// Check if we are after an OFFSET keyword - this is the end of the query
+	if hasKeywordOffset(node, parsedFile.Src) {
+		return []CompletionItem{}
+	}
+
+	// Check if we are after a LIMIT keyword by searching descendants
+	if hasKeywordLimit(node, parsedFile.Src) {
+		return createOffsetKeywordCompletionItem("")
+	}
+
 	// Check if we are after an ORDER BY keyword by searching descendants
 	if hasKeywordOrderBy(node, parsedFile.Src) {
-		return createLimitKeywordCompletionItem("")
+		// If we already have ASC or DESC, only suggest LIMIT
+		if hasKeywordAsc(node, parsedFile.Src) || hasKeywordDesc(node, parsedFile.Src) {
+			return createLimitKeywordCompletionItem("")
+		}
+		// Otherwise, suggest ASC, DESC, and LIMIT
+		result := []CompletionItem{}
+		result = append(result, createAscDescKeywordCompletionItems("")...)
+		result = append(result, createLimitKeywordCompletionItem("")...)
+		return result
+	}
+
+	// Check if we are after a HAVING keyword by searching descendants
+	if hasKeywordHaving(node, parsedFile.Src) {
+		result := []CompletionItem{}
+		result = append(result, createOrderByKeywordCompletionItem("")...)
+		result = append(result, createLimitKeywordCompletionItem("")...)
+		return result
 	}
 
 	// Check if we are after a GROUP BY keyword by searching descendants
 	if hasKeywordGroupBy(node, parsedFile.Src) {
 		result := []CompletionItem{}
+		result = append(result, createHavingKeywordCompletionItem("")...)
 		result = append(result, createOrderByKeywordCompletionItem("")...)
 		result = append(result, createLimitKeywordCompletionItem("")...)
 		return result
@@ -338,6 +427,149 @@ func hasKeywordOrderBy(node *ts.Node, src string) bool {
 	return false
 }
 
+// hasKeywordHaving recursively checks if the node or its descendants contain a HAVING keyword
+// or if the node text contains "HAVING"
+func hasKeywordHaving(node *ts.Node, src string) bool {
+	if node == nil {
+		return false
+	}
+
+	// Check if ERROR node contains HAVING keyword
+	if node.Kind() == "ERROR" {
+		text := node.Utf8Text([]byte(src))
+		if strings.Contains(text, "HAVING") {
+			return true
+		}
+	}
+
+	// Check for having node (if it exists in the grammar)
+	if node.Kind() == "having" || node.Kind() == "keyword_having" {
+		return true
+	}
+
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		if hasKeywordHaving(node.NamedChild(i), src) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// hasKeywordAsc recursively checks if the node or its descendants contain an ASC keyword
+func hasKeywordAsc(node *ts.Node, src string) bool {
+	if node == nil {
+		return false
+	}
+
+	// Check if ERROR node contains ASC keyword
+	if node.Kind() == "ERROR" {
+		text := node.Utf8Text([]byte(src))
+		if strings.Contains(text, "ASC") {
+			return true
+		}
+	}
+
+	// Check for asc node (if it exists in the grammar)
+	if node.Kind() == "asc" || node.Kind() == "keyword_asc" {
+		return true
+	}
+
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		if hasKeywordAsc(node.NamedChild(i), src) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// hasKeywordDesc recursively checks if the node or its descendants contain a DESC keyword
+func hasKeywordDesc(node *ts.Node, src string) bool {
+	if node == nil {
+		return false
+	}
+
+	// Check if ERROR node contains DESC keyword
+	if node.Kind() == "ERROR" {
+		text := node.Utf8Text([]byte(src))
+		if strings.Contains(text, "DESC") {
+			return true
+		}
+	}
+
+	// Check for desc node (if it exists in the grammar)
+	if node.Kind() == "desc" || node.Kind() == "keyword_desc" {
+		return true
+	}
+
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		if hasKeywordDesc(node.NamedChild(i), src) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// hasKeywordLimit recursively checks if the node or its descendants contain a LIMIT keyword
+// or if the node text contains "LIMIT"
+func hasKeywordLimit(node *ts.Node, src string) bool {
+	if node == nil {
+		return false
+	}
+
+	// Check if ERROR node contains LIMIT keyword
+	if node.Kind() == "ERROR" {
+		text := node.Utf8Text([]byte(src))
+		if strings.Contains(text, "LIMIT") {
+			return true
+		}
+	}
+
+	// Check for limit node (if it exists in the grammar)
+	if node.Kind() == "limit" || node.Kind() == "keyword_limit" {
+		return true
+	}
+
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		if hasKeywordLimit(node.NamedChild(i), src) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// hasKeywordOffset recursively checks if the node or its descendants contain an OFFSET keyword
+// or if the node text contains "OFFSET"
+func hasKeywordOffset(node *ts.Node, src string) bool {
+	if node == nil {
+		return false
+	}
+
+	// Check if ERROR node contains OFFSET keyword
+	if node.Kind() == "ERROR" {
+		text := node.Utf8Text([]byte(src))
+		if strings.Contains(text, "OFFSET") {
+			return true
+		}
+	}
+
+	// Check for offset node (if it exists in the grammar)
+	if node.Kind() == "offset" || node.Kind() == "keyword_offset" {
+		return true
+	}
+
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		if hasKeywordOffset(node.NamedChild(i), src) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // extractTypedPrefixFromError extracts the last word from an ERROR node
 // This is used to get the typed prefix when the user has partially typed a keyword
 func extractTypedPrefixFromError(node *ts.Node, src string) string {
@@ -442,6 +674,57 @@ func createLimitKeywordCompletionItem(typedPrefix string) []CompletionItem {
 			Documentation: lsp.MarkupContent{
 				Kind:  lsp.MKPlainText,
 				Value: "The LIMIT clause is used to limit the number of rows returned.",
+			},
+			TypedPrefix: typedPrefix,
+		},
+	}
+}
+
+func createHavingKeywordCompletionItem(typedPrefix string) []CompletionItem {
+	return []CompletionItem{
+		{
+			Kind:    lsp.CIKKeyword,
+			NewText: "HAVING ",
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: "The HAVING clause is used to filter groups based on aggregate functions.",
+			},
+			TypedPrefix: typedPrefix,
+		},
+	}
+}
+
+func createAscDescKeywordCompletionItems(typedPrefix string) []CompletionItem {
+	return []CompletionItem{
+		{
+			Kind:    lsp.CIKKeyword,
+			NewText: "ASC",
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: "Sort in ascending order (default).",
+			},
+			TypedPrefix: typedPrefix,
+		},
+		{
+			Kind:    lsp.CIKKeyword,
+			NewText: "DESC",
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: "Sort in descending order.",
+			},
+			TypedPrefix: typedPrefix,
+		},
+	}
+}
+
+func createOffsetKeywordCompletionItem(typedPrefix string) []CompletionItem {
+	return []CompletionItem{
+		{
+			Kind:    lsp.CIKKeyword,
+			NewText: "OFFSET ",
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: "The OFFSET clause is used to skip a specified number of rows.",
 			},
 			TypedPrefix: typedPrefix,
 		},
