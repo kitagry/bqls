@@ -280,40 +280,45 @@ func TestCompletor_CompleteKeyword(t *testing.T) {
 			},
 			expectContains: []CompletionItem{
 				{
-					Kind:    lsp.CIKKeyword,
-					NewText: "JOIN ",
+					Kind:        lsp.CIKKeyword,
+					NewText:     "JOIN ",
+					SnippetText: "JOIN ${1:table} ON ${2:condition}",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INNER JOIN - returns rows when there is a match in both tables.",
 					},
 				},
 				{
-					Kind:    lsp.CIKKeyword,
-					NewText: "LEFT JOIN ",
+					Kind:        lsp.CIKKeyword,
+					NewText:     "LEFT JOIN ",
+					SnippetText: "LEFT JOIN ${1:table} ON ${2:condition}",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "LEFT JOIN - returns all rows from the left table, and matched rows from the right table.",
 					},
 				},
 				{
-					Kind:    lsp.CIKKeyword,
-					NewText: "RIGHT JOIN ",
+					Kind:        lsp.CIKKeyword,
+					NewText:     "RIGHT JOIN ",
+					SnippetText: "RIGHT JOIN ${1:table} ON ${2:condition}",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "RIGHT JOIN - returns all rows from the right table, and matched rows from the left table.",
 					},
 				},
 				{
-					Kind:    lsp.CIKKeyword,
-					NewText: "FULL OUTER JOIN ",
+					Kind:        lsp.CIKKeyword,
+					NewText:     "FULL OUTER JOIN ",
+					SnippetText: "FULL OUTER JOIN ${1:table} ON ${2:condition}",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "FULL OUTER JOIN - returns all rows when there is a match in either table.",
 					},
 				},
 				{
-					Kind:    lsp.CIKKeyword,
-					NewText: "CROSS JOIN ",
+					Kind:        lsp.CIKKeyword,
+					NewText:     "CROSS JOIN ",
+					SnippetText: "CROSS JOIN ${1:table}",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "CROSS JOIN - returns the Cartesian product of both tables.",
