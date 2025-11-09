@@ -271,6 +271,77 @@ func TestCompletor_CompleteKeyword(t *testing.T) {
 			expectContains:    []CompletionItem{},
 			expectNotContains: []string{"SELECT ", "FROM ", "WHERE ", "LIMIT ", "OFFSET "},
 		},
+		"Complete JOIN after FROM table": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT * FROM `project.dataset.table1` |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table1": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "JOIN ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INNER JOIN - returns rows when there is a match in both tables.",
+					},
+				},
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "LEFT JOIN ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "LEFT JOIN - returns all rows from the left table, and matched rows from the right table.",
+					},
+				},
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "RIGHT JOIN ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "RIGHT JOIN - returns all rows from the right table, and matched rows from the left table.",
+					},
+				},
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "FULL OUTER JOIN ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "FULL OUTER JOIN - returns all rows when there is a match in either table.",
+					},
+				},
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "CROSS JOIN ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "CROSS JOIN - returns the Cartesian product of both tables.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "FROM "},
+		},
+		"Complete ON after JOIN table": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT * FROM `project.dataset.table1` JOIN `project.dataset.table2` |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table1": {},
+				"project.dataset.table2": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "ON ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The ON clause specifies the join condition between tables.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "FROM ", "JOIN "},
+		},
 		"Complete HAVING after GROUP BY": {
 			files: map[lsp.DocumentURI]string{
 				"a.sql": "SELECT col, COUNT(*) FROM `project.dataset.table` GROUP BY col |",

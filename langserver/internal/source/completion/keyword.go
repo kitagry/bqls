@@ -115,8 +115,25 @@ func completeFromSingleErrorNode(rootNode *ts.Node, src string) []CompletionItem
 			return result
 		}
 
-		// We have FROM but no WHERE, GROUP BY, or ORDER BY, so suggest WHERE, GROUP BY, ORDER BY, and LIMIT
+		// Check if we also have JOIN keyword
+		if strings.Contains(src, "JOIN") {
+			// Check if we already have ON
+			if strings.Contains(src, " ON ") || strings.Contains(src, "\nON ") || strings.Contains(src, "\tON ") {
+				result := []CompletionItem{}
+				result = append(result, createJoinKeywordCompletionItems("")...)
+				result = append(result, createWhereKeywordCompletionItem("")...)
+				result = append(result, createGroupByKeywordCompletionItem("")...)
+				result = append(result, createOrderByKeywordCompletionItem("")...)
+				result = append(result, createLimitKeywordCompletionItem("")...)
+				return result
+			}
+			// Otherwise, suggest ON
+			return createOnKeywordCompletionItem("")
+		}
+
+		// We have FROM but no JOIN or WHERE, so suggest JOIN, WHERE, GROUP BY, ORDER BY, and LIMIT
 		result := []CompletionItem{}
+		result = append(result, createJoinKeywordCompletionItems(typedPrefix)...)
 		result = append(result, createWhereKeywordCompletionItem(typedPrefix)...)
 		result = append(result, createGroupByKeywordCompletionItem(typedPrefix)...)
 		result = append(result, createOrderByKeywordCompletionItem(typedPrefix)...)
@@ -208,8 +225,25 @@ func completeFromMultipleNodes(rootNode *ts.Node, src string) []CompletionItem {
 			return result
 		}
 
-		// We have FROM but no WHERE, GROUP BY, or ORDER BY, so suggest WHERE, GROUP BY, ORDER BY, and LIMIT
+		// Check if we also have JOIN keyword
+		if strings.Contains(src, "JOIN") {
+			// Check if we already have ON
+			if strings.Contains(src, " ON ") || strings.Contains(src, "\nON ") || strings.Contains(src, "\tON ") {
+				result := []CompletionItem{}
+				result = append(result, createJoinKeywordCompletionItems("")...)
+				result = append(result, createWhereKeywordCompletionItem("")...)
+				result = append(result, createGroupByKeywordCompletionItem("")...)
+				result = append(result, createOrderByKeywordCompletionItem("")...)
+				result = append(result, createLimitKeywordCompletionItem("")...)
+				return result
+			}
+			// Otherwise, suggest ON
+			return createOnKeywordCompletionItem("")
+		}
+
+		// We have FROM but no JOIN or WHERE, so suggest JOIN, WHERE, GROUP BY, ORDER BY, and LIMIT
 		result := []CompletionItem{}
+		result = append(result, createJoinKeywordCompletionItems(typedPrefix)...)
 		result = append(result, createWhereKeywordCompletionItem(typedPrefix)...)
 		result = append(result, createGroupByKeywordCompletionItem(typedPrefix)...)
 		result = append(result, createOrderByKeywordCompletionItem(typedPrefix)...)
@@ -279,7 +313,24 @@ func completeFromCursorPosition(rootNode *ts.Node, parsedFile file.ParsedFile, p
 
 	// Check if we are after a FROM keyword by searching descendants
 	if hasKeywordFrom(node) {
+		// Check if the source code contains JOIN keyword
+		if strings.Contains(parsedFile.Src, "JOIN") {
+			// Check if we already have ON
+			if strings.Contains(parsedFile.Src, " ON ") || strings.Contains(parsedFile.Src, "\nON ") || strings.Contains(parsedFile.Src, "\tON ") {
+				result := []CompletionItem{}
+				result = append(result, createJoinKeywordCompletionItems("")...)
+				result = append(result, createWhereKeywordCompletionItem("")...)
+				result = append(result, createGroupByKeywordCompletionItem("")...)
+				result = append(result, createOrderByKeywordCompletionItem("")...)
+				result = append(result, createLimitKeywordCompletionItem("")...)
+				return result
+			}
+			// Otherwise, suggest ON
+			return createOnKeywordCompletionItem("")
+		}
+		// No JOIN yet, suggest JOIN, WHERE, GROUP BY, ORDER BY, and LIMIT
 		result := []CompletionItem{}
+		result = append(result, createJoinKeywordCompletionItems("")...)
 		result = append(result, createWhereKeywordCompletionItem("")...)
 		result = append(result, createGroupByKeywordCompletionItem("")...)
 		result = append(result, createOrderByKeywordCompletionItem("")...)
@@ -570,6 +621,65 @@ func hasKeywordOffset(node *ts.Node, src string) bool {
 	return false
 }
 
+// hasKeywordJoin recursively checks if the node or its descendants contain a JOIN keyword
+// or if the node text contains "JOIN"
+func hasKeywordJoin(node *ts.Node, src string) bool {
+	if node == nil {
+		return false
+	}
+
+	// Check if ERROR node contains JOIN keyword
+	if node.Kind() == "ERROR" {
+		text := node.Utf8Text([]byte(src))
+		if strings.Contains(text, "JOIN") {
+			return true
+		}
+	}
+
+	// Check for join node (if it exists in the grammar)
+	if node.Kind() == "join" || node.Kind() == "keyword_join" {
+		return true
+	}
+
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		if hasKeywordJoin(node.NamedChild(i), src) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// hasKeywordOn recursively checks if the node or its descendants contain an ON keyword
+// or if the node text contains "ON"
+func hasKeywordOn(node *ts.Node, src string) bool {
+	if node == nil {
+		return false
+	}
+
+	// Check if ERROR node contains ON keyword
+	if node.Kind() == "ERROR" {
+		text := node.Utf8Text([]byte(src))
+		// Use word boundaries to avoid matching "ON" within other words
+		if strings.Contains(text, " ON ") || strings.HasPrefix(text, "ON ") || strings.HasSuffix(text, " ON") {
+			return true
+		}
+	}
+
+	// Check for on node (if it exists in the grammar)
+	if node.Kind() == "on" || node.Kind() == "keyword_on" {
+		return true
+	}
+
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		if hasKeywordOn(node.NamedChild(i), src) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // extractTypedPrefixFromError extracts the last word from an ERROR node
 // This is used to get the typed prefix when the user has partially typed a keyword
 func extractTypedPrefixFromError(node *ts.Node, src string) string {
@@ -725,6 +835,70 @@ func createOffsetKeywordCompletionItem(typedPrefix string) []CompletionItem {
 			Documentation: lsp.MarkupContent{
 				Kind:  lsp.MKPlainText,
 				Value: "The OFFSET clause is used to skip a specified number of rows.",
+			},
+			TypedPrefix: typedPrefix,
+		},
+	}
+}
+
+func createJoinKeywordCompletionItems(typedPrefix string) []CompletionItem {
+	return []CompletionItem{
+		{
+			Kind:    lsp.CIKKeyword,
+			NewText: "JOIN ",
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: "INNER JOIN - returns rows when there is a match in both tables.",
+			},
+			TypedPrefix: typedPrefix,
+		},
+		{
+			Kind:    lsp.CIKKeyword,
+			NewText: "LEFT JOIN ",
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: "LEFT JOIN - returns all rows from the left table, and matched rows from the right table.",
+			},
+			TypedPrefix: typedPrefix,
+		},
+		{
+			Kind:    lsp.CIKKeyword,
+			NewText: "RIGHT JOIN ",
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: "RIGHT JOIN - returns all rows from the right table, and matched rows from the left table.",
+			},
+			TypedPrefix: typedPrefix,
+		},
+		{
+			Kind:    lsp.CIKKeyword,
+			NewText: "FULL OUTER JOIN ",
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: "FULL OUTER JOIN - returns all rows when there is a match in either table.",
+			},
+			TypedPrefix: typedPrefix,
+		},
+		{
+			Kind:    lsp.CIKKeyword,
+			NewText: "CROSS JOIN ",
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: "CROSS JOIN - returns the Cartesian product of both tables.",
+			},
+			TypedPrefix: typedPrefix,
+		},
+	}
+}
+
+func createOnKeywordCompletionItem(typedPrefix string) []CompletionItem {
+	return []CompletionItem{
+		{
+			Kind:    lsp.CIKKeyword,
+			NewText: "ON ",
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: "The ON clause specifies the join condition between tables.",
 			},
 			TypedPrefix: typedPrefix,
 		},
