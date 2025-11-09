@@ -5,6 +5,7 @@ import "github.com/kitagry/bqls/langserver/internal/lsp"
 type CompletionItem struct {
 	Kind          lsp.CompletionItemKind
 	NewText       string
+	SnippetText   string // Optional: if set, used when snippets are supported
 	Documentation lsp.MarkupContent
 	TypedPrefix   string
 }
@@ -19,6 +20,12 @@ func (c CompletionItem) ToLspCompletionItem(position lsp.Position, supportSnippe
 		}
 	}
 
+	// Use SnippetText if available, otherwise fall back to NewText
+	textToInsert := c.NewText
+	if c.SnippetText != "" {
+		textToInsert = c.SnippetText
+	}
+
 	startPosition := position
 	startPosition.Character -= len(c.TypedPrefix)
 	return lsp.CompletionItem{
@@ -27,7 +34,7 @@ func (c CompletionItem) ToLspCompletionItem(position lsp.Position, supportSnippe
 		Label:            c.NewText,
 		Documentation:    c.Documentation,
 		TextEdit: &lsp.TextEdit{
-			NewText: c.NewText,
+			NewText: textToInsert,
 			Range: lsp.Range{
 				Start: startPosition,
 				End:   position,

@@ -177,6 +177,222 @@ func TestCompletor_CompleteKeyword(t *testing.T) {
 			},
 			expectNotContains: []string{"SELECT ", "FROM ", "WHERE ", "GROUP BY ", "ORDER BY "},
 		},
+		"Complete ASC and DESC after ORDER BY column": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT * FROM `project.dataset.table` ORDER BY col |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "ASC",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "Sort in ascending order (default).",
+					},
+				},
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "DESC",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "Sort in descending order.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "FROM ", "WHERE "},
+		},
+		"Complete LIMIT after ORDER BY with ASC": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT * FROM `project.dataset.table` ORDER BY col ASC |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "LIMIT ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The LIMIT clause is used to limit the number of rows returned.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "FROM ", "WHERE ", "ORDER BY ", "ASC", "DESC"},
+		},
+		"Complete LIMIT after ORDER BY with DESC": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT * FROM `project.dataset.table` ORDER BY col DESC |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "LIMIT ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The LIMIT clause is used to limit the number of rows returned.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "FROM ", "WHERE ", "ORDER BY ", "ASC", "DESC"},
+		},
+		"Complete OFFSET after LIMIT": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT * FROM `project.dataset.table` LIMIT 10 |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "OFFSET ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The OFFSET clause is used to skip a specified number of rows.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "FROM ", "WHERE ", "LIMIT "},
+		},
+		"Complete nothing after OFFSET": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT * FROM `project.dataset.table` LIMIT 10 OFFSET 5 |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains:    []CompletionItem{},
+			expectNotContains: []string{"SELECT ", "FROM ", "WHERE ", "LIMIT ", "OFFSET "},
+		},
+		"Complete JOIN after FROM table": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT * FROM `project.dataset.table1` |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table1": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:        lsp.CIKKeyword,
+					NewText:     "JOIN ",
+					SnippetText: "JOIN ${1:table} ON ${2:condition}",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INNER JOIN - returns rows when there is a match in both tables.",
+					},
+				},
+				{
+					Kind:        lsp.CIKKeyword,
+					NewText:     "LEFT JOIN ",
+					SnippetText: "LEFT JOIN ${1:table} ON ${2:condition}",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "LEFT JOIN - returns all rows from the left table, and matched rows from the right table.",
+					},
+				},
+				{
+					Kind:        lsp.CIKKeyword,
+					NewText:     "RIGHT JOIN ",
+					SnippetText: "RIGHT JOIN ${1:table} ON ${2:condition}",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "RIGHT JOIN - returns all rows from the right table, and matched rows from the left table.",
+					},
+				},
+				{
+					Kind:        lsp.CIKKeyword,
+					NewText:     "FULL OUTER JOIN ",
+					SnippetText: "FULL OUTER JOIN ${1:table} ON ${2:condition}",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "FULL OUTER JOIN - returns all rows when there is a match in either table.",
+					},
+				},
+				{
+					Kind:        lsp.CIKKeyword,
+					NewText:     "CROSS JOIN ",
+					SnippetText: "CROSS JOIN ${1:table}",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "CROSS JOIN - returns the Cartesian product of both tables.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "FROM "},
+		},
+		"Complete ON after JOIN table": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT * FROM `project.dataset.table1` JOIN `project.dataset.table2` |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table1": {},
+				"project.dataset.table2": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "ON ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The ON clause specifies the join condition between tables.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "FROM ", "JOIN "},
+		},
+		"Complete HAVING after GROUP BY": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT col, COUNT(*) FROM `project.dataset.table` GROUP BY col |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "HAVING ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The HAVING clause is used to filter groups based on aggregate functions.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "FROM ", "WHERE "},
+		},
+		"Complete ORDER BY and LIMIT after HAVING": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT col, COUNT(*) FROM `project.dataset.table` GROUP BY col HAVING COUNT(*) > 1 |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "ORDER BY ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The ORDER BY clause is used to sort the result set.",
+					},
+				},
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "LIMIT ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The LIMIT clause is used to limit the number of rows returned.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "FROM ", "WHERE ", "GROUP BY ", "HAVING "},
+		},
 	}
 
 	for n, tt := range tests {
