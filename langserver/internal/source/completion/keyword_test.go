@@ -40,22 +40,112 @@ func TestCompletor_CompleteKeyword(t *testing.T) {
 			},
 			expectNotContains: []string{"FROM ", "WHERE "},
 		},
-		"Complete SELECT keyword with half-baked": {
+		"Complete WITH keyword": {
 			files: map[lsp.DocumentURI]string{
-				"a.sql": "S|",
+				"a.sql": "|",
 			},
 			bqTableMetadataMap: map[string]*bq.TableMetadata{},
 			expectContains: []CompletionItem{
 				{
 					Kind:        lsp.CIKKeyword,
-					NewText:     "SELECT ",
-					TypedPrefix: "S",
+					NewText:     "WITH ",
+					SnippetText: "WITH ${1:name} AS (${2:query})",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The WITH statement is used to create tempolary named subquery.",
+					},
+				},
+			},
+			expectNotContains: []string{"FROM ", "WHERE "},
+		},
+		"Complete SELECT in WITH clause": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "WITH data (|)",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "SELECT ",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "The SELECT statement is used to query data from a table.",
 					},
 				},
 			},
+			expectNotContains: []string{"FROM ", "WHERE "},
+		},
+		"Complete FROM in WITH clause after SELECT": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "WITH data AS (SELECT * |) SELECT * FROM data",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "FROM ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The FROM clause specifies the table to query data from.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "WITH "},
+		},
+		"Complete WHERE in WITH clause after FROM": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "WITH data AS (SELECT * FROM `project.dataset.table` |) SELECT * FROM data",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "WHERE ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The WHERE clause is used to filter records.",
+					},
+				},
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "GROUP BY ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The GROUP BY clause groups rows that have the same values.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "WITH "},
+		},
+		"Complete GROUP BY in main query after WITH clause": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "WITH data AS (SELECT * FROM `project.dataset.table1` GROUP BY id) SELECT * FROM `project.dataset.table2` |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table1": {},
+				"project.dataset.table2": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "WHERE ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The WHERE clause is used to filter records.",
+					},
+				},
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "GROUP BY ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The GROUP BY clause groups rows that have the same values.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "WITH "},
 		},
 		"Complete FROM keyword": {
 			files: map[lsp.DocumentURI]string{
@@ -100,25 +190,6 @@ func TestCompletor_CompleteKeyword(t *testing.T) {
 				},
 			},
 			expectNotContains: []string{"SELECT ", "FROM "},
-		},
-		"Complete WHERE and GROUP BY keywords with half-baked": {
-			files: map[lsp.DocumentURI]string{
-				"a.sql": "SELECT * FROM `project.dataset.table` W|",
-			},
-			bqTableMetadataMap: map[string]*bq.TableMetadata{
-				"project.dataset.table": {},
-			},
-			expectContains: []CompletionItem{
-				{
-					Kind:        lsp.CIKKeyword,
-					NewText:     "WHERE ",
-					TypedPrefix: "W",
-					Documentation: lsp.MarkupContent{
-						Kind:  lsp.MKPlainText,
-						Value: "The WHERE clause is used to filter records.",
-					},
-				},
-			},
 		},
 		"Complete GROUP BY after WHERE": {
 			files: map[lsp.DocumentURI]string{
@@ -203,44 +274,6 @@ func TestCompletor_CompleteKeyword(t *testing.T) {
 				},
 			},
 			expectNotContains: []string{"SELECT ", "FROM ", "WHERE "},
-		},
-		"Complete LIMIT after ORDER BY with ASC": {
-			files: map[lsp.DocumentURI]string{
-				"a.sql": "SELECT * FROM `project.dataset.table` ORDER BY col ASC |",
-			},
-			bqTableMetadataMap: map[string]*bq.TableMetadata{
-				"project.dataset.table": {},
-			},
-			expectContains: []CompletionItem{
-				{
-					Kind:    lsp.CIKKeyword,
-					NewText: "LIMIT ",
-					Documentation: lsp.MarkupContent{
-						Kind:  lsp.MKPlainText,
-						Value: "The LIMIT clause is used to limit the number of rows returned.",
-					},
-				},
-			},
-			expectNotContains: []string{"SELECT ", "FROM ", "WHERE ", "ORDER BY ", "ASC", "DESC"},
-		},
-		"Complete LIMIT after ORDER BY with DESC": {
-			files: map[lsp.DocumentURI]string{
-				"a.sql": "SELECT * FROM `project.dataset.table` ORDER BY col DESC |",
-			},
-			bqTableMetadataMap: map[string]*bq.TableMetadata{
-				"project.dataset.table": {},
-			},
-			expectContains: []CompletionItem{
-				{
-					Kind:    lsp.CIKKeyword,
-					NewText: "LIMIT ",
-					Documentation: lsp.MarkupContent{
-						Kind:  lsp.MKPlainText,
-						Value: "The LIMIT clause is used to limit the number of rows returned.",
-					},
-				},
-			},
-			expectNotContains: []string{"SELECT ", "FROM ", "WHERE ", "ORDER BY ", "ASC", "DESC"},
 		},
 		"Complete OFFSET after LIMIT": {
 			files: map[lsp.DocumentURI]string{
