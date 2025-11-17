@@ -53,91 +53,109 @@ func completeFromCursorPosition(rootNode *ts.Node, parsedFile file.ParsedFile, p
 		return completeFromEmptyProgram()
 	}
 
-	// Check what clauses exist in the select statement
-	hasSelect := hasClause(selectStmt, "select_clause")
-	hasFrom := hasClause(selectStmt, "from_clause")
-	hasWhere := hasClause(selectStmt, "where_clause")
-	hasGroupBy := hasClause(selectStmt, "group_by_clause")
-	hasHaving := hasClause(selectStmt, "having_clause")
-	hasOrderBy := hasClause(selectStmt, "order_by_clause")
-	hasLimit := hasClause(selectStmt, "limit_clause")
-	hasOffset := hasClause(selectStmt, "offset_clause")
+	// Find the last clause before the cursor position
+	lastClause := findLastClauseBeforeCursor(selectStmt, uint(offset))
+
+	// Get clauses that appear after the cursor (we should not suggest these)
+	clausesAfter := getClausesAfterCursor(selectStmt, uint(offset))
 
 	// Check if there's a join_expression in the from_clause
 	hasJoinWithoutOn := hasJoinExpressionWithoutOn(selectStmt)
 
-	// Determine what to suggest based on existing clauses
+	// Determine what to suggest based on the last clause before cursor
 	result := []CompletionItem{}
 
-	// After LIMIT, suggest OFFSET (unless OFFSET already exists)
-	if hasLimit {
-		if !hasOffset {
+	switch lastClause {
+	case "offset_clause":
+		// After OFFSET, nothing to suggest
+		return result
+
+	case "limit_clause":
+		// After LIMIT, suggest OFFSET (unless OFFSET already exists after cursor)
+		if !clausesAfter["offset_clause"] && !hasClause(selectStmt, "offset_clause") {
 			result = append(result, createOffsetKeywordCompletionItem("")...)
 		}
 		return result
-	}
 
-	// After ORDER BY, suggest ASC/DESC and LIMIT
-	if hasOrderBy {
-		// Check if we have ASC or DESC in the order_by_clause
+	case "order_by_clause":
+		// After ORDER BY, suggest ASC/DESC and LIMIT
 		orderByNode := findClause(selectStmt, "order_by_clause")
 		hasAscOrDesc := hasAscOrDescInOrderBy(orderByNode)
 
-		if hasAscOrDesc {
-			result = append(result, createLimitKeywordCompletionItem("")...)
-		} else {
+		if !hasAscOrDesc {
 			result = append(result, createAscDescKeywordCompletionItems("")...)
+		}
+		if !clausesAfter["limit_clause"] {
 			result = append(result, createLimitKeywordCompletionItem("")...)
 		}
 		return result
-	}
 
-	// After HAVING, suggest ORDER BY and LIMIT
-	if hasHaving {
-		result = append(result, createOrderByKeywordCompletionItem("")...)
-		result = append(result, createLimitKeywordCompletionItem("")...)
+	case "having_clause":
+		// After HAVING, suggest ORDER BY and LIMIT
+		if !clausesAfter["order_by_clause"] {
+			result = append(result, createOrderByKeywordCompletionItem("")...)
+		}
+		if !clausesAfter["limit_clause"] {
+			result = append(result, createLimitKeywordCompletionItem("")...)
+		}
 		return result
-	}
 
-	// After GROUP BY, suggest HAVING, ORDER BY, and LIMIT
-	if hasGroupBy {
-		result = append(result, createHavingKeywordCompletionItem("")...)
-		result = append(result, createOrderByKeywordCompletionItem("")...)
-		result = append(result, createLimitKeywordCompletionItem("")...)
+	case "group_by_clause":
+		// After GROUP BY, suggest HAVING, ORDER BY, and LIMIT
+		if !clausesAfter["having_clause"] {
+			result = append(result, createHavingKeywordCompletionItem("")...)
+		}
+		if !clausesAfter["order_by_clause"] {
+			result = append(result, createOrderByKeywordCompletionItem("")...)
+		}
+		if !clausesAfter["limit_clause"] {
+			result = append(result, createLimitKeywordCompletionItem("")...)
+		}
 		return result
-	}
 
-	// After WHERE, suggest GROUP BY, ORDER BY, and LIMIT
-	if hasWhere {
-		result = append(result, createGroupByKeywordCompletionItem("")...)
-		result = append(result, createOrderByKeywordCompletionItem("")...)
-		result = append(result, createLimitKeywordCompletionItem("")...)
+	case "where_clause":
+		// After WHERE, suggest GROUP BY, ORDER BY, and LIMIT
+		if !clausesAfter["group_by_clause"] {
+			result = append(result, createGroupByKeywordCompletionItem("")...)
+		}
+		if !clausesAfter["order_by_clause"] {
+			result = append(result, createOrderByKeywordCompletionItem("")...)
+		}
+		if !clausesAfter["limit_clause"] {
+			result = append(result, createLimitKeywordCompletionItem("")...)
+		}
 		return result
-	}
 
-	// After FROM
-	if hasFrom {
-		// If we have a JOIN without ON, suggest ON
+	case "from_clause":
+		// After FROM, check for JOIN without ON
 		if hasJoinWithoutOn {
 			return createOnKeywordCompletionItem("")
 		}
 
-		// Otherwise suggest JOIN (and other keywords), WHERE, GROUP BY, ORDER BY, LIMIT
+		// Otherwise suggest JOIN, WHERE, GROUP BY, ORDER BY, LIMIT
 		result = append(result, createJoinKeywordCompletionItems("")...)
-		result = append(result, createWhereKeywordCompletionItem("")...)
-		result = append(result, createGroupByKeywordCompletionItem("")...)
-		result = append(result, createOrderByKeywordCompletionItem("")...)
-		result = append(result, createLimitKeywordCompletionItem("")...)
+		if !clausesAfter["where_clause"] {
+			result = append(result, createWhereKeywordCompletionItem("")...)
+		}
+		if !clausesAfter["group_by_clause"] {
+			result = append(result, createGroupByKeywordCompletionItem("")...)
+		}
+		if !clausesAfter["order_by_clause"] {
+			result = append(result, createOrderByKeywordCompletionItem("")...)
+		}
+		if !clausesAfter["limit_clause"] {
+			result = append(result, createLimitKeywordCompletionItem("")...)
+		}
 		return result
-	}
 
-	// After SELECT, suggest FROM
-	if hasSelect {
+	case "select_clause":
+		// After SELECT, suggest FROM
 		return createFromKeywordCompletionItem("")
-	}
 
-	// Default: suggest SELECT and WITH
-	return completeFromEmptyProgram()
+	default:
+		// No clause found before cursor - suggest SELECT and WITH
+		return completeFromEmptyProgram()
+	}
 }
 
 // hasClause checks if the select statement has a specific clause
@@ -170,6 +188,60 @@ func findClause(selectStmt *ts.Node, clauseKind string) *ts.Node {
 	}
 
 	return nil
+}
+
+// findLastClauseBeforeCursor finds the last clause that ends before the cursor position
+func findLastClauseBeforeCursor(selectStmt *ts.Node, cursorOffset uint) string {
+	if selectStmt == nil {
+		return ""
+	}
+
+	clauseOrder := []string{
+		"select_clause",
+		"from_clause",
+		"where_clause",
+		"group_by_clause",
+		"having_clause",
+		"order_by_clause",
+		"limit_clause",
+		"offset_clause",
+	}
+
+	lastClause := ""
+	for _, clauseKind := range clauseOrder {
+		clause := findClause(selectStmt, clauseKind)
+		if clause != nil && clause.EndByte() <= cursorOffset {
+			lastClause = clauseKind
+		}
+	}
+
+	return lastClause
+}
+
+// getClausesAfterCursor returns a set of clause kinds that appear after the cursor position
+func getClausesAfterCursor(selectStmt *ts.Node, cursorOffset uint) map[string]bool {
+	if selectStmt == nil {
+		return map[string]bool{}
+	}
+
+	clausesAfter := map[string]bool{}
+	clauseKinds := []string{
+		"where_clause",
+		"group_by_clause",
+		"having_clause",
+		"order_by_clause",
+		"limit_clause",
+		"offset_clause",
+	}
+
+	for _, clauseKind := range clauseKinds {
+		clause := findClause(selectStmt, clauseKind)
+		if clause != nil && clause.StartByte() > cursorOffset {
+			clausesAfter[clauseKind] = true
+		}
+	}
+
+	return clausesAfter
 }
 
 // findJoinExpression recursively finds a join_expression node

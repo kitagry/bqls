@@ -304,6 +304,52 @@ func TestCompletor_CompleteKeyword(t *testing.T) {
 			expectContains:    []CompletionItem{},
 			expectNotContains: []string{"SELECT ", "FROM ", "WHERE ", "LIMIT ", "OFFSET "},
 		},
+		"Complete WHERE and GROUP BY when cursor is before ORDER BY": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT * FROM `project.dataset.table` | ORDER BY id",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "WHERE ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The WHERE clause is used to filter records.",
+					},
+				},
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "GROUP BY ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The GROUP BY clause groups rows that have the same values.",
+					},
+				},
+			},
+			expectNotContains: []string{"ORDER BY "},
+		},
+		"Complete LIMIT when cursor is after ORDER BY": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT * FROM `project.dataset.table` ORDER BY id |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "LIMIT ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The LIMIT clause is used to limit the number of rows returned.",
+					},
+				},
+			},
+			expectNotContains: []string{"WHERE ", "GROUP BY "},
+		},
 		"Complete JOIN after FROM table": {
 			files: map[lsp.DocumentURI]string{
 				"a.sql": "SELECT * FROM `project.dataset.table1` |",
