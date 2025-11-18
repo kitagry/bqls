@@ -82,10 +82,6 @@ github.com/googleapis/gax-go/v2 v2.15.0 h1:SyjDc1mGgZU5LncH8gimWo9lW1DtIfPibOG81
 github.com/googleapis/gax-go/v2 v2.15.0/go.mod h1:zVVkkxAQHa1RQpg9z2AUCMnKhi0Qld9rcmyfL1OZhoc=
 github.com/gorilla/websocket v1.4.1 h1:q7AeDBpnBk8AogcD4DSag/Ukw/KV+YhzLj2bP5HvKCM=
 github.com/gorilla/websocket v1.4.1/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
-github.com/kitagry/tree-sitter-bigquery v0.0.0-20251115051608-77d7aa554e84 h1:ViCcTw5Cj9wRNzg8ZsiJNz4oK/ON1PmSqEfP5s7HS8Q=
-github.com/kitagry/tree-sitter-bigquery v0.0.0-20251115051608-77d7aa554e84/go.mod h1:khe+squCHRLab8pfd+XnlZbjYGXXOobdgoZNpJYdM8Q=
-github.com/kitagry/tree-sitter-bigquery v0.0.0-20251116141455-7346232f1b8d h1:+jMhTwTrD6sEmdw/DCaCQm/JtA3FwyE7w2D/McylYkY=
-github.com/kitagry/tree-sitter-bigquery v0.0.0-20251116141455-7346232f1b8d/go.mod h1:khe+squCHRLab8pfd+XnlZbjYGXXOobdgoZNpJYdM8Q=
 github.com/kitagry/tree-sitter-bigquery v0.0.0-20251117000207-33763ce02e7f h1:JOmVexsTlH18UooAFX96A6zr0jjBQqH0ZmS/btbC4x8=
 github.com/kitagry/tree-sitter-bigquery v0.0.0-20251117000207-33763ce02e7f/go.mod h1:khe+squCHRLab8pfd+XnlZbjYGXXOobdgoZNpJYdM8Q=
 github.com/klauspost/compress v1.17.6 h1:60eq2E/jlfwQXtvZEeBUYADs+BwKBWURIY+Gj2eRGjI=
