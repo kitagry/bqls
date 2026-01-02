@@ -14,7 +14,7 @@ require (
 	github.com/goccy/go-zetasql v0.5.5
 	github.com/golang/mock v1.6.0
 	github.com/kitagry/tree-sitter-bigquery v0.0.0-20251117000207-33763ce02e7f
-	github.com/mattn/go-sqlite3 v1.14.28
+	github.com/mattn/go-sqlite3 v1.14.33
 	github.com/sirupsen/logrus v1.9.3
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 	golang.org/x/text v0.32.0
