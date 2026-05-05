@@ -21,6 +21,10 @@ func (h *Handler) scheduleDiagnostics() {
 			break
 		}
 
+		if uri.IsVirtualTextDocument() {
+			continue
+		}
+
 		cancel, ok := running[uri]
 		if ok {
 			cancel()
@@ -58,6 +62,10 @@ func (h *Handler) scheduleDryRun() {
 		uri, ok := <-h.dryrunRequest
 		if !ok {
 			break
+		}
+
+		if uri.IsVirtualTextDocument() {
+			continue
 		}
 
 		cancel, ok := running[uri]
