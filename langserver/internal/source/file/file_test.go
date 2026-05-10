@@ -37,7 +37,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Unrecognized name: t.",
+					Msg: "Unrecognized name: t.",
 					Position: lsp.Position{
 						Line:      0,
 						Character: 7,
@@ -67,7 +67,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Unrecognized name: t.record.",
+					Msg: "Unrecognized name: t.record.",
 					Position: lsp.Position{
 						Line:      0,
 						Character: 7,
@@ -96,7 +96,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Unrecognized name: t.",
+					Msg: "Unrecognized name: t.",
 					Position: lsp.Position{
 						Line:      1,
 						Character: 6,
@@ -120,7 +120,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Syntax error: SELECT list must not be empty",
+					Msg: "Syntax error: SELECT list must not be empty",
 					Position: lsp.Position{
 						Line:      0,
 						Character: 7,
@@ -143,7 +143,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Syntax error: Unexpected end of script",
+					Msg: "Syntax error: Unexpected end of script",
 					Position: lsp.Position{
 						Line:      0,
 						Character: 43,
@@ -166,7 +166,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Syntax error: Unexpected end of script",
+					Msg: "Syntax error: Unexpected end of script",
 					Position: lsp.Position{
 						Line:      0,
 						Character: 46,
@@ -189,7 +189,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Unrecognized name: unexist_column",
+					Msg: "Unrecognized name: unexist_column",
 					Position: lsp.Position{
 						Line:      0,
 						Character: 7,
@@ -213,7 +213,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Unrecognized name: unexist_column",
+					Msg: "Unrecognized name: unexist_column",
 					Position: lsp.Position{
 						Line:      0,
 						Character: 45,
@@ -237,7 +237,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Unrecognized name: unexist_column",
+					Msg: "Unrecognized name: unexist_column",
 					Position: lsp.Position{
 						Line:      0,
 						Character: 45,
@@ -261,7 +261,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Unrecognized name: unexist_column",
+					Msg: "Unrecognized name: unexist_column",
 					Position: lsp.Position{
 						Line:      0,
 						Character: 47,
@@ -285,7 +285,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Unrecognized name: timestam; Did you mean timestamp?",
+					Msg: "Unrecognized name: timestam; Did you mean timestamp?",
 					Position: lsp.Position{
 						Line:      0,
 						Character: 7,
@@ -315,7 +315,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Field name unexist_column does not exist in STRUCT<id INT64>",
+					Msg: "Field name unexist_column does not exist in STRUCT<id INT64>",
 					Position: lsp.Position{
 						Line:      0,
 						Character: 13,
@@ -345,7 +345,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Field name unexist_column does not exist in STRUCT<id INT64>",
+					Msg: "Field name unexist_column does not exist in STRUCT<id INT64>",
 					Position: lsp.Position{
 						Line:      0,
 						Character: 13,
@@ -369,7 +369,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Name unexist_column not found inside t",
+					Msg: "Name unexist_column not found inside t",
 					Position: lsp.Position{
 						Line:      0,
 						Character: 9,
@@ -393,7 +393,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Name unexist_column not found inside t",
+					Msg: "Name unexist_column not found inside t",
 					Position: lsp.Position{
 						Line:      0,
 						Character: 9,
@@ -417,7 +417,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Name unexist_column not found inside t",
+					Msg: "Name unexist_column not found inside t",
 					Position: lsp.Position{
 						Line:      1,
 						Character: 8,
@@ -441,7 +441,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Name unexist_column not found inside t",
+					Msg: "Name unexist_column not found inside t",
 					Position: lsp.Position{
 						Line:      1,
 						Character: 8,
@@ -465,7 +465,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Unrecognized name: t",
+					Msg: "Unrecognized name: t",
 					Position: lsp.Position{
 						Line:      1,
 						Character: 35,
@@ -489,7 +489,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Name i not found inside t1",
+					Msg: "Name i not found inside t1",
 					Position: lsp.Position{
 						Line:      1,
 						Character: 38,
@@ -513,7 +513,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Unrecognized name: t",
+					Msg: "Unrecognized name: t",
 					Position: lsp.Position{
 						Line:      1,
 						Character: 43,
@@ -537,7 +537,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Name i not found inside t2",
+					Msg: "Name i not found inside t2",
 					Position: lsp.Position{
 						Line:      1,
 						Character: 46,
@@ -561,7 +561,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Syntax error: Unexpected end of script",
+					Msg: "Syntax error: Unexpected end of script",
 					Position: lsp.Position{
 						Line:      1,
 						Character: 34,
@@ -617,7 +617,7 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: `INVALID_ARGUMENT: Syntax error: Expected "(" or "," or keyword SELECT but got end of script`,
+					Msg: "Syntax error: Unexpected end of script",
 					Position: lsp.Position{
 						Line:      0,
 						Character: 53,
@@ -672,7 +672,7 @@ func TestProject_ParseFileWithIncompleteTable(t *testing.T) {
 			},
 			expectedErrs: []file.Error{
 				{
-					Msg: "INVALID_ARGUMENT: Table not found: `project.dataset.`",
+					Msg: "Table not found: `project.dataset.`",
 					Position: lsp.Position{
 						Line:      0,
 						Character: 14,
@@ -788,7 +788,7 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 					Severity:   lsp.Warning,
 				},
 				{
-					Msg: "INVALID_ARGUMENT: Function not found: target_func",
+					Msg: "Function not found: target_func",
 					Position: lsp.Position{
 						Line:      1,
 						Character: 7,

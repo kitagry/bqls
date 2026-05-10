@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/goccy/go-zetasql"
+	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/sourcegraph/jsonrpc2"
 )
@@ -26,8 +26,8 @@ func (h *Handler) handleTextDocumentFormatting(ctx context.Context, conn *jsonrp
 		return nil, fmt.Errorf("failed to find document %s", params.TextDocument.URI)
 	}
 
-	formatted, err := zetasql.FormatSQL(rawText)
-	if !ok {
+	formatted, err := googlesql.FormatSql(rawText)
+	if err != nil {
 		return nil, fmt.Errorf("failed to format: %w", err)
 	}
 

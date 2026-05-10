@@ -5,8 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/goccy/go-zetasql"
-	"github.com/goccy/go-zetasql/ast"
+	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
@@ -15,28 +14,45 @@ func (c *completor) completeDeclaration(ctx context.Context, parsedFile file.Par
 	termOffset := parsedFile.TermOffset(position)
 
 	// When the cursor is in the middle of the table path, do not suggest the built-in functions.
-	tablePathNode, ok := file.SearchAstNode[*ast.TablePathExpressionNode](parsedFile.Node, parsedFile.TermOffset(position))
-	if ok && tablePathNode.ParseLocationRange().End().ByteOffset() != termOffset {
-		return []CompletionItem{}
+	tablePathNode, ok := file.SearchAstNode[*googlesql.ASTTablePathExpression](parsedFile.Node, parsedFile.TermOffset(position))
+	if ok {
+		loc, _ := tablePathNode.GetParseLocationRange()
+		endOff := file.ParseLocEnd(loc)
+		if endOff != termOffset {
+			return []CompletionItem{}
+		}
 	}
 
 	incompleteColumnName := parsedFile.FindIncompleteColumnName(position)
 
-	declarations := file.ListAstNode[*ast.VariableDeclarationNode](parsedFile.Node)
+	declarations := file.ListAstNode[*googlesql.ASTVariableDeclaration](parsedFile.Node)
 
 	result := make([]CompletionItem, 0, len(declarations))
 	for _, d := range declarations {
-		iList := d.VariableList().IdentifierList()
-		for _, l := range iList {
-			if !strings.HasPrefix(l.Name(), incompleteColumnName) {
+		varList, err := d.VariableList()
+		if err != nil || varList == nil {
+			continue
+		}
+		n, _ := varList.NumChildren()
+		for i := int32(0); i < n; i++ {
+			ident, err := varList.IdentifierList(i)
+			if err != nil {
 				continue
 			}
+			name, err := ident.GetAsString()
+			if err != nil {
+				continue
+			}
+			if !strings.HasPrefix(name, incompleteColumnName) {
+				continue
+			}
+			unparsed, _ := googlesql.Unparse(d)
 			result = append(result, CompletionItem{
 				Kind:    lsp.CIKVariable,
-				NewText: l.Name(),
+				NewText: name,
 				Documentation: lsp.MarkupContent{
 					Kind:  lsp.MKMarkdown,
-					Value: fmt.Sprintf("```sql\n%s```", zetasql.Unparse(d)),
+					Value: fmt.Sprintf("```sql\n%s```", unparsed),
 				},
 			})
 		}

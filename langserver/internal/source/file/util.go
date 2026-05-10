@@ -3,30 +3,34 @@ package file
 import (
 	"strings"
 
-	"github.com/goccy/go-zetasql/ast"
+	googlesql "github.com/goccy/go-googlesql"
 )
 
-func CreateTableNameFromTablePathExpressionNode(node *ast.TablePathExpressionNode) (string, bool) {
-	var pathExpr *ast.PathExpressionNode
-	if unnestExpr := node.UnnestExpr(); unnestExpr != nil {
-		ex, ok := unnestExpr.Expression().(*ast.PathExpressionNode)
-		if ok {
-			pathExpr = ex
+func CreateTableNameFromTablePathExpressionNode(node *googlesql.ASTTablePathExpression) (string, bool) {
+	var pathExpr *googlesql.ASTPathExpression
+
+	unnestExpr, _ := node.UnnestExpr()
+	if unnestExpr != nil {
+		expr, err := unnestExpr.Expression()
+		if err == nil {
+			if pe, ok := expr.(*googlesql.ASTPathExpression); ok {
+				pathExpr = pe
+			}
 		}
 	}
 
-	if pExpr := node.PathExpr(); pExpr != nil {
-		pathExpr = pExpr
+	if pe, _ := node.PathExpr(); pe != nil {
+		pathExpr = pe
 	}
 
 	if pathExpr == nil {
 		return "", false
 	}
 
-	pathNames := make([]string, len(pathExpr.Names()))
-	for i, n := range pathExpr.Names() {
-		pathNames[i] = n.Name()
+	names, err := pathExpr.ToIdentifierVector()
+	if err != nil || len(names) == 0 {
+		return "", false
 	}
 
-	return strings.Join(pathNames, "."), true
+	return strings.Join(names, "."), true
 }

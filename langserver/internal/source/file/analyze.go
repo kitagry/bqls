@@ -6,9 +6,7 @@ import (
 	"strings"
 
 	bq "cloud.google.com/go/bigquery"
-	"github.com/goccy/go-zetasql"
-	"github.com/goccy/go-zetasql/ast"
-	"github.com/goccy/go-zetasql/types"
+	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/helper"
@@ -33,55 +31,105 @@ func NewAnalyzer(logger *logrus.Logger, bqClient bigquery.Client) *Analyzer {
 	}
 }
 
-func (a *Analyzer) langOpt() (*zetasql.LanguageOptions, error) {
-	langOpt := zetasql.NewLanguageOptions()
-	langOpt.SetNameResolutionMode(zetasql.NameResolutionDefault)
-	langOpt.SetProductMode(types.ProductExternal)
-	langOpt.EnableMaximumLanguageFeatures()
-	langOpt.EnableLanguageFeature(zetasql.FeatureV13AllowDashesInTableName)
-	langOpt.EnableLanguageFeature(zetasql.FeatureV13Qualify)
-	langOpt.EnableLanguageFeature(zetasql.FeatureV13ScriptLabel)
-	langOpt.EnableLanguageFeature(zetasql.FeatureAnalyticFunctions)
-	langOpt.EnableLanguageFeature(zetasql.FeatureV13AllowDashesInTableName)
-	langOpt.SetSupportsAllStatementKinds()
-	langOpt.EnableAllReservableKeywords(true)
-	err := langOpt.EnableReservableKeyword("QUALIFY", true)
+func newLanguageOptions() (*googlesql.LanguageOptions, error) {
+	langOpt, err := googlesql.NewLanguageOptions()
 	if err != nil {
+		return nil, err
+	}
+	if err := langOpt.SetNameResolutionMode(googlesql.NameResolutionModeNameResolutionDefault); err != nil {
+		return nil, err
+	}
+	if err := langOpt.SetProductMode(googlesql.ProductModeProductExternal); err != nil {
+		return nil, err
+	}
+	if err := langOpt.EnableMaximumLanguageFeatures(); err != nil {
+		return nil, err
+	}
+	if err := langOpt.EnableLanguageFeature(googlesql.LanguageFeatureFeatureV13AllowDashesInTableName); err != nil {
+		return nil, err
+	}
+	if err := langOpt.EnableLanguageFeature(googlesql.LanguageFeatureFeatureV13Qualify); err != nil {
+		return nil, err
+	}
+	if err := langOpt.EnableLanguageFeature(googlesql.LanguageFeatureFeatureV13ScriptLabel); err != nil {
+		return nil, err
+	}
+	if err := langOpt.EnableLanguageFeature(googlesql.LanguageFeatureFeatureAnalyticFunctions); err != nil {
+		return nil, err
+	}
+	if err := langOpt.SetSupportsAllStatementKinds(); err != nil {
+		return nil, err
+	}
+	if err := langOpt.EnableAllReservableKeywords(true); err != nil {
+		return nil, err
+	}
+	if err := langOpt.EnableReservableKeyword("QUALIFY", true); err != nil {
 		return nil, err
 	}
 	return langOpt, nil
 }
 
-func (a *Analyzer) AnalyzeStatement(rawText string, stmt ast.StatementNode, catalog types.Catalog) (*zetasql.AnalyzerOutput, error) {
-	langOpt, err := a.langOpt()
+func (a *Analyzer) newAnalyzerOptions(langOpt *googlesql.LanguageOptions) (*googlesql.AnalyzerOptions, error) {
+	opts, err := googlesql.NewAnalyzerOptions2()
 	if err != nil {
 		return nil, err
 	}
-	opts := zetasql.NewAnalyzerOptions()
-	opts.SetLanguage(langOpt)
-	opts.SetAllowUndeclaredParameters(true)
-	opts.SetErrorMessageMode(zetasql.ErrorMessageOneLine)
-	opts.SetParseLocationRecordType(zetasql.ParseLocationRecordCodeSearch)
-	return zetasql.AnalyzeStatementFromParserAST(rawText, stmt, catalog, opts)
+	if err := opts.SetLanguage(langOpt); err != nil {
+		return nil, err
+	}
+	if err := opts.SetAllowUndeclaredParameters(true); err != nil {
+		return nil, err
+	}
+	if err := opts.SetErrorMessageMode(googlesql.ErrorMessageModeErrorMessageOneLine); err != nil {
+		return nil, err
+	}
+	if err := opts.SetParseLocationRecordType(googlesql.ParseLocationRecordTypeParseLocationRecordCodeSearch); err != nil {
+		return nil, err
+	}
+	return opts, nil
 }
 
-func (a *Analyzer) parseScript(src string) (ast.ScriptNode, error) {
-	langOpt, err := a.langOpt()
+func (a *Analyzer) AnalyzeStatement(rawText string, stmt googlesql.ASTStatementNode, catalog *Catalog) (*googlesql.AnalyzerOutput, error) {
+	langOpt := catalog.langOpts
+	opts, err := a.newAnalyzerOptions(langOpt)
 	if err != nil {
 		return nil, err
 	}
-	opts := zetasql.NewParserOptions()
-	opts.SetLanguageOptions(langOpt)
-	return zetasql.ParseScript(src, opts, zetasql.ErrorMessageOneLine)
+	return googlesql.AnalyzeStatementFromParserAST(stmt, opts, rawText, catalog.CatalogNode(), catalog.TypeFactory())
+}
+
+func (a *Analyzer) parseScript(src string) (*googlesql.ASTScript, error) {
+	// Create a fresh LanguageOptions for parsing to avoid WASM object aliasing
+	// issues when the same pointer is used for both parser and analyzer options.
+	langOpt, err := newLanguageOptions()
+	if err != nil {
+		return nil, err
+	}
+	parserOpts, err := googlesql.NewParserOptions()
+	if err != nil {
+		return nil, err
+	}
+	if err := parserOpts.SetLanguageOptions(langOpt); err != nil {
+		return nil, err
+	}
+	errMsgOpts := &googlesql.ErrorMessageOptions{
+		Mode:      googlesql.ErrorMessageModeErrorMessageOneLine,
+		Stability: googlesql.ErrorMessageStabilityProduction,
+	}
+	out, err := googlesql.ParseScript(src, parserOpts, errMsgOpts)
+	if err != nil {
+		return nil, err
+	}
+	return out.Script()
 }
 
 func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 	fixedSrc, errs, fixOffsets := fixDot(src)
 
-	var node ast.ScriptNode
-	var rnode []*zetasql.AnalyzerOutput
+	var node *googlesql.ASTScript
+	var rnode []*googlesql.AnalyzerOutput
 	for _retry := 0; _retry < 10; _retry++ {
-		rnode = make([]*zetasql.AnalyzerOutput, 0)
+		rnode = make([]*googlesql.AnalyzerOutput, 0)
 		var err error
 		var fo []FixOffset
 		node, err = a.parseScript(fixedSrc)
@@ -92,58 +140,74 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			}
 			if strings.Contains(pErr.Msg, "Unexpected end of script") {
 				fixedSrc, pErr, fo = fixUnexpectedEndOfScript(fixedSrc, pErr)
+				if len(fo) == 0 {
+					// No keyword-based fix worked; try inserting SELECT 1 (handles WITH-clause-only SQL).
+					fixedSrc, pErr, fo = fixOnlyWithClauseSyntaxError(fixedSrc, pErr)
+				}
 			}
 			if strings.Contains(pErr.Msg, `Syntax error: Expected "(" or "," or keyword SELECT but got end of script`) {
 				fixedSrc, pErr, fo = fixOnlyWithClauseSyntaxError(fixedSrc, pErr)
 			}
 			errs = append(errs, pErr)
 			if len(fo) > 0 {
-				// retry
 				fixOffsets = append(fixOffsets, fo...)
 				continue
 			}
 		}
 
-		stmts := make([]ast.StatementNode, 0)
-		ast.Walk(node, func(n ast.Node) error {
-			if n == nil {
-				return nil
-			}
-			if n.IsStatement() {
-				stmts = append(stmts, n)
-			}
-			return nil
-		})
+		if node == nil {
+			break
+		}
 
 		catalog := a.catalog.Clone()
+
+		// Pre-load tables referenced in the SQL from BigQuery
+		catalog.PreloadTablesFromAST(node)
+
+		stmts := collectStatements(node)
 		declarationMap := make(map[string]string)
+
 		for _, s := range stmts {
-			if s.Kind() == ast.VariableDeclaration {
-				node := s.(*ast.VariableDeclarationNode)
-				dummyValue, err := getDummyValueForDeclarationNode(node)
+			kind, _ := s.NodeKind()
+			if kind == googlesql.ASTNodeKindAstVariableDeclaration {
+				declNode := s.(*googlesql.ASTVariableDeclaration)
+				dummyValue, err := getDummyValueForDeclarationNode(declNode)
 				if err != nil {
 					a.logger.Debug("failed to get default value for declaration", err)
 				}
-				list := node.VariableList().IdentifierList()
-				for _, l := range list {
-					declarationMap[l.Name()] = dummyValue
+				varList, _ := declNode.VariableList()
+				if varList != nil {
+					n, _ := varList.NumChildren()
+					for i := int32(0); i < n; i++ {
+						ident, err := varList.IdentifierList(i)
+						if err != nil {
+							continue
+						}
+						name, _ := ident.GetAsString()
+						declarationMap[name] = dummyValue
+					}
 				}
 				continue
 			}
 
-			if s.Kind() == ast.CreateFunctionStatement {
-				node := s.(*ast.CreateFunctionStatementNode)
-				newFunc, err := a.createFunctionTypes(node, fixedSrc)
+			if kind == googlesql.ASTNodeKindAstCreateFunctionStatement {
+				fnNode := s.(*googlesql.ASTCreateFunctionStatement)
+				newFunc, err := a.createFunctionTypes(fnNode, fixedSrc, catalog)
 				if err != nil {
 					errs = append(errs, *err)
 					continue
 				}
-
-				name := ""
-				for _, n := range node.FunctionDeclaration().Name().Names() {
-					name += n.Name()
+				if newFunc != nil {
+					decl, _ := fnNode.FunctionDeclaration()
+					if decl != nil {
+						pathExpr, _ := decl.Name()
+						if pathExpr != nil {
+							names, _ := pathExpr.ToIdentifierVector()
+							name := strings.Join(names, "")
+							catalog.AddFunctionWithName(name, newFunc)
+						}
+					}
 				}
-				catalog.AddFunctionWithName(name, newFunc)
 			}
 
 			output, err := a.AnalyzeStatement(fixedSrc, s, catalog)
@@ -183,15 +247,15 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 					if len(fo) > 0 {
 						skipError = true
 					}
-				} else if _, ok := SearchAstNode[*ast.SelectListNode](node, errTermOffset); ok {
+				} else if _, ok := SearchAstNode[*googlesql.ASTSelectList](node, errTermOffset); ok {
 					fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
-				} else if _, ok := SearchAstNode[*ast.WhereClauseNode](node, errTermOffset); ok {
+				} else if _, ok := SearchAstNode[*googlesql.ASTWhereClause](node, errTermOffset); ok {
 					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
-				} else if _, ok := SearchAstNode[*ast.GroupByNode](node, errTermOffset); ok {
+				} else if _, ok := SearchAstNode[*googlesql.ASTGroupBy](node, errTermOffset); ok {
 					fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
-				} else if _, ok := SearchAstNode[*ast.OrderByNode](node, errTermOffset); ok {
+				} else if _, ok := SearchAstNode[*googlesql.ASTOrderBy](node, errTermOffset); ok {
 					fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
-				} else if _, ok := SearchAstNode[*ast.OnClauseNode](node, errTermOffset); ok {
+				} else if _, ok := SearchAstNode[*googlesql.ASTOnClause](node, errTermOffset); ok {
 					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
 				}
 			}
@@ -225,6 +289,24 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 	}
 }
 
+// collectStatements walks the ASTScript and collects all statement nodes.
+func collectStatements(node *googlesql.ASTScript) []googlesql.ASTStatementNode {
+	stmts := make([]googlesql.ASTStatementNode, 0)
+	Walk(node, func(n googlesql.ASTNode) error { //nolint
+		if n == nil {
+			return nil
+		}
+		isStmt, _ := n.IsStatement()
+		if isStmt {
+			if sn, ok := n.(googlesql.ASTStatementNode); ok {
+				stmts = append(stmts, sn)
+			}
+		}
+		return nil
+	})
+	return stmts
+}
+
 func (a *Analyzer) GetTableMetadataFromPath(ctx context.Context, path string) (*bq.TableMetadata, error) {
 	splitNode := strings.Split(path, ".")
 
@@ -245,80 +327,137 @@ func (a *Analyzer) GetTableMetadataFromPath(ctx context.Context, path string) (*
 	}
 }
 
-func (p *Analyzer) createFunctionTypes(node *ast.CreateFunctionStatementNode, sourceFile string) (*types.Function, *Error) {
-	argTypes := []*types.FunctionArgumentType{}
-	for _, parameter := range node.FunctionDeclaration().Parameters().ParameterEntries() {
-		typ, err := getTypeFromTypeNode(parameter.Type())
-		if err != nil {
-			p.logger.Debug("failed to get type from parameter ", err)
-			return nil, nil
-		}
-		opt := types.NewFunctionArgumentTypeOptions(types.RequiredArgumentCardinality)
-		opt.SetArgumentName(parameter.Name().Name())
-		args := types.NewFunctionArgumentType(typ, opt)
-		argTypes = append(argTypes, args)
+func (a *Analyzer) createFunctionTypes(node *googlesql.ASTCreateFunctionStatement, sourceFile string, catalog *Catalog) (*googlesql.Function, *Error) {
+	decl, err := node.FunctionDeclaration()
+	if err != nil || decl == nil {
+		return nil, nil
+	}
+	params, err := decl.Parameters()
+	if err != nil || params == nil {
+		return nil, nil
 	}
 
-	returnType := node.ReturnType()
-	var typ types.Type
-	if returnType != nil {
-		var err error
-		typ, err = getTypeFromTypeNode(node.ReturnType())
+	argTypes := []*googlesql.FunctionArgumentType{}
+	numParams, _ := params.NumChildren()
+	for i := int32(0); i < numParams; i++ {
+		param, err := params.ParameterEntries(i)
 		if err != nil {
-			p.logger.Debug("failed to get type from return type ", err)
+			continue
+		}
+		typeNode, err := param.Type()
+		if err != nil {
+			continue
+		}
+		typ, err := getTypeFromTypeNode(typeNode, catalog.TypeFactory())
+		if err != nil {
+			a.logger.Debug("failed to get type from parameter ", err)
 			return nil, nil
 		}
-	} else {
-		err := Error{
+		opts, err := googlesql.NewFunctionArgumentTypeOptions()
+		if err != nil {
+			return nil, nil
+		}
+		arg, err := googlesql.NewFunctionArgumentType(typ, opts, 1)
+		if err != nil {
+			return nil, nil
+		}
+		argTypes = append(argTypes, arg)
+	}
+
+	returnTypeNode, err := node.ReturnType()
+	if err != nil || returnTypeNode == nil {
+		errResult := Error{
 			Msg:      "Currently, bqls does not support function without return type.",
 			Severity: lsp.Warning,
 		}
-		loc := node.ParseLocationRange()
+		loc, _ := node.GetParseLocationRange()
 		if loc != nil {
-			err.Position = helper.IndexToPosition(sourceFile, loc.Start().ByteOffset())
-			err.TermLength = loc.End().ByteOffset() - loc.Start().ByteOffset()
+			start := parseLocStart(loc)
+			end := parseLocEnd(loc)
+			if start >= 0 {
+				errResult.Position = helper.IndexToPosition(sourceFile, start)
+				if end > start {
+					errResult.TermLength = end - start
+				}
+			}
 		}
-		return nil, &err
+		return nil, &errResult
 	}
-	opt := types.NewFunctionArgumentTypeOptions(types.RequiredArgumentCardinality)
-	retType := types.NewFunctionArgumentType(typ, opt)
 
-	sig := types.NewFunctionSignature(retType, argTypes)
+	typ, err := getTypeFromTypeNode(returnTypeNode, catalog.TypeFactory())
+	if err != nil {
+		a.logger.Debug("failed to get type from return type ", err)
+		return nil, nil
+	}
 
+	retOpts, err := googlesql.NewFunctionArgumentTypeOptions()
+	if err != nil {
+		return nil, nil
+	}
+	retType, err := googlesql.NewFunctionArgumentType(typ, retOpts, 1)
+	if err != nil {
+		return nil, nil
+	}
+
+	sig, err := googlesql.NewFunctionSignature3(retType, argTypes, 0)
+	if err != nil {
+		return nil, nil
+	}
+
+	pathExpr, _ := decl.Name()
 	name := ""
-	for _, n := range node.FunctionDeclaration().Name().Names() {
-		name += n.Name()
+	if pathExpr != nil {
+		names, _ := pathExpr.ToIdentifierVector()
+		name = strings.Join(names, "")
 	}
-	newFunc := types.NewFunction([]string{name}, "", types.ScalarMode, []*types.FunctionSignature{sig})
+
+	newFunc, err := googlesql.NewFunction2([]string{name}, "", googlesql.FunctionEnums_ModeScalar, []*googlesql.FunctionSignature{sig})
+	if err != nil {
+		return nil, nil
+	}
 	return newFunc, nil
 }
 
-func getDummyValueForDeclarationNode(node *ast.VariableDeclarationNode) (string, error) {
-	switch n := node.Type().(type) {
-	case *ast.ArrayTypeNode:
+func getDummyValueForDeclarationNode(node *googlesql.ASTVariableDeclaration) (string, error) {
+	typeNode, err := node.Type()
+	if err != nil {
+		return "", err
+	}
+	if typeNode == nil {
+		// DECLARE x DEFAULT expr; - no explicit type
+		defaultVal, _ := node.DefaultValue()
+		if defaultVal != nil {
+			return getDummyValueForDefaultValueNode(defaultVal)
+		}
+		return "", fmt.Errorf("don't support declaration without type or default")
+	}
+
+	switch typeNode.(type) {
+	case *googlesql.ASTArrayType:
 		return "[]", nil
-	case *ast.SimpleTypeNode:
-		if pen, ok := n.Child(0).(*ast.PathExpressionNode); ok {
-			if in, ok := pen.Child(0).(*ast.IdentifierNode); ok {
-				return getDummyValueForDeclarationIdentifierName(in.Name())
+	case *googlesql.ASTSimpleType:
+		stn := typeNode.(*googlesql.ASTSimpleType)
+		pathExpr, _ := stn.TypeName()
+		if pathExpr != nil {
+			names, _ := pathExpr.ToIdentifierVector()
+			if len(names) > 0 {
+				val, err := getDummyValueForDeclarationIdentifierName(names[0])
+				if err == nil {
+					return val, nil
+				}
 			}
 		}
-
-		if node.DefaultValue() != nil {
-			return getDummyValueForDefaultValueNode(node.DefaultValue())
+		defaultVal, _ := node.DefaultValue()
+		if defaultVal != nil {
+			return getDummyValueForDefaultValueNode(defaultVal)
 		}
 		return "", fmt.Errorf("failed to load default value")
 	default:
-		// If declare statement doen't have the explicit type, node.Type() is nil
-		// e.g. `DECLARE x DEFAULT 1;`
-		if node.DefaultValue() != nil {
-			return getDummyValueForDefaultValueNode(node.DefaultValue())
+		defaultVal, _ := node.DefaultValue()
+		if defaultVal != nil {
+			return getDummyValueForDefaultValueNode(defaultVal)
 		}
-
-		if n != nil {
-			return "", fmt.Errorf("not implemented: %s", n.Kind())
-		}
-		return "", fmt.Errorf("don't support declaration `%s`", zetasql.Unparse(node))
+		return "", fmt.Errorf("not implemented: %T", typeNode)
 	}
 }
 
@@ -347,62 +486,66 @@ func getDummyValueForDeclarationIdentifierName(name string) (string, error) {
 	}
 }
 
-func getDummyValueForDefaultValueNode(node ast.ExpressionNode) (string, error) {
+func getDummyValueForDefaultValueNode(node googlesql.ASTExpressionNode) (string, error) {
 	switch node.(type) {
-	case *ast.NullLiteralNode:
+	case *googlesql.ASTNullLiteral:
 		return "NULL", nil
-	case *ast.BooleanLiteralNode:
+	case *googlesql.ASTBooleanLiteral:
 		return "TRUE", nil
-	case *ast.IntLiteralNode:
+	case *googlesql.ASTIntLiteral:
 		return "0", nil
-	case *ast.FloatLiteralNode:
+	case *googlesql.ASTFloatLiteral:
 		return "0.0", nil
-	case *ast.StringLiteralNode:
+	case *googlesql.ASTStringLiteral:
 		return "''", nil
-	case *ast.DateOrTimeLiteralNode:
+	case *googlesql.ASTDateOrTimeLiteral:
 		return "DATE('1970-01-01')", nil
 	default:
 		return "", fmt.Errorf("not implemented: %T", node)
 	}
 }
 
-func getTypeFromTypeNode(node ast.TypeNode) (types.Type, error) {
-	if stn, ok := node.(*ast.SimpleTypeNode); ok {
-		names := stn.TypeName().Names()
-		typeName := ""
-		for _, n := range names {
-			typeName += n.Name()
+func getTypeFromTypeNode(node googlesql.ASTTypeNode, tf *googlesql.TypeFactory) (googlesql.Googlesql_TypeNode, error) {
+	if stn, ok := node.(*googlesql.ASTSimpleType); ok {
+		pathExpr, err := stn.TypeName()
+		if err != nil || pathExpr == nil {
+			return nil, fmt.Errorf("failed to get type name")
 		}
+		names, err := pathExpr.ToIdentifierVector()
+		if err != nil || len(names) == 0 {
+			return nil, fmt.Errorf("failed to get type name identifiers")
+		}
+		typeName := strings.Join(names, "")
 
 		switch typeName {
 		case "INT64":
-			return types.Int64Type(), nil
+			return tf.GetInt64()
 		case "FLOAT64":
-			return types.FloatType(), nil
+			return tf.GetDouble()
 		case "BOOL":
-			return types.BoolType(), nil
+			return tf.GetBool()
 		case "STRING":
-			return types.StringType(), nil
+			return tf.GetString()
 		case "BYTES":
-			return types.BytesType(), nil
+			return tf.GetBytes()
 		case "DATE":
-			return types.DateType(), nil
+			return tf.GetDate()
 		case "DATETIME":
-			return types.DatetimeType(), nil
+			return tf.GetDatetime()
 		case "TIME":
-			return types.TimeType(), nil
+			return tf.GetTime()
 		case "TIMESTAMP":
-			return types.TimestampType(), nil
+			return tf.GetTimestamp()
 		case "NUMERIC":
-			return types.NumericType(), nil
+			return tf.GetNumeric()
 		case "BIGNUMERIC":
-			return types.BigNumericType(), nil
+			return tf.GetBignumeric()
 		case "GEOGRAPHY":
-			return types.GeographyType(), nil
+			return tf.GetGeography()
 		case "INTERVAL":
-			return types.IntervalType(), nil
+			return tf.GetInterval()
 		case "JSON":
-			return types.JsonType(), nil
+			return tf.GetJson()
 		default:
 			return nil, fmt.Errorf("not implemented: %s", typeName)
 		}

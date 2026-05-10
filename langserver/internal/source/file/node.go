@@ -1,32 +1,24 @@
 package file
 
 import (
-	"github.com/goccy/go-zetasql"
-	"github.com/goccy/go-zetasql/ast"
-	rast "github.com/goccy/go-zetasql/resolved_ast"
-	"github.com/goccy/go-zetasql/types"
+	googlesql "github.com/goccy/go-googlesql"
 )
 
-type locationRangeNode interface {
-	ParseLocationRange() *types.ParseLocationRange
-}
-
-func SearchAstNode[T locationRangeNode](node ast.Node, termOffset int) (T, bool) {
+func SearchAstNode[T googlesql.ASTNode](node googlesql.ASTNode, termOffset int) (T, bool) {
 	var targetNode T
 	var found bool
-	ast.Walk(node, func(n ast.Node) error {
-		node, ok := n.(T)
+	Walk(node, func(n googlesql.ASTNode) error { //nolint
+		typed, ok := n.(T)
 		if !ok {
 			return nil
 		}
-		lRange := node.ParseLocationRange()
-		if lRange == nil {
+		startOffset := locStart(n)
+		endOffset := locEnd(n)
+		if startOffset < 0 || endOffset < 0 {
 			return nil
 		}
-		startOffset := lRange.Start().ByteOffset()
-		endOffset := lRange.End().ByteOffset()
 		if startOffset <= termOffset && termOffset <= endOffset {
-			targetNode = node
+			targetNode = typed
 			found = true
 		}
 		return nil
@@ -34,52 +26,54 @@ func SearchAstNode[T locationRangeNode](node ast.Node, termOffset int) (T, bool)
 	return targetNode, found
 }
 
-func SearchResolvedAstNode[T locationRangeNode](output *zetasql.AnalyzerOutput, termOffset int) (T, bool) {
+func SearchResolvedAstNode[T googlesql.ResolvedNode](output *googlesql.AnalyzerOutput, termOffset int) (T, bool) {
 	var targetNode T
 	var found bool
-	rast.Walk(output.Statement(), func(n rast.Node) error {
-		node, ok := n.(T)
+	stmt, err := output.ResolvedStatement()
+	if err != nil || stmt == nil {
+		return targetNode, false
+	}
+	WalkResolved(stmt, func(n googlesql.ResolvedNode) error { //nolint
+		typed, ok := n.(T)
 		if !ok {
 			return nil
 		}
-		lRange := node.ParseLocationRange()
-		if lRange == nil {
+		startOffset := resolvedLocStart(n)
+		endOffset := resolvedLocEnd(n)
+		if startOffset < 0 || endOffset < 0 {
 			return nil
 		}
-		startOffset := lRange.Start().ByteOffset()
-		endOffset := lRange.End().ByteOffset()
 		if startOffset <= termOffset && termOffset <= endOffset {
-			targetNode = node
+			targetNode = typed
 			found = true
 		}
 		return nil
 	})
-
-	if found {
-		return targetNode, found
-	}
-	return targetNode, false
+	return targetNode, found
 }
 
-func ListResolvedAstNode[T locationRangeNode](output *zetasql.AnalyzerOutput) []T {
+func ListResolvedAstNode[T googlesql.ResolvedNode](output *googlesql.AnalyzerOutput) []T {
 	result := make([]T, 0)
-	rast.Walk(output.Statement(), func(n rast.Node) error {
-		node, ok := n.(T)
+	stmt, err := output.ResolvedStatement()
+	if err != nil || stmt == nil {
+		return result
+	}
+	WalkResolved(stmt, func(n googlesql.ResolvedNode) error { //nolint
+		typed, ok := n.(T)
 		if !ok {
 			return nil
 		}
-		result = append(result, node)
+		result = append(result, typed)
 		return nil
 	})
-
 	return result
 }
 
 type astNode interface {
-	*ast.TablePathExpressionNode | *ast.PathExpressionNode | *ast.SelectColumnNode
+	*googlesql.ASTTablePathExpression | *googlesql.ASTPathExpression | *googlesql.ASTSelectColumn | *googlesql.ASTFunctionCall
 }
 
-func LookupNode[T astNode](n ast.Node) (T, bool) {
+func LookupNode[T astNode](n googlesql.ASTNode) (T, bool) {
 	if n == nil {
 		return nil, false
 	}
@@ -89,19 +83,22 @@ func LookupNode[T astNode](n ast.Node) (T, bool) {
 		return result, true
 	}
 
-	return LookupNode[T](n.Parent())
+	parent, err := n.Parent()
+	if err != nil || parent == nil {
+		return nil, false
+	}
+	return LookupNode[T](parent)
 }
 
-func ListAstNode[T locationRangeNode](n ast.ScriptNode) []T {
+func ListAstNode[T googlesql.ASTNode](n *googlesql.ASTScript) []T {
 	result := make([]T, 0)
-	ast.Walk(n, func(n ast.Node) error {
-		node, ok := n.(T)
+	Walk(n, func(n googlesql.ASTNode) error { //nolint
+		typed, ok := n.(T)
 		if !ok {
 			return nil
 		}
-		result = append(result, node)
+		result = append(result, typed)
 		return nil
 	})
-
 	return result
 }
