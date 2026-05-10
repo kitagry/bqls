@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	bq "cloud.google.com/go/bigquery"
-	"github.com/goccy/go-zetasql/types"
+	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
 )
 
@@ -17,63 +17,96 @@ const (
 )
 
 type Catalog struct {
-	catalog      *types.SimpleCatalog
+	catalog      *googlesql.SimpleCatalog
+	typeFactory  *googlesql.TypeFactory
+	langOpts     *googlesql.LanguageOptions
 	bqClient     bigquery.Client
 	tableMetaMap map[string]*bq.TableMetadata
 	mu           *sync.Mutex
+	// subCatalogs tracks nested sub-catalogs for non-backtick 3-part path resolution.
+	subCatalogs map[string]*googlesql.SimpleCatalog // key: "project" or "project.dataset"
 }
 
-var _ types.Catalog = (*Catalog)(nil)
-
 func NewCatalog(bqClient bigquery.Client) *Catalog {
-	catalog := types.NewSimpleCatalog(catalogName)
-	catalog.AddZetaSQLBuiltinFunctions(nil)
+	tf, err := googlesql.NewTypeFactory()
+	if err != nil {
+		panic(fmt.Sprintf("failed to create TypeFactory: %v", err))
+	}
+	langOpts, err := newLanguageOptions()
+	if err != nil {
+		panic(fmt.Sprintf("failed to create LanguageOptions: %v", err))
+	}
+	cat, err := newSimpleCatalogWithBuiltins(tf, langOpts)
+	if err != nil {
+		panic(fmt.Sprintf("failed to create catalog: %v", err))
+	}
 	return &Catalog{
-		catalog:      catalog,
+		catalog:      cat,
+		typeFactory:  tf,
+		langOpts:     langOpts,
 		bqClient:     bqClient,
 		tableMetaMap: make(map[string]*bq.TableMetadata),
 		mu:           &sync.Mutex{},
+		subCatalogs:  make(map[string]*googlesql.SimpleCatalog),
 	}
+}
+
+func newSimpleCatalogWithBuiltins(tf *googlesql.TypeFactory, langOpts *googlesql.LanguageOptions) (*googlesql.SimpleCatalog, error) {
+	cat, err := googlesql.NewSimpleCatalog(catalogName, tf)
+	if err != nil {
+		return nil, err
+	}
+	bfo := &googlesql.BuiltinFunctionOptions{LanguageOptions: langOpts}
+	if err := cat.AddBuiltinFunctionsAndTypes(bfo); err != nil {
+		return nil, err
+	}
+	return cat, nil
 }
 
 func (c *Catalog) Clone() *Catalog {
-	catalog := types.NewSimpleCatalog(catalogName)
-	catalog.AddZetaSQLBuiltinFunctions(nil)
+	cat, err := newSimpleCatalogWithBuiltins(c.typeFactory, c.langOpts)
+	if err != nil {
+		panic(fmt.Sprintf("failed to clone catalog: %v", err))
+	}
 	return &Catalog{
-		catalog:      catalog,
+		catalog:      cat,
+		typeFactory:  c.typeFactory,
+		langOpts:     c.langOpts,
 		bqClient:     c.bqClient,
 		tableMetaMap: make(map[string]*bq.TableMetadata),
 		mu:           &sync.Mutex{},
+		subCatalogs:  make(map[string]*googlesql.SimpleCatalog),
 	}
 }
 
-func (c *Catalog) FullName() string {
-	return c.catalog.FullName()
+// CatalogNode returns the underlying SimpleCatalog which implements CatalogNode.
+func (c *Catalog) CatalogNode() *googlesql.SimpleCatalog {
+	return c.catalog
 }
 
-func (c *Catalog) FindTable(path []string) (types.Table, error) {
+// TypeFactory returns the TypeFactory for creating types.
+func (c *Catalog) TypeFactory() *googlesql.TypeFactory {
+	return c.typeFactory
+}
+
+func (c *Catalog) AddFunctionWithName(name string, fn *googlesql.Function) {
+	_ = c.catalog.AddFunction2(name, fn)
+}
+
+// EnsureTable loads a table from BigQuery if not already in the catalog.
+func (c *Catalog) EnsureTable(path []string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	projectID, datasetID, tableID, err := c.pathToProjectTable(path)
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	formattedPath := []string{fmt.Sprintf("%s.%s.%s", projectID, datasetID, tableID)}
-
-	table, err := c.catalog.FindTable(formattedPath)
-	if err == nil {
-		return table, nil
+	tableName := fmt.Sprintf("%s.%s.%s", projectID, datasetID, tableID)
+	if _, ok := c.tableMetaMap[tableName]; ok {
+		return nil // already loaded
 	}
-	errs := []error{fmt.Errorf("failed to find table: %w", err)}
-
-	err = c.addTable(path)
-	if err != nil {
-		errs = append(errs, fmt.Errorf("failed to add table: %w", err))
-		return nil, errors.Join(errs...)
-	}
-	return c.catalog.FindTable(formattedPath)
+	return c.addTable(path)
 }
 
 func (c *Catalog) addTable(path []string) error {
@@ -89,28 +122,80 @@ func (c *Catalog) addTable(path []string) error {
 
 	tableName := fmt.Sprintf("%s.%s.%s", projectID, datasetID, tableID)
 
+	table, err := googlesql.NewSimpleTable(tableName, 0)
+	if err != nil {
+		return fmt.Errorf("failed to create table: %w", err)
+	}
+
 	schema := metadata.Schema
-	columns := make([]types.Column, len(schema))
-	for i, field := range schema {
-		typ, err := bigqueryTypeToZetaSQLType(field.Type, field.Repeated, field.Schema)
+	for _, field := range schema {
+		typ, err := bigqueryTypeToGooglesqlType(c.typeFactory, field.Type, field.Repeated, field.Schema)
 		if err != nil {
 			return fmt.Errorf("failed to convert type(%s): %w", field.Name, err)
 		}
-		columns[i] = types.NewSimpleColumn(tableName, field.Name, typ)
+		col, err := googlesql.NewSimpleColumn(tableName, field.Name, typ, false, true)
+		if err != nil {
+			return fmt.Errorf("failed to create column(%s): %w", field.Name, err)
+		}
+		if err := table.AddColumn2(col, false); err != nil {
+			return fmt.Errorf("failed to add column(%s): %w", field.Name, err)
+		}
 	}
 
 	if metadata.TimePartitioning != nil {
-		columns = append(columns, types.NewSimpleColumn(tableName, "_PARTITIONTIME", types.TimestampType()))
+		tsType, err := c.typeFactory.GetTimestamp()
+		if err == nil {
+			col, err := googlesql.NewSimpleColumn(tableName, "_PARTITIONTIME", tsType, false, true)
+			if err == nil {
+				_ = table.AddColumn2(col, false)
+			}
+		}
 	}
 
 	if isWildCardTable(path) {
-		columns = append(columns, types.NewSimpleColumn(tableName, "_TABLE_SUFFIX", types.StringType()))
+		strType, err := c.typeFactory.GetString()
+		if err == nil {
+			col, err := googlesql.NewSimpleColumn(tableName, "_TABLE_SUFFIX", strType, false, true)
+			if err == nil {
+				_ = table.AddColumn2(col, false)
+			}
+		}
 	}
 
-	table := types.NewSimpleTable(tableName, columns)
-	c.catalog.AddTable(table)
+	if err := c.catalog.AddTable(table); err != nil {
+		return fmt.Errorf("failed to add table to catalog: %w", err)
+	}
+
+	// Also register in nested sub-catalogs for non-backtick 3-part path resolution.
+	// project.dataset.table → root["project"]["dataset"]["table"]
+	projectCat, err := c.getOrCreateSubCatalog(c.catalog, projectID)
+	if err == nil {
+		datasetKey := projectID + "." + datasetID
+		datasetCat, err := c.getOrCreateSubCatalog(projectCat, datasetKey)
+		if err == nil {
+			_ = datasetCat.AddTable2(tableID, table)
+		}
+	}
+
 	c.tableMetaMap[tableName] = metadata
 	return nil
+}
+
+func (c *Catalog) getOrCreateSubCatalog(parent *googlesql.SimpleCatalog, key string) (*googlesql.SimpleCatalog, error) {
+	if sub, ok := c.subCatalogs[key]; ok {
+		return sub, nil
+	}
+	// Extract the local name (last segment of the key).
+	name := key
+	if idx := strings.LastIndex(key, "."); idx >= 0 {
+		name = key[idx+1:]
+	}
+	sub, err := parent.MakeOwnedSimpleCatalog(name)
+	if err != nil {
+		return nil, err
+	}
+	c.subCatalogs[key] = sub
+	return sub, nil
 }
 
 func (c *Catalog) pathToProjectTable(path []string) (projectID, datasetID, tableID string, err error) {
@@ -123,16 +208,16 @@ func (c *Catalog) pathToProjectTable(path []string) (projectID, datasetID, table
 	return "", "", "", fmt.Errorf(`unknown table "%s"`, strings.Join(tableSep, "."))
 }
 
-func bigqueryTypeToZetaSQLType(typ bq.FieldType, isRepeated bool, schema bq.Schema) (types.Type, error) {
-	result, err := literalBigqueryTypeToZetaSQLType(typ, schema)
+func bigqueryTypeToGooglesqlType(tf *googlesql.TypeFactory, typ bq.FieldType, isRepeated bool, schema bq.Schema) (googlesql.Googlesql_TypeNode, error) {
+	result, err := literalBigqueryTypeToGooglesqlType(tf, typ, schema)
 	if err != nil {
 		return nil, err
 	}
 
 	if isRepeated {
-		result, err = types.NewArrayType(result)
+		result, err = tf.MakeArrayType2(result)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to create array type: %w", err)
+			return nil, fmt.Errorf("failed to create array type: %w", err)
 		}
 		return result, nil
 	}
@@ -140,50 +225,46 @@ func bigqueryTypeToZetaSQLType(typ bq.FieldType, isRepeated bool, schema bq.Sche
 	return result, nil
 }
 
-func literalBigqueryTypeToZetaSQLType(typ bq.FieldType, schema bq.Schema) (types.Type, error) {
+func literalBigqueryTypeToGooglesqlType(tf *googlesql.TypeFactory, typ bq.FieldType, schema bq.Schema) (googlesql.Googlesql_TypeNode, error) {
 	switch typ {
 	case bq.StringFieldType:
-		return types.StringType(), nil
+		return tf.GetString()
 	case bq.IntegerFieldType:
-		return types.Int64Type(), nil
+		return tf.GetInt64()
 	case bq.FloatFieldType:
-		return types.FloatType(), nil
+		return tf.GetDouble()
 	case bq.BooleanFieldType:
-		return types.BoolType(), nil
+		return tf.GetBool()
 	case bq.TimestampFieldType:
-		return types.TimestampType(), nil
+		return tf.GetTimestamp()
 	case bq.DateFieldType:
-		return types.DateType(), nil
+		return tf.GetDate()
 	case bq.TimeFieldType:
-		return types.TimeType(), nil
+		return tf.GetTime()
 	case bq.DateTimeFieldType:
-		return types.DatetimeType(), nil
+		return tf.GetDatetime()
 	case bq.NumericFieldType:
-		return types.NumericType(), nil
+		return tf.GetNumeric()
 	case bq.BytesFieldType:
-		return types.BytesType(), nil
+		return tf.GetBytes()
 	case bq.GeographyFieldType:
-		return types.GeographyType(), nil
+		return tf.GetGeography()
 	case bq.BigNumericFieldType:
-		return types.BigNumericType(), nil
+		return tf.GetBignumeric()
 	case bq.RecordFieldType:
-		fields := make([]*types.StructField, len(schema))
+		fields := make([]*googlesql.StructField, len(schema))
 		for i, field := range schema {
-			typ, err := bigqueryTypeToZetaSQLType(field.Type, field.Repeated, field.Schema)
+			fieldTyp, err := bigqueryTypeToGooglesqlType(tf, field.Type, field.Repeated, field.Schema)
 			if err != nil {
 				return nil, fmt.Errorf("failed to convert type(%s): %w", field.Name, err)
 			}
-			fields[i] = types.NewStructField(field.Name, typ)
+			fields[i] = &googlesql.StructField{Name: field.Name, Type_: fieldTyp}
 		}
-		st, err := types.NewStructType(fields)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create StructType: %w", err)
-		}
-		return st, nil
+		return tf.MakeStructType2(fields)
 	case bq.IntervalFieldType:
-		return types.IntervalType(), nil
+		return tf.GetInterval()
 	case bq.JSONFieldType:
-		return types.JsonType(), nil
+		return tf.GetJson()
 	default:
 		return nil, fmt.Errorf("unsupported type: %v", typ)
 	}
@@ -193,61 +274,44 @@ func isWildCardTable(path []string) bool {
 	if len(path) == 0 {
 		return false
 	}
-
 	return strings.HasSuffix(path[len(path)-1], "*")
 }
 
-func (c *Catalog) FindModel(path []string) (types.Model, error) { return c.catalog.FindModel(path) }
-
-func (c *Catalog) FindConnection(path []string) (types.Connection, error) {
-	return c.catalog.FindConnection(path)
+// PreloadTablesFromAST walks the AST to find all table path expressions and pre-loads them.
+func (c *Catalog) PreloadTablesFromAST(node *googlesql.ASTScript) {
+	Walk(node, func(n googlesql.ASTNode) error { //nolint
+		tpe, ok := n.(*googlesql.ASTTablePathExpression)
+		if !ok {
+			return nil
+		}
+		name, ok := CreateTableNameFromTablePathExpressionNode(tpe)
+		if !ok {
+			return nil
+		}
+		path := strings.Split(name, ".")
+		_ = c.EnsureTable(path)
+		return nil
+	})
 }
 
-func (c *Catalog) AddFunctionWithName(name string, fn *types.Function) {
-	c.catalog.AddFunctionWithName(name, fn)
-}
+// FindTableMetadata returns the BigQuery metadata for a table path (e.g., "project.dataset.table").
+func (c *Catalog) FindTableMetadata(path string) (*bq.TableMetadata, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-func (c *Catalog) FindFunction(path []string) (*types.Function, error) {
-	return c.catalog.FindFunction(path)
-}
+	splitNode := strings.Split(path, ".")
+	var tableName string
+	switch len(splitNode) {
+	case 3:
+		tableName = path
+	case 2:
+		tableName = fmt.Sprintf("%s.%s.%s", c.bqClient.GetDefaultProject(), splitNode[0], splitNode[1])
+	default:
+		return nil, fmt.Errorf("invalid path: %s", path)
+	}
 
-func (c *Catalog) FindTableValuedFunction(path []string) (types.TableValuedFunction, error) {
-	return c.catalog.FindTableValuedFunction(path)
-}
-
-func (c *Catalog) FindProcedure(path []string) (*types.Procedure, error) {
-	return c.catalog.FindProcedure(path)
-}
-func (c *Catalog) FindType(path []string) (types.Type, error) { return c.catalog.FindType(path) }
-
-func (c *Catalog) FindConstant(path []string) (types.Constant, int, error) {
-	return c.catalog.FindConstant(path)
-}
-
-func (c *Catalog) FindConversion(from, to types.Type) (types.Conversion, error) {
-	return c.catalog.FindConversion(from, to)
-}
-
-func (c *Catalog) ExtendedTypeSuperTypes(typ types.Type) (*types.TypeListView, error) {
-	return c.catalog.ExtendedTypeSuperTypes(typ)
-}
-
-func (c *Catalog) SuggestTable(mistypedPath []string) string {
-	return c.catalog.SuggestTable(mistypedPath)
-}
-
-func (c *Catalog) SuggestModel(mistypedPath []string) string {
-	return c.catalog.SuggestModel(mistypedPath)
-}
-
-func (c *Catalog) SuggestFunction(mistypedPath []string) string {
-	return c.catalog.SuggestFunction(mistypedPath)
-}
-
-func (c *Catalog) SuggestTableValuedFunction(mistypedPath []string) string {
-	return c.catalog.SuggestTableValuedFunction(mistypedPath)
-}
-
-func (c *Catalog) SuggestConstant(mistypedPath []string) string {
-	return c.catalog.SuggestConstant(mistypedPath)
+	if meta, ok := c.tableMetaMap[tableName]; ok {
+		return meta, nil
+	}
+	return nil, errors.New("table not found in catalog")
 }

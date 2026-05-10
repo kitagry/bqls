@@ -7,10 +7,7 @@ import (
 	"strings"
 
 	"cloud.google.com/go/bigquery"
-	"github.com/goccy/go-zetasql"
-	"github.com/goccy/go-zetasql/ast"
-	rast "github.com/goccy/go-zetasql/resolved_ast"
-	"github.com/goccy/go-zetasql/types"
+	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver/internal/function"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
@@ -24,7 +21,7 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 	defer parsedFile.Close()
 
 	termOffset := parsedFile.TermOffset(position)
-	targetNode, ok := file.SearchAstNode[*ast.PathExpressionNode](parsedFile.Node, termOffset)
+	targetNode, ok := file.SearchAstNode[*googlesql.ASTPathExpression](parsedFile.Node, termOffset)
 	if !ok {
 		p.logger.Debug("not found target node")
 		return nil, nil
@@ -32,11 +29,25 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 
 	output, ok := parsedFile.FindTargetAnalyzeOutput(termOffset)
 	if !ok {
-		// If not found analyze output, lookup table metadata from ast node.
-		if targetNode, ok := file.LookupNode[*ast.TablePathExpressionNode](targetNode); ok {
-			result, ok := p.termDocumentFromAstNode(ctx, targetNode)
+		// Fallback: table hover from AST.
+		if tpeNode, ok := file.LookupNode[*googlesql.ASTTablePathExpression](targetNode); ok {
+			result, ok := p.termDocumentFromAstNode(ctx, tpeNode)
 			if ok {
 				return result, nil
+			}
+		}
+		// Fallback: column info from table schemas when analysis failed.
+		if result, found := p.termDocumentFromASTColumnRef(ctx, parsedFile, targetNode, termOffset); found {
+			return result, nil
+		}
+		// Fallback: function documentation from AST when analysis failed.
+		// Only triggers when cursor is on the function name, not its arguments.
+		if fnCallNode, ok := file.LookupNode[*googlesql.ASTFunctionCall](targetNode); ok {
+			if isFunctionNameNode(fnCallNode, targetNode) {
+				result, found := p.termDocumentFromASTFunctionCall(fnCallNode)
+				if found {
+					return result, nil
+				}
 			}
 		}
 		p.logger.Debug("not found target analyze output")
@@ -44,58 +55,48 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 	}
 
 	// lookup table metadata
-	if targetNode, ok := file.LookupNode[*ast.TablePathExpressionNode](targetNode); ok {
-		result, ok := p.termDocumentForInputScan(ctx, termOffset, targetNode, output, parsedFile)
+	if tpeNode, ok := file.LookupNode[*googlesql.ASTTablePathExpression](targetNode); ok {
+		result, ok := p.termDocumentForInputScan(ctx, termOffset, tpeNode, output, parsedFile)
 		if ok {
 			return result, nil
 		}
 	}
 
-	if node, ok := file.SearchResolvedAstNode[*rast.FunctionCallNode](output, termOffset); ok {
-		builtinFunction, ok := function.FindBuiltInFunction(node.Function().Name())
-		if !ok {
-			sigs := make([]string, 0, len(node.Function().Signatures()))
-			for _, sig := range node.Function().Signatures() {
-				sigs = append(sigs, sig.DebugString(node.Function().SQLName(), true))
+	if node, ok := file.SearchResolvedAstNode[*googlesql.ResolvedFunctionCall](output, termOffset); ok {
+		fn, err := node.Function()
+		if err == nil && fn != nil {
+			fnName, _ := fn.Name()
+			// Skip ZetaSQL internal operators (e.g. "$equal", "$add") — not user-facing functions.
+			if !strings.HasPrefix(fnName, "$") {
+				if result, found := p.functionDocumentation(fn); found {
+					return result, nil
+				}
 			}
-			return []lsp.MarkedString{
-				{
-					Language: "markdown",
-					Value:    fmt.Sprintf("## %s\n\n%s", node.Function().SQLName(), strings.Join(sigs, "\n")),
-				},
-			}, nil
 		}
-
-		result := make([]lsp.MarkedString, 0, len(builtinFunction.ExampleSQLs)+1)
-		result = append(result, lsp.MarkedString{
-			Language: "markdown",
-			Value:    fmt.Sprintf("%s\n\n[bigquery documentation](%s)", builtinFunction.Description, builtinFunction.URL),
-		})
-		for _, sql := range builtinFunction.ExampleSQLs {
-			result = append(result, lsp.MarkedString{
-				Language: "sql",
-				Value:    sql,
-			})
-		}
-		return result, nil
 	}
 
-	if node, ok := file.SearchResolvedAstNode[*rast.GetStructFieldNode](output, termOffset); ok {
+	if node, ok := file.SearchResolvedAstNode[*googlesql.ResolvedGetStructField](output, termOffset); ok {
+		typ, err := node.Type()
+		if err != nil || typ == nil {
+			return nil, nil
+		}
+		typeName, _ := typ.DebugString(false)
 		return []lsp.MarkedString{
 			{
 				Language: "markdown",
-				Value:    node.Type().TypeName(types.ProductExternal),
+				Value:    typeName,
 			},
 		}, nil
 	}
 
-	if term, ok := file.SearchResolvedAstNode[*rast.ColumnRefNode](output, termOffset); ok {
-		column := term.Column()
-		if column == nil {
+	if term, ok := file.SearchResolvedAstNode[*googlesql.ResolvedColumnRef](output, termOffset); ok {
+		column, err := term.Column()
+		if err != nil || column == nil {
 			return nil, fmt.Errorf("failed to find term: %v", term)
 		}
 
-		tableMetadata, err := p.analyzer.GetTableMetadataFromPath(ctx, column.TableName())
+		tableName, _ := column.TableName()
+		tableMetadata, err := p.analyzer.GetTableMetadataFromPath(ctx, tableName)
 		if err != nil {
 			// cannot find table metadata
 			return []lsp.MarkedString{
@@ -106,8 +107,9 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 			}, nil
 		}
 
+		colName, _ := column.Name()
 		for _, f := range tableMetadata.Schema {
-			if column.Name() == f.Name {
+			if colName == f.Name {
 				return []lsp.MarkedString{
 					{
 						Language: "yaml",
@@ -118,13 +120,14 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 		}
 	}
 
-	if selectColumnNode, ok := file.LookupNode[*ast.SelectColumnNode](targetNode); ok {
-		column, err := p.getSelectColumnNodeToAnalyzedOutputCoumnNode(output, selectColumnNode, termOffset)
+	if selectColumnNode, ok := file.LookupNode[*googlesql.ASTSelectColumn](targetNode); ok {
+		column, err := p.getSelectColumnNodeToAnalyzedOutputColumnNode(output, selectColumnNode, termOffset)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get column info: %w", err)
 		}
 
-		tableMetadata, err := p.analyzer.GetTableMetadataFromPath(ctx, column.TableName())
+		tableName, _ := column.TableName()
+		tableMetadata, err := p.analyzer.GetTableMetadataFromPath(ctx, tableName)
 		if err != nil {
 			return []lsp.MarkedString{
 				{
@@ -134,8 +137,9 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 			}, nil
 		}
 
+		colName, _ := column.Name()
 		for _, f := range tableMetadata.Schema {
-			if column.Name() == f.Name {
+			if colName == f.Name {
 				return []lsp.MarkedString{
 					{
 						Language: "yaml",
@@ -149,7 +153,7 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 	return nil, nil
 }
 
-func (p *Project) termDocumentFromAstNode(ctx context.Context, targetNode *ast.TablePathExpressionNode) ([]lsp.MarkedString, bool) {
+func (p *Project) termDocumentFromAstNode(ctx context.Context, targetNode *googlesql.ASTTablePathExpression) ([]lsp.MarkedString, bool) {
 	name, ok := file.CreateTableNameFromTablePathExpressionNode(targetNode)
 	if !ok {
 		return nil, false
@@ -167,8 +171,141 @@ func (p *Project) termDocumentFromAstNode(ctx context.Context, targetNode *ast.T
 	return result, true
 }
 
-func (p *Project) termDocumentForInputScan(ctx context.Context, termOffset int, targetNode *ast.TablePathExpressionNode, output *zetasql.AnalyzerOutput, parsedFile file.ParsedFile) ([]lsp.MarkedString, bool) {
-	targetScanNode, ok := getMostNarrowScanNode(termOffset, output.Statement())
+// isFunctionNameNode returns true when node is the path expression that names fnCall (not an argument).
+func isFunctionNameNode(fnCall *googlesql.ASTFunctionCall, node *googlesql.ASTPathExpression) bool {
+	fnExpr, err := fnCall.Function()
+	if err != nil || fnExpr == nil {
+		return false
+	}
+	fnLoc, err := fnExpr.GetParseLocationRange()
+	if err != nil || fnLoc == nil {
+		return false
+	}
+	nodeLoc, err := node.GetParseLocationRange()
+	if err != nil || nodeLoc == nil {
+		return false
+	}
+	return file.ParseLocStart(fnLoc) == file.ParseLocStart(nodeLoc) &&
+		file.ParseLocEnd(fnLoc) == file.ParseLocEnd(nodeLoc)
+}
+
+// functionDocumentation looks up built-in docs or signature info for a resolved function node.
+func (p *Project) functionDocumentation(fn *googlesql.Function) ([]lsp.MarkedString, bool) {
+	fnName, _ := fn.Name()
+	fnSQLName, _ := fn.SQLName()
+	builtinFunction, ok := function.FindBuiltInFunction(fnName)
+	if !ok {
+		sigs, _ := fn.Signatures()
+		sigStrs := make([]string, 0, len(sigs))
+		for _, sig := range sigs {
+			s, _ := sig.DebugString(fnSQLName, true)
+			sigStrs = append(sigStrs, s)
+		}
+		return []lsp.MarkedString{
+			{
+				Language: "markdown",
+				Value:    fmt.Sprintf("## %s\n\n%s", fnSQLName, strings.Join(sigStrs, "\n")),
+			},
+		}, true
+	}
+
+	result := make([]lsp.MarkedString, 0, len(builtinFunction.ExampleSQLs)+1)
+	result = append(result, lsp.MarkedString{
+		Language: "markdown",
+		Value:    fmt.Sprintf("%s\n\n[bigquery documentation](%s)", builtinFunction.Description, builtinFunction.URL),
+	})
+	for _, sql := range builtinFunction.ExampleSQLs {
+		result = append(result, lsp.MarkedString{
+			Language: "sql",
+			Value:    sql,
+		})
+	}
+	return result, true
+}
+
+// termDocumentFromASTFunctionCall returns function documentation by looking up the function name
+// from the AST node, used as a fallback when analysis fails.
+func (p *Project) termDocumentFromASTFunctionCall(fnCallNode *googlesql.ASTFunctionCall) ([]lsp.MarkedString, bool) {
+	pathExpr, err := fnCallNode.Function()
+	if err != nil || pathExpr == nil {
+		return nil, false
+	}
+	names, err := pathExpr.ToIdentifierVector()
+	if err != nil || len(names) == 0 {
+		return nil, false
+	}
+	fnName := strings.Join(names, ".")
+	builtinFn, ok := function.FindBuiltInFunction(fnName)
+	if !ok {
+		return nil, false
+	}
+	result := make([]lsp.MarkedString, 0, len(builtinFn.ExampleSQLs)+1)
+	result = append(result, lsp.MarkedString{
+		Language: "markdown",
+		Value:    fmt.Sprintf("%s\n\n[bigquery documentation](%s)", builtinFn.Description, builtinFn.URL),
+	})
+	for _, sql := range builtinFn.ExampleSQLs {
+		result = append(result, lsp.MarkedString{
+			Language: "sql",
+			Value:    sql,
+		})
+	}
+	return result, true
+}
+
+// termDocumentFromASTColumnRef is a fallback that looks up column info from preloaded table schemas
+// when analysis failed (e.g. due to type mismatch in function arguments).
+func (p *Project) termDocumentFromASTColumnRef(ctx context.Context, parsedFile file.ParsedFile, targetNode *googlesql.ASTPathExpression, termOffset int) ([]lsp.MarkedString, bool) {
+	// Get column name from path expression.
+	names, err := targetNode.ToIdentifierVector()
+	if err != nil || len(names) == 0 {
+		return nil, false
+	}
+	colName := names[len(names)-1]
+
+	// Find all table path expressions in the enclosing statement.
+	stmtNode, ok := parsedFile.FindTargetStatementNode(termOffset)
+	if !ok {
+		return nil, false
+	}
+	tableNames := make([]string, 0)
+	file.Walk(stmtNode, func(n googlesql.ASTNode) error { //nolint
+		tpe, ok := n.(*googlesql.ASTTablePathExpression)
+		if !ok {
+			return nil
+		}
+		name, ok := file.CreateTableNameFromTablePathExpressionNode(tpe)
+		if ok {
+			tableNames = append(tableNames, name)
+		}
+		return nil
+	})
+
+	for _, tblName := range tableNames {
+		meta, err := p.analyzer.GetTableMetadataFromPath(ctx, tblName)
+		if err != nil {
+			continue
+		}
+		for _, f := range meta.Schema {
+			if f.Name == colName {
+				return []lsp.MarkedString{
+					{
+						Language: "yaml",
+						Value:    createBigQueryFieldYamlString(f, 0),
+					},
+				}, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func (p *Project) termDocumentForInputScan(ctx context.Context, termOffset int, targetNode *googlesql.ASTTablePathExpression, output *googlesql.AnalyzerOutput, parsedFile file.ParsedFile) ([]lsp.MarkedString, bool) {
+	stmt, err := output.ResolvedStatement()
+	if err != nil || stmt == nil {
+		return nil, false
+	}
+	targetScanNode, ok := getMostNarrowScanNode(termOffset, stmt)
 	if !ok {
 		return nil, false
 	}
@@ -186,7 +323,7 @@ func (p *Project) termDocumentForInputScan(ctx context.Context, termOffset int, 
 	}
 
 	switch node := scanNode.(type) {
-	case *rast.TableScanNode:
+	case *googlesql.ResolvedTableScan:
 		result, err := p.createTableMarkedString(ctx, node)
 		if err != nil {
 			return nil, false
@@ -194,30 +331,41 @@ func (p *Project) termDocumentForInputScan(ctx context.Context, termOffset int, 
 		if len(result) > 0 {
 			return result, true
 		}
-	case *rast.WithRefScanNode:
-		withEntries := file.ListResolvedAstNode[*rast.WithEntryNode](output)
+	case *googlesql.ResolvedWithRefScan:
+		withEntries := file.ListResolvedAstNode[*googlesql.ResolvedWithEntry](output)
 		if len(withEntries) == 0 {
 			p.logger.Debug("not found with entries")
 			return nil, false
 		}
 
+		columns, _ := node.MutableColumnList()
 		result := []lsp.MarkedString{
 			{
 				Language: "yaml",
-				Value:    createColumnListYamlString(node.ColumnList()),
+				Value:    createColumnListYamlString(columns),
 			},
 		}
+		withQueryName, _ := node.WithQueryName()
 		for _, entry := range withEntries {
-			if entry.WithQueryName() == name {
-				subQuery := entry.WithSubquery()
+			entryName, _ := entry.WithQueryName()
+			if entryName == name {
+				subQuery, _ := entry.WithSubquery()
+				if subQuery == nil {
+					break
+				}
 				switch n := subQuery.(type) {
-				case *rast.ProjectScanNode:
-					sql, ok := parsedFile.ExtractSQL(n.ParseLocationRange())
+				case *googlesql.ResolvedProjectScan:
+					loc, _ := n.GetParseLocationRangeOrNULL()
+					sql, ok := parsedFile.ExtractSQL(loc)
 					if !ok {
 						break
 					}
-
-					sql = fmt.Sprintf("WITH %s AS (\n%s\n)", entry.WithQueryName(), sql)
+					// Strip surrounding parens added by ZetaSQL's location range.
+					sql = strings.TrimSpace(sql)
+					if strings.HasPrefix(sql, "(") && strings.HasSuffix(sql, ")") {
+						sql = strings.TrimSpace(sql[1 : len(sql)-1])
+					}
+					sql = fmt.Sprintf("WITH %s AS (\n%s\n)", withQueryName, sql)
 					result = append(result, lsp.MarkedString{
 						Language: "sql",
 						Value:    sql,
@@ -230,8 +378,16 @@ func (p *Project) termDocumentForInputScan(ctx context.Context, termOffset int, 
 	return nil, false
 }
 
-func (p *Project) createTableMarkedString(ctx context.Context, node *rast.TableScanNode) ([]lsp.MarkedString, error) {
-	targetTable, err := p.analyzer.GetTableMetadataFromPath(ctx, node.Table().Name())
+func (p *Project) createTableMarkedString(ctx context.Context, node *googlesql.ResolvedTableScan) ([]lsp.MarkedString, error) {
+	table, err := node.Table()
+	if err != nil || table == nil {
+		return nil, fmt.Errorf("failed to get table")
+	}
+	tableName, err := table.Name()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get table name: %w", err)
+	}
+	targetTable, err := p.analyzer.GetTableMetadataFromPath(ctx, tableName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get table metadata: %w", err)
 	}
@@ -239,17 +395,21 @@ func (p *Project) createTableMarkedString(ctx context.Context, node *rast.TableS
 	return buildBigQueryTableMetadataMarkedString(targetTable)
 }
 
-func (p *Project) getSelectColumnNodeToAnalyzedOutputCoumnNode(output *zetasql.AnalyzerOutput, column *ast.SelectColumnNode, termOffset int) (*rast.Column, error) {
-	targetScanNode, ok := getMostNarrowScanNode(termOffset, output.Statement())
+func (p *Project) getSelectColumnNodeToAnalyzedOutputColumnNode(output *googlesql.AnalyzerOutput, column *googlesql.ASTSelectColumn, termOffset int) (*googlesql.ResolvedColumn, error) {
+	stmt, err := output.ResolvedStatement()
+	if err != nil || stmt == nil {
+		return nil, fmt.Errorf("failed to find statement")
+	}
+	targetScanNode, ok := getMostNarrowScanNode(termOffset, stmt)
 	if !ok {
-		return nil, fmt.Errorf("failed to find scand node")
+		return nil, fmt.Errorf("failed to find scan node")
 	}
 
 	refNames := p.listRefNamesForScanNode(targetScanNode)
 
 	columnName, ok := getSelectColumnName(column)
 	if !ok {
-		return nil, fmt.Errorf("failed getSelectColumnName: %s", column.DebugString(0))
+		return nil, fmt.Errorf("failed getSelectColumnName: %v", column)
 	}
 
 	// remove table prefix
@@ -261,100 +421,158 @@ func (p *Project) getSelectColumnNodeToAnalyzedOutputCoumnNode(output *zetasql.A
 		}
 	}
 
-	for _, c := range targetScanNode.ColumnList() {
-		if c.Name() == columnName {
+	columns, _ := targetScanNode.MutableColumnList()
+	for _, c := range columns {
+		name, _ := c.Name()
+		if name == columnName {
 			return c, nil
 		}
 	}
 	return nil, fmt.Errorf("failed to find column info")
 }
 
-func (p *Project) listRefNamesForScanNode(scanNode rast.ScanNode) []string {
+func (p *Project) listRefNamesForScanNode(scanNode googlesql.ResolvedScanNode) []string {
 	switch n := scanNode.(type) {
-	case *rast.ProjectScanNode:
-		return p.listRefNamesForScanNode(n.InputScan())
-	case *rast.WithScanNode:
-		return p.listRefNamesForScanNode(n.Query())
-	case *rast.OrderByScanNode:
-		return p.listRefNamesForScanNode(n.InputScan())
-	case *rast.AggregateScanNode:
-		return p.listRefNamesForScanNode(n.InputScan())
-	case *rast.FilterScanNode:
-		return p.listRefNamesForScanNode(n.InputScan())
-	case *rast.ArrayScanNode:
-		return p.listRefNamesForScanNode(n.InputScan())
-	case *rast.AnalyticScanNode:
-		return p.listRefNamesForScanNode(n.InputScan())
-	case *rast.JoinScanNode:
-		return append(p.listRefNamesForScanNode(n.LeftScan()), p.listRefNamesForScanNode(n.RightScan())...)
-	case *rast.TableScanNode:
-		if n.Alias() != "" {
-			return []string{n.Alias()}
+	case *googlesql.ResolvedProjectScan:
+		inputScan, _ := n.InputScan()
+		if inputScan != nil {
+			return p.listRefNamesForScanNode(inputScan)
+		}
+	case *googlesql.ResolvedWithScan:
+		query, _ := n.Query()
+		if query != nil {
+			return p.listRefNamesForScanNode(query)
+		}
+	case *googlesql.ResolvedOrderByScan:
+		inputScan, _ := n.InputScan()
+		if inputScan != nil {
+			return p.listRefNamesForScanNode(inputScan)
+		}
+	case *googlesql.ResolvedAggregateScan:
+		inputScan, _ := n.InputScan()
+		if inputScan != nil {
+			return p.listRefNamesForScanNode(inputScan)
+		}
+	case *googlesql.ResolvedFilterScan:
+		inputScan, _ := n.InputScan()
+		if inputScan != nil {
+			return p.listRefNamesForScanNode(inputScan)
+		}
+	case *googlesql.ResolvedArrayScan:
+		inputScan, _ := n.InputScan()
+		if inputScan != nil {
+			return p.listRefNamesForScanNode(inputScan)
+		}
+	case *googlesql.ResolvedAnalyticScan:
+		inputScan, _ := n.InputScan()
+		if inputScan != nil {
+			return p.listRefNamesForScanNode(inputScan)
+		}
+	case *googlesql.ResolvedJoinScan:
+		leftScan, _ := n.LeftScan()
+		rightScan, _ := n.RightScan()
+		var left, right []string
+		if leftScan != nil {
+			left = p.listRefNamesForScanNode(leftScan)
+		}
+		if rightScan != nil {
+			right = p.listRefNamesForScanNode(rightScan)
+		}
+		return append(left, right...)
+	case *googlesql.ResolvedTableScan:
+		alias, _ := n.Alias()
+		if alias != "" {
+			return []string{alias}
 		}
 		return nil
-	case *rast.WithRefScanNode:
-		return []string{n.WithQueryName()}
+	case *googlesql.ResolvedWithRefScan:
+		name, _ := n.WithQueryName()
+		return []string{name}
 	default:
-		p.logger.Debugf("Unsupported type: %T\n%s", n, scanNode.DebugString())
+		p.logger.Debugf("Unsupported type: %T\n", n)
 		return nil
 	}
+	return nil
 }
 
-func (p *Project) findInputScan(name string, scanNode rast.ScanNode) (rast.ScanNode, bool) {
+func (p *Project) findInputScan(name string, scanNode googlesql.ResolvedScanNode) (googlesql.ResolvedScanNode, bool) {
 	for scanNode != nil {
 		switch n := scanNode.(type) {
-		case *rast.ProjectScanNode:
-			scanNode = n.InputScan()
-		case *rast.WithScanNode:
-			scanNode = n.Query()
-		case *rast.OrderByScanNode:
-			scanNode = n.InputScan()
-		case *rast.AggregateScanNode:
-			scanNode = n.InputScan()
-		case *rast.FilterScanNode:
-			scanNode = n.InputScan()
-		case *rast.JoinScanNode:
-			left, ok := p.findInputScan(name, n.LeftScan())
-			if ok {
-				return left, true
+		case *googlesql.ResolvedProjectScan:
+			inputScan, _ := n.InputScan()
+			scanNode = inputScan
+		case *googlesql.ResolvedWithScan:
+			query, _ := n.Query()
+			scanNode = query
+		case *googlesql.ResolvedOrderByScan:
+			inputScan, _ := n.InputScan()
+			scanNode = inputScan
+		case *googlesql.ResolvedAggregateScan:
+			inputScan, _ := n.InputScan()
+			scanNode = inputScan
+		case *googlesql.ResolvedFilterScan:
+			inputScan, _ := n.InputScan()
+			scanNode = inputScan
+		case *googlesql.ResolvedJoinScan:
+			leftScan, _ := n.LeftScan()
+			if leftScan != nil {
+				left, ok := p.findInputScan(name, leftScan)
+				if ok {
+					return left, true
+				}
 			}
-			right, ok := p.findInputScan(name, n.RightScan())
-			if ok {
-				return right, true
-			}
-			return nil, false
-		case *rast.ArrayScanNode:
-			scanNode = n.InputScan()
-		case *rast.AnalyticScanNode:
-			scanNode = n.InputScan()
-		case *rast.TableScanNode:
-			if n.Alias() == name {
-				return n, true
-			}
-			if n.Table().Name() == name {
-				return n, true
-			}
-			if n.Table().Name() == strings.Join([]string{p.bqClient.GetDefaultProject(), name}, ".") {
-				return n, true
+			rightScan, _ := n.RightScan()
+			if rightScan != nil {
+				right, ok := p.findInputScan(name, rightScan)
+				if ok {
+					return right, true
+				}
 			}
 			return nil, false
-		case *rast.WithRefScanNode:
-			if n.WithQueryName() == name {
+		case *googlesql.ResolvedArrayScan:
+			inputScan, _ := n.InputScan()
+			scanNode = inputScan
+		case *googlesql.ResolvedAnalyticScan:
+			inputScan, _ := n.InputScan()
+			scanNode = inputScan
+		case *googlesql.ResolvedTableScan:
+			alias, _ := n.Alias()
+			if alias == name {
+				return n, true
+			}
+			table, _ := n.Table()
+			if table != nil {
+				tblName, _ := table.Name()
+				if tblName == name {
+					return n, true
+				}
+				if tblName == strings.Join([]string{p.bqClient.GetDefaultProject(), name}, ".") {
+					return n, true
+				}
+			}
+			return nil, false
+		case *googlesql.ResolvedWithRefScan:
+			withQueryName, _ := n.WithQueryName()
+			if withQueryName == name {
 				return n, true
 			}
 			return nil, false
 		default:
-			p.logger.Debugf("Unsupported type: %T\n%s", n, n.DebugString())
+			p.logger.Debugf("Unsupported type: %T\n", n)
 			return nil, false
 		}
 	}
 	return nil, false
 }
 
-func getMostNarrowScanNode(termOffset int, stmt rast.StatementNode) (rast.ScanNode, bool) {
-	scanNodes := make([]rast.ScanNode, 0)
-	rast.Walk(stmt, func(n rast.Node) error {
-		t, ok := n.(rast.ScanNode)
+func getMostNarrowScanNode(termOffset int, stmt googlesql.ResolvedStatementNode) (googlesql.ResolvedScanNode, bool) {
+	scanNodes := make([]googlesql.ResolvedScanNode, 0)
+	file.WalkResolved(stmt, func(n googlesql.ResolvedNode) error { //nolint
+		isScan, _ := n.IsScan()
+		if !isScan {
+			return nil
+		}
+		t, ok := n.(googlesql.ResolvedScanNode)
 		if !ok {
 			return nil
 		}
@@ -363,21 +581,25 @@ func getMostNarrowScanNode(termOffset int, stmt rast.StatementNode) (rast.ScanNo
 	})
 
 	mostNarrowWidth := math.MaxInt
-	var targetScanNode rast.ScanNode
+	var targetScanNode googlesql.ResolvedScanNode
 	for _, node := range scanNodes {
-		lrange := node.ParseLocationRange()
+		lrange, _ := node.GetParseLocationRangeOrNULL()
 		if lrange == nil {
 			continue
 		}
 
-		startOffset := lrange.Start().ByteOffset()
-		endOffset := lrange.End().ByteOffset()
+		startOffset := file.ParseLocStart(lrange)
+		endOffset := file.ParseLocEnd(lrange)
+		if startOffset < 0 || endOffset < 0 {
+			continue
+		}
 		if termOffset < startOffset || endOffset < termOffset {
 			continue
 		}
 
-		width := lrange.End().ByteOffset() - lrange.Start().ByteOffset()
+		width := endOffset - startOffset
 		if width < mostNarrowWidth {
+			mostNarrowWidth = width
 			targetScanNode = node
 		}
 	}
@@ -385,29 +607,39 @@ func getMostNarrowScanNode(termOffset int, stmt rast.StatementNode) (rast.ScanNo
 	return targetScanNode, targetScanNode != nil
 }
 
-func getSelectColumnName(targetNode *ast.SelectColumnNode) (string, bool) {
-	path, ok := targetNode.Expression().(*ast.PathExpressionNode)
+func getSelectColumnName(targetNode *googlesql.ASTSelectColumn) (string, bool) {
+	expr, err := targetNode.Expression()
+	if err != nil {
+		return "", false
+	}
+	path, ok := expr.(*googlesql.ASTPathExpression)
 	if !ok {
 		return "", false
 	}
 
-	names := make([]string, len(path.Names()))
-	for i, t := range path.Names() {
-		names[i] = t.Name()
+	names, err := path.ToIdentifierVector()
+	if err != nil {
+		return "", false
 	}
 	return strings.Join(names, "."), true
 }
 
-func createColumnListYamlString(columnLists []*rast.Column) string {
+func createColumnListYamlString(columnList []*googlesql.ResolvedColumn) string {
 	markdownBuilder := &strings.Builder{}
-	for _, column := range columnLists {
+	for _, column := range columnList {
 		markdownBuilder.WriteString(createColumnYamlString(column))
 	}
 	return markdownBuilder.String()
 }
 
-func createColumnYamlString(column *rast.Column) string {
-	return fmt.Sprintf("- name: %s\n  type: %s\n", column.Name(), column.Type().TypeName(types.ProductExternal))
+func createColumnYamlString(column *googlesql.ResolvedColumn) string {
+	name, _ := column.Name()
+	typ, _ := column.Type()
+	typeName := ""
+	if typ != nil {
+		typeName, _ = typ.DebugString(false)
+	}
+	return fmt.Sprintf("- name: %s\n  type: %s\n", name, typeName)
 }
 
 func createBigQuerySchemaYamlString(schema bigquery.Schema, depth int) string {

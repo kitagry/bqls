@@ -5,8 +5,7 @@ import (
 	"strings"
 
 	bq "cloud.google.com/go/bigquery"
-	rast "github.com/goccy/go-zetasql/resolved_ast"
-	"github.com/goccy/go-zetasql/types"
+	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
@@ -31,14 +30,18 @@ func (c *completor) completeColumns(ctx context.Context, parsedFile file.ParsedF
 		node = sNode
 	}
 
-	if pScanNode, ok := node.(*rast.ProjectScanNode); ok {
-		node = pScanNode.InputScan()
+	if pScanNode, ok := node.(*googlesql.ResolvedProjectScan); ok {
+		inputScan, err := pScanNode.InputScan()
+		if err == nil && inputScan != nil {
+			node = inputScan
+		}
 	}
 
 	result := make([]CompletionItem, 0)
-	columns := node.ColumnList()
+	columns, _ := node.MutableColumnList()
 	for _, column := range columns {
-		if !strings.HasPrefix(column.Name(), incompleteColumnName) {
+		name, _ := column.Name()
+		if !strings.HasPrefix(name, incompleteColumnName) {
 			continue
 		}
 		item, ok := c.createCompletionItemFromColumn(ctx, incompleteColumnName, column)
@@ -50,8 +53,10 @@ func (c *completor) completeColumns(ctx context.Context, parsedFile file.ParsedF
 	}
 
 	// for record column completion
+	columns, _ = node.MutableColumnList()
 	for _, column := range columns {
-		if !strings.HasPrefix(incompleteColumnName, column.Name()) {
+		name, _ := column.Name()
+		if !strings.HasPrefix(incompleteColumnName, name) {
 			continue
 		}
 		items := c.createCompletionItemForRecordType(ctx, incompleteColumnName, column)
@@ -65,24 +70,31 @@ func (c *completor) completeColumns(ctx context.Context, parsedFile file.ParsedF
 	return result
 }
 
-func (c *completor) createCompletionItemFromColumn(ctx context.Context, incompleteColumnName string, column *rast.Column) (CompletionItem, bool) {
-	tableMetadata, err := c.analyzer.GetTableMetadataFromPath(ctx, column.TableName())
+func (c *completor) createCompletionItemFromColumn(ctx context.Context, incompleteColumnName string, column *googlesql.ResolvedColumn) (CompletionItem, bool) {
+	tableName, _ := column.TableName()
+	tableMetadata, err := c.analyzer.GetTableMetadataFromPath(ctx, tableName)
 	if err != nil {
 		// cannot find table metadata
-		return createCompletionItemFromColumn(column, incompleteColumnName), true
+		return createCompletionItemFromResolvedColumn(column, incompleteColumnName), true
 	}
 
-	for _, c := range tableMetadata.Schema {
-		if column.Name() == c.Name {
-			return createCompletionItemFromSchema(c, incompleteColumnName), true
+	colName, _ := column.Name()
+	for _, sc := range tableMetadata.Schema {
+		if colName == sc.Name {
+			return createCompletionItemFromSchema(sc, incompleteColumnName), true
 		}
 	}
 
 	return CompletionItem{}, false
 }
 
-func (c *completor) createCompletionItemForRecordType(ctx context.Context, incompleteColumnName string, column *rast.Column) []CompletionItem {
-	if !column.Type().IsStruct() {
+func (c *completor) createCompletionItemForRecordType(ctx context.Context, incompleteColumnName string, column *googlesql.ResolvedColumn) []CompletionItem {
+	typ, _ := column.Type()
+	if typ == nil {
+		return nil
+	}
+	isStruct, _ := typ.IsStruct()
+	if !isStruct {
 		return nil
 	}
 
@@ -92,29 +104,42 @@ func (c *completor) createCompletionItemForRecordType(ctx context.Context, incom
 	}
 	afterRecord := strings.Join(splittedIncompleteColumnName[1:], ".")
 
-	tableMetadata, err := c.analyzer.GetTableMetadataFromPath(ctx, column.TableName())
+	tableName, _ := column.TableName()
+	tableMetadata, err := c.analyzer.GetTableMetadataFromPath(ctx, tableName)
 	if err != nil {
-		return c.createCompletionItemForType(ctx, afterRecord, column.Type())
+		return c.createCompletionItemForType(ctx, afterRecord, typ)
 	}
 
 	return c.createCompletionItemForBigquerySchema(ctx, incompleteColumnName, tableMetadata.Schema)
 }
 
-func (c *completor) createCompletionItemForType(ctx context.Context, incompleteColumnName string, typ types.Type) []CompletionItem {
-	if !typ.IsStruct() {
+func (c *completor) createCompletionItemForType(ctx context.Context, incompleteColumnName string, typ googlesql.Googlesql_TypeNode) []CompletionItem {
+	if typ == nil {
+		return nil
+	}
+	isStruct, _ := typ.IsStruct()
+	if !isStruct {
 		return nil
 	}
 
-	fields := typ.AsStruct().Fields()
+	structType, err := typ.AsStruct()
+	if err != nil || structType == nil {
+		return nil
+	}
+	fields, err := structType.Fields()
+	if err != nil {
+		return nil
+	}
 
 	inCompleteColumns := strings.Split(incompleteColumnName, ".")
 	if len(inCompleteColumns) > 1 {
 		for _, field := range fields {
-			if field.Name() == inCompleteColumns[0] {
-				if !field.Type().IsStruct() {
+			if field.Name == inCompleteColumns[0] {
+				isFieldStruct, _ := field.Type_.IsStruct()
+				if !isFieldStruct {
 					return nil
 				}
-				return c.createCompletionItemForType(ctx, strings.Join(inCompleteColumns[1:], "."), field.Type())
+				return c.createCompletionItemForType(ctx, strings.Join(inCompleteColumns[1:], "."), field.Type_)
 			}
 		}
 		return nil
@@ -122,10 +147,10 @@ func (c *completor) createCompletionItemForType(ctx context.Context, incompleteC
 
 	items := make([]CompletionItem, 0)
 	for _, field := range fields {
-		if !strings.HasPrefix(field.Name(), incompleteColumnName) {
+		if !strings.HasPrefix(field.Name, incompleteColumnName) {
 			continue
 		}
-		items = append(items, createCompletionItemFromColumn(field, incompleteColumnName))
+		items = append(items, createCompletionItemFromStructField(field, incompleteColumnName))
 	}
 	return items
 }
@@ -151,50 +176,67 @@ func (c *completor) createCompletionItemForBigquerySchema(ctx context.Context, i
 	return items
 }
 
-func (c *completor) completeScanField(ctx context.Context, node rast.ScanNode, incompleteColumnName string) []CompletionItem {
+func (c *completor) completeScanField(ctx context.Context, node googlesql.ResolvedScanNode, incompleteColumnName string) []CompletionItem {
 	switch n := node.(type) {
-	case *rast.TableScanNode:
+	case *googlesql.ResolvedTableScan:
 		return c.completeTableScanField(ctx, n, incompleteColumnName)
-	case *rast.WithRefScanNode:
+	case *googlesql.ResolvedWithRefScan:
 		return c.completeWithScanField(ctx, n, incompleteColumnName)
-	case *rast.JoinScanNode:
-		leftResult := c.completeScanField(ctx, n.LeftScan(), incompleteColumnName)
-		rightResult := c.completeScanField(ctx, n.RightScan(), incompleteColumnName)
+	case *googlesql.ResolvedJoinScan:
+		leftScan, _ := n.LeftScan()
+		rightScan, _ := n.RightScan()
+		var leftResult, rightResult []CompletionItem
+		if leftScan != nil {
+			leftResult = c.completeScanField(ctx, leftScan, incompleteColumnName)
+		}
+		if rightScan != nil {
+			rightResult = c.completeScanField(ctx, rightScan, incompleteColumnName)
+		}
 		return append(leftResult, rightResult...)
-	case *rast.FilterScanNode:
-		return c.completeScanField(ctx, n.InputScan(), incompleteColumnName)
+	case *googlesql.ResolvedFilterScan:
+		inputScan, _ := n.InputScan()
+		if inputScan != nil {
+			return c.completeScanField(ctx, inputScan, incompleteColumnName)
+		}
 	}
 	return nil
 }
 
-func (c *completor) completeTableScanField(ctx context.Context, tableScanNode *rast.TableScanNode, incompleteColumnName string) []CompletionItem {
-	if tableScanNode.Alias() == "" {
+func (c *completor) completeTableScanField(ctx context.Context, tableScanNode *googlesql.ResolvedTableScan, incompleteColumnName string) []CompletionItem {
+	alias, _ := tableScanNode.Alias()
+	if alias == "" {
 		return nil
 	}
 
-	if strings.HasPrefix(tableScanNode.Alias(), incompleteColumnName) {
+	if strings.HasPrefix(alias, incompleteColumnName) {
+		table, _ := tableScanNode.Table()
+		fullName := ""
+		if table != nil {
+			fullName, _ = table.FullName()
+		}
 		return []CompletionItem{
 			{
 				Kind:    lsp.CIKField,
-				NewText: tableScanNode.Alias(),
+				NewText: alias,
 				Documentation: lsp.MarkupContent{
 					Kind:  lsp.MKPlainText,
-					Value: tableScanNode.Table().FullName(),
+					Value: fullName,
 				},
 				TypedPrefix: incompleteColumnName,
 			},
 		}
 	}
 
-	if !strings.HasPrefix(incompleteColumnName, tableScanNode.Alias()+".") {
+	if !strings.HasPrefix(incompleteColumnName, alias+".") {
 		return nil
 	}
 
 	result := make([]CompletionItem, 0)
-	afterWord := strings.TrimPrefix(incompleteColumnName, tableScanNode.Alias()+".")
-	columns := tableScanNode.ColumnList()
+	afterWord := strings.TrimPrefix(incompleteColumnName, alias+".")
+	columns, _ := tableScanNode.ColumnList()
 	for _, column := range columns {
-		if !strings.HasPrefix(column.Name(), afterWord) {
+		name, _ := column.Name()
+		if !strings.HasPrefix(name, afterWord) {
 			continue
 		}
 		item, ok := c.createCompletionItemFromColumn(ctx, afterWord, column)
@@ -207,26 +249,28 @@ func (c *completor) completeTableScanField(ctx context.Context, tableScanNode *r
 	return result
 }
 
-func (c *completor) completeWithScanField(ctx context.Context, withScanNode *rast.WithRefScanNode, incompleteColumnName string) []CompletionItem {
-	if strings.HasPrefix(withScanNode.WithQueryName(), incompleteColumnName) {
+func (c *completor) completeWithScanField(ctx context.Context, withScanNode *googlesql.ResolvedWithRefScan, incompleteColumnName string) []CompletionItem {
+	withQueryName, _ := withScanNode.WithQueryName()
+	if strings.HasPrefix(withQueryName, incompleteColumnName) {
 		return []CompletionItem{
 			{
 				Kind:        lsp.CIKField,
-				NewText:     withScanNode.WithQueryName(),
+				NewText:     withQueryName,
 				TypedPrefix: incompleteColumnName,
 			},
 		}
 	}
 
-	if !strings.HasPrefix(incompleteColumnName, withScanNode.WithQueryName()+".") {
+	if !strings.HasPrefix(incompleteColumnName, withQueryName+".") {
 		return nil
 	}
 
 	result := make([]CompletionItem, 0)
-	afterWord := strings.TrimPrefix(incompleteColumnName, withScanNode.WithQueryName()+".")
-	columns := withScanNode.ColumnList()
+	afterWord := strings.TrimPrefix(incompleteColumnName, withQueryName+".")
+	columns, _ := withScanNode.ColumnList()
 	for _, column := range columns {
-		if !strings.HasPrefix(column.Name(), afterWord) {
+		name, _ := column.Name()
+		if !strings.HasPrefix(name, afterWord) {
 			continue
 		}
 		item, ok := c.createCompletionItemFromColumn(ctx, afterWord, column)
@@ -239,132 +283,171 @@ func (c *completor) completeWithScanField(ctx context.Context, withScanNode *ras
 	return result
 }
 
-func (c *completor) getMostNarrowInputScanNode(node rast.ScanNode, termOffset int) (rast.ScanNode, bool) {
+func (c *completor) getMostNarrowInputScanNode(node googlesql.ResolvedScanNode, termOffset int) (googlesql.ResolvedScanNode, bool) {
 	for {
 		switch n := node.(type) {
-		case *rast.ProjectScanNode:
-			node, ok := c.getMostNarrowInputScanNode(n.InputScan(), termOffset)
-			if ok {
-				return node, true
+		case *googlesql.ResolvedProjectScan:
+			inputScan, _ := n.InputScan()
+			if inputScan != nil {
+				inner, ok := c.getMostNarrowInputScanNode(inputScan, termOffset)
+				if ok {
+					return inner, true
+				}
 			}
 
-			lRange := n.ParseLocationRange()
+			lRange, _ := n.GetParseLocationRangeOrNULL()
 			if lRange == nil {
 				return n, true
 			}
 
-			if lRange.Start().ByteOffset() <= termOffset && termOffset <= lRange.End().ByteOffset() {
+			startOff := file.ParseLocStart(lRange)
+			endOff := file.ParseLocEnd(lRange)
+			if startOff <= termOffset && termOffset <= endOff {
 				return n, true
 			}
 			return nil, false
-		case *rast.AggregateScanNode:
-			node, ok := c.getMostNarrowInputScanNode(n.InputScan(), termOffset)
-			if ok {
-				return node, true
+		case *googlesql.ResolvedAggregateScan:
+			inputScan, _ := n.InputScan()
+			if inputScan != nil {
+				inner, ok := c.getMostNarrowInputScanNode(inputScan, termOffset)
+				if ok {
+					return inner, true
+				}
 			}
 
-			lRange := n.ParseLocationRange()
+			lRange, _ := n.GetParseLocationRangeOrNULL()
 			if lRange == nil {
 				return n, true
 			}
 
-			if lRange.Start().ByteOffset() <= termOffset && termOffset <= lRange.End().ByteOffset() {
+			startOff := file.ParseLocStart(lRange)
+			endOff := file.ParseLocEnd(lRange)
+			if startOff <= termOffset && termOffset <= endOff {
 				return n, true
 			}
 			return nil, false
-		case *rast.FilterScanNode:
-			node, ok := c.getMostNarrowInputScanNode(n.InputScan(), termOffset)
-			if ok {
-				return node, true
+		case *googlesql.ResolvedFilterScan:
+			inputScan, _ := n.InputScan()
+			if inputScan != nil {
+				inner, ok := c.getMostNarrowInputScanNode(inputScan, termOffset)
+				if ok {
+					return inner, true
+				}
 			}
 
-			lRange := n.ParseLocationRange()
+			lRange, _ := n.GetParseLocationRangeOrNULL()
 			if lRange == nil {
 				return n, true
 			}
 
-			if lRange.Start().ByteOffset() <= termOffset && termOffset <= lRange.End().ByteOffset() {
+			startOff := file.ParseLocStart(lRange)
+			endOff := file.ParseLocEnd(lRange)
+			if startOff <= termOffset && termOffset <= endOff {
 				return n, true
 			}
 			return nil, false
-		case *rast.TableScanNode:
-			lRange := n.ParseLocationRange()
+		case *googlesql.ResolvedTableScan:
+			lRange, _ := n.GetParseLocationRangeOrNULL()
 			if lRange == nil {
 				return n, true
 			}
 
-			if lRange.Start().ByteOffset() <= termOffset && termOffset <= lRange.End().ByteOffset() {
+			startOff := file.ParseLocStart(lRange)
+			endOff := file.ParseLocEnd(lRange)
+			if startOff <= termOffset && termOffset <= endOff {
 				return n, true
 			}
 			return nil, false
-		case *rast.WithScanNode:
-			wel := n.WithEntryList()
+		case *googlesql.ResolvedWithScan:
+			wel, _ := n.WithEntryList()
 			replaced := false
+			var nextNode googlesql.ResolvedScanNode
 			for _, we := range wel {
-				lRange := we.ParseLocationRange()
+				lRange, _ := we.GetParseLocationRangeOrNULL()
 				if lRange == nil {
 					continue
 				}
 
-				startOffset := lRange.Start().ByteOffset()
-				endOffset := lRange.End().ByteOffset()
-				if termOffset < startOffset || endOffset < termOffset {
+				startOff := file.ParseLocStart(lRange)
+				endOff := file.ParseLocEnd(lRange)
+				if termOffset < startOff || endOff < termOffset {
 					continue
 				}
 
-				node = we.WithSubquery()
+				subquery, _ := we.WithSubquery()
+				nextNode = subquery
 				replaced = true
 			}
 
 			if !replaced {
-				node = n.Query()
+				nextNode, _ = n.Query()
 			}
 
-			result, ok := c.getMostNarrowInputScanNode(node, termOffset)
+			if nextNode == nil {
+				return node, true
+			}
+
+			result, ok := c.getMostNarrowInputScanNode(nextNode, termOffset)
 			if ok {
 				return result, true
 			}
-			return node, true
-		case *rast.WithRefScanNode:
+			return nextNode, true
+		case *googlesql.ResolvedWithRefScan:
 			return nil, false
-		case *rast.JoinScanNode:
-			node1, ok := c.getMostNarrowInputScanNode(n.LeftScan(), termOffset)
-			if ok {
-				return node1, true
+		case *googlesql.ResolvedJoinScan:
+			leftScan, _ := n.LeftScan()
+			rightScan, _ := n.RightScan()
+			if leftScan != nil {
+				inner, ok := c.getMostNarrowInputScanNode(leftScan, termOffset)
+				if ok {
+					return inner, true
+				}
 			}
-			node2, ok := c.getMostNarrowInputScanNode(n.RightScan(), termOffset)
-			if ok {
-				return node2, true
+			if rightScan != nil {
+				inner, ok := c.getMostNarrowInputScanNode(rightScan, termOffset)
+				if ok {
+					return inner, true
+				}
 			}
 
-			lRange := n.ParseLocationRange()
+			lRange, _ := n.GetParseLocationRangeOrNULL()
 			if lRange == nil {
 				return n, true
 			}
 
-			if lRange.Start().ByteOffset() <= termOffset && termOffset <= lRange.End().ByteOffset() {
+			startOff := file.ParseLocStart(lRange)
+			endOff := file.ParseLocEnd(lRange)
+			if startOff <= termOffset && termOffset <= endOff {
 				return n, true
 			}
 			return nil, false
-		case *rast.OrderByScanNode:
-			node, ok := c.getMostNarrowInputScanNode(n.InputScan(), termOffset)
-			if ok {
-				return node, true
+		case *googlesql.ResolvedOrderByScan:
+			inputScan, _ := n.InputScan()
+			if inputScan != nil {
+				inner, ok := c.getMostNarrowInputScanNode(inputScan, termOffset)
+				if ok {
+					return inner, true
+				}
 			}
 
-			lRange := n.ParseLocationRange()
+			lRange, _ := n.GetParseLocationRangeOrNULL()
 			if lRange == nil {
 				return n, true
 			}
 
-			if lRange.Start().ByteOffset() <= termOffset && termOffset <= lRange.End().ByteOffset() {
+			startOff := file.ParseLocStart(lRange)
+			endOff := file.ParseLocEnd(lRange)
+			if startOff <= termOffset && termOffset <= endOff {
 				return n, true
 			}
 			return nil, false
-		case *rast.LimitOffsetScanNode:
-			node, ok := c.getMostNarrowInputScanNode(n.InputScan(), termOffset)
-			if ok {
-				return node, true
+		case *googlesql.ResolvedLimitOffsetScan:
+			inputScan, _ := n.InputScan()
+			if inputScan != nil {
+				inner, ok := c.getMostNarrowInputScanNode(inputScan, termOffset)
+				if ok {
+					return inner, true
+				}
 			}
 			return nil, false
 		default:

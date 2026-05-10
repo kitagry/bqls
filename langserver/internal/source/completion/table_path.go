@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/goccy/go-zetasql/ast"
+	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
@@ -21,8 +21,12 @@ func (c *completor) completeTablePath(ctx context.Context, parsedFile file.Parse
 	termOffset := parsedFile.TermOffset(position)
 
 	// cursor is on table name
-	tablePathNode, ok := file.SearchAstNode[*ast.TablePathExpressionNode](parsedFile.Node, termOffset)
-	if !ok || tablePathNode.ParseLocationRange().End().ByteOffset() == termOffset {
+	tablePathNode, ok := file.SearchAstNode[*googlesql.ASTTablePathExpression](parsedFile.Node, termOffset)
+	if !ok {
+		return nil, nil
+	}
+	loc, _ := tablePathNode.GetParseLocationRange()
+	if file.ParseLocEnd(loc) == termOffset {
 		return nil, nil
 	}
 

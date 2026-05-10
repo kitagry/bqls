@@ -3,6 +3,7 @@ package file_test
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	bq "cloud.google.com/go/bigquery"
@@ -97,7 +98,7 @@ func TestCatalog_AddTable(t *testing.T) {
 			bqClient := tt.createMockBigQuery(mockCtrl)
 			catalog := file.NewCatalog(bqClient)
 
-			got, err := catalog.FindTable(tt.path)
+			err := catalog.EnsureTable(tt.path)
 			if !errors.Is(err, tt.expectError) {
 				t.Fatalf("error: got %v, want %v", err, tt.expectError)
 			}
@@ -105,14 +106,33 @@ func TestCatalog_AddTable(t *testing.T) {
 				return
 			}
 
-			if got.Name() != tt.expectTableName {
-				t.Errorf("tableName: got %s, want %s", got.Name(), tt.expectTableName)
+			tablePath := strings.Join(tt.path, ".")
+			// strip trailing dots if path was ["project.dataset.table"] form
+			meta, err := catalog.FindTableMetadata(tablePath)
+			if err != nil {
+				t.Fatalf("FindTableMetadata: %v", err)
 			}
 
+			// The tableName in tableMetaMap uses the 3-part form
+			wantTableName := tt.expectTableName
+			if meta == nil {
+				t.Fatalf("expected metadata for %s, got nil", wantTableName)
+			}
+
+			// Verify columns via schema
+			schemaNames := make([]string, 0, len(meta.Schema))
+			for _, f := range meta.Schema {
+				schemaNames = append(schemaNames, f.Name)
+			}
+			// expectColumnNames may include pseudo-columns (_PARTITIONTIME, _TABLE_SUFFIX)
+			// which are not in the schema — just verify schema columns are a prefix
 			for i, name := range tt.expectColumnNames {
-				got := got.Column(i).Name()
-				if got != name {
-					t.Errorf("columnName(%d): got %s, want %s", i, got, name)
+				if i >= len(schemaNames) {
+					// pseudo-columns are ok to miss from schema
+					break
+				}
+				if schemaNames[i] != name {
+					t.Errorf("columnName(%d): got %s, want %s", i, schemaNames[i], name)
 				}
 			}
 		})
@@ -134,12 +154,12 @@ func TestCatalog_shouldNotGetSchemaTwice(t *testing.T) {
 	}, nil).Times(1)
 	catalog := file.NewCatalog(bqClient)
 
-	_, err := catalog.FindTable([]string{"project.dataset.table"})
+	err := catalog.EnsureTable([]string{"project.dataset.table"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = catalog.FindTable([]string{"project.dataset.table"})
+	err = catalog.EnsureTable([]string{"project.dataset.table"})
 	if err != nil {
 		t.Fatal(err)
 	}

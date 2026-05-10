@@ -7,9 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/goccy/go-zetasql"
-	"github.com/goccy/go-zetasql/ast"
-	"github.com/goccy/go-zetasql/types"
+	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	ts "github.com/tree-sitter/go-tree-sitter"
 )
@@ -20,10 +18,10 @@ type ParsedFile struct {
 	URI lsp.DocumentURI
 	Src string
 
-	// zetasql AST node
-	Node ast.ScriptNode
+	// googlesql AST node
+	Node *googlesql.ASTScript
 	// index is Node's statement order
-	RNode []*zetasql.AnalyzerOutput
+	RNode []*googlesql.AnalyzerOutput
 
 	// tree-sitter node
 	TsTree *ts.Tree
@@ -50,30 +48,39 @@ func (p ParsedFile) fixTermOffsetForNode(termOffset int) int {
 	return termOffset
 }
 
-func (p ParsedFile) ExtractSQL(locationRange *types.ParseLocationRange) (string, bool) {
+func (p ParsedFile) ExtractSQL(locationRange *googlesql.ParseLocationRange) (string, bool) {
 	if locationRange == nil {
 		return "", false
 	}
 
-	startOffset := p.fixTermOffsetForSQL(locationRange.Start().ByteOffset())
-	endOffset := p.fixTermOffsetForSQL(locationRange.End().ByteOffset())
+	startOffset := p.fixTermOffsetForSQL(parseLocStart(locationRange))
+	endOffset := p.fixTermOffsetForSQL(parseLocEnd(locationRange))
+	if startOffset < 0 || endOffset < 0 || startOffset > endOffset || endOffset > len(p.Src) {
+		return "", false
+	}
 
 	return p.Src[startOffset:endOffset], true
 }
 
-func (p ParsedFile) ToLspRange(r *types.ParseLocationRange) (lsp.Range, bool) {
+func (p ParsedFile) ToLspRange(r *googlesql.ParseLocationRange) (lsp.Range, bool) {
 	if r == nil {
 		return lsp.Range{}, false
 	}
 
+	startOff := parseLocStart(r)
+	endOff := parseLocEnd(r)
+	if startOff < 0 || endOff < 0 {
+		return lsp.Range{}, false
+	}
+
 	return lsp.Range{
-		Start: p.toLspPoint(r.Start()),
-		End:   p.toLspPoint(r.End()),
+		Start: p.toLspPoint(startOff),
+		End:   p.toLspPoint(endOff),
 	}, true
 }
 
-func (p ParsedFile) toLspPoint(point *types.ParseLocationPoint) lsp.Position {
-	offset := p.fixTermOffsetForSQL(point.ByteOffset())
+func (p ParsedFile) toLspPoint(byteOffset int) lsp.Position {
+	offset := p.fixTermOffsetForSQL(byteOffset)
 
 	toEndText := p.Src[:offset]
 	line := strings.Count(toEndText, "\n")
@@ -99,29 +106,23 @@ func (p ParsedFile) fixTermOffsetForSQL(termOffset int) int {
 	return termOffset
 }
 
-func (p ParsedFile) FindTargetStatementNode(termOffset int) (ast.StatementNode, bool) {
-	stmts := make([]ast.StatementNode, 0)
-	ast.Walk(p.Node, func(n ast.Node) error {
-		if n == nil {
-			return nil
-		}
-		if n.IsStatement() {
-			stmts = append(stmts, n)
-		}
-		return nil
-	})
+func (p ParsedFile) FindTargetStatementNode(termOffset int) (googlesql.ASTStatementNode, bool) {
+	stmts := collectStatementsFromNode(p.Node)
 
 	if len(stmts) == 1 {
 		return stmts[0], true
 	}
 
 	for _, stmt := range stmts {
-		loc := stmt.ParseLocationRange()
+		loc, _ := stmt.GetParseLocationRange()
 		if loc == nil {
 			continue
 		}
-		startOffset := loc.Start().ByteOffset()
-		endOffset := loc.End().ByteOffset()
+		startOffset := parseLocStart(loc)
+		endOffset := parseLocEnd(loc)
+		if startOffset < 0 || endOffset < 0 {
+			continue
+		}
 		if startOffset <= termOffset && termOffset <= endOffset {
 			return stmt, true
 		}
@@ -131,31 +132,31 @@ func (p ParsedFile) FindTargetStatementNode(termOffset int) (ast.StatementNode, 
 }
 
 func (p ParsedFile) findTargetStatementNodeIndex(termOffset int) (int, bool) {
-	stmts := make([]ast.StatementNode, 0)
-	ast.Walk(p.Node, func(n ast.Node) error {
-		if n == nil {
-			return nil
+	stmts := collectStatementsFromNode(p.Node)
+	// Filter out variable declarations (can't be analyzed)
+	filtered := make([]googlesql.ASTStatementNode, 0, len(stmts))
+	for _, s := range stmts {
+		kind, _ := s.NodeKind()
+		if kind == googlesql.ASTNodeKindAstVariableDeclaration {
+			continue
 		}
-		// Currently VariableDeclarationNode can't be analyzed.
-		// So, skip it.
-		_, isVariableDeclaration := n.(*ast.VariableDeclarationNode)
-		if n.IsStatement() && !isVariableDeclaration {
-			stmts = append(stmts, n)
-		}
-		return nil
-	})
+		filtered = append(filtered, s)
+	}
 
-	if len(stmts) == 1 {
+	if len(filtered) == 1 {
 		return 0, true
 	}
 
-	for i, stmt := range stmts {
-		loc := stmt.ParseLocationRange()
+	for i, stmt := range filtered {
+		loc, _ := stmt.GetParseLocationRange()
 		if loc == nil {
 			continue
 		}
-		startOffset := loc.Start().ByteOffset()
-		endOffset := loc.End().ByteOffset()
+		startOffset := parseLocStart(loc)
+		endOffset := parseLocEnd(loc)
+		if startOffset < 0 || endOffset < 0 {
+			continue
+		}
 		if startOffset <= termOffset && termOffset <= endOffset {
 			return i, true
 		}
@@ -164,7 +165,7 @@ func (p ParsedFile) findTargetStatementNodeIndex(termOffset int) (int, bool) {
 	return -1, false
 }
 
-func (p *ParsedFile) FindTargetAnalyzeOutput(termOffset int) (*zetasql.AnalyzerOutput, bool) {
+func (p *ParsedFile) FindTargetAnalyzeOutput(termOffset int) (*googlesql.AnalyzerOutput, bool) {
 	index, ok := p.findTargetStatementNodeIndex(termOffset)
 	if !ok {
 		return nil, false
@@ -188,6 +189,24 @@ func (p *ParsedFile) FindIncompleteColumnName(pos lsp.Position) string {
 		}
 	}
 	return ""
+}
+
+// collectStatementsFromNode collects all statement nodes from the AST.
+func collectStatementsFromNode(node *googlesql.ASTScript) []googlesql.ASTStatementNode {
+	stmts := make([]googlesql.ASTStatementNode, 0)
+	Walk(node, func(n googlesql.ASTNode) error { //nolint
+		if n == nil {
+			return nil
+		}
+		isStmt, _ := n.IsStatement()
+		if isStmt {
+			if sn, ok := n.(googlesql.ASTStatementNode); ok {
+				stmts = append(stmts, sn)
+			}
+		}
+		return nil
+	})
+	return stmts
 }
 
 type FixOffset struct {
@@ -263,7 +282,7 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) 
 			line = line[:loc[0]] + "true" + line[loc[1]-1:]
 			pos, _ := byteOffsetToPosition(src, srcStart)
 			errs = append(errs, Error{
-				Msg:                  fmt.Sprintf("INVALID_ARGUMENT: Unrecognized name: %s", targetWord),
+				Msg:                  fmt.Sprintf("Unrecognized name: %s", targetWord),
 				Position:             pos,
 				TermLength:           len(targetWord),
 				IncompleteColumnName: targetWord,
@@ -484,22 +503,27 @@ func fixErrorToLiteral(src string, parsedErr Error) (fixedSrc string, fixOffsets
 // becomes
 //
 //	SELECT * FROM table WHERE true
-func fixErrorForWhereStatement(src string, node ast.StatementNode, parsedErr Error) (fixedSrc string, fixOffsets []FixOffset) {
+func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, parsedErr Error) (fixedSrc string, fixOffsets []FixOffset) {
 	errOffset := positionToByteOffset(src, parsedErr.Position)
 	if errOffset == 0 || errOffset == len(src) {
 		return src, nil
 	}
 
 	fixOffset := FixOffset{Offset: errOffset, Length: 0}
-	if node, ok := SearchAstNode[*ast.BinaryExpressionNode](node, errOffset); ok {
+	usedBinaryExpr := false
+	if binExpr, ok := SearchAstNode[*googlesql.ASTBinaryExpression](node, errOffset); ok {
 		// e.x.) SELECT * FROM table WHERE unexist_column = 1
-		loc := node.ParseLocationRange()
-		startOffset := loc.Start().ByteOffset()
-		endOffset := loc.End().ByteOffset()
-		length := endOffset - startOffset
-		fixedSrc = src[:startOffset] + "true" + src[endOffset:]
-		fixOffset.Length = len("true") - length
-	} else {
+		loc, _ := binExpr.GetParseLocationRange()
+		startOffset := parseLocStart(loc)
+		endOffset := parseLocEnd(loc)
+		if startOffset >= 0 && endOffset >= 0 {
+			length := endOffset - startOffset
+			fixedSrc = src[:startOffset] + "true" + src[endOffset:]
+			fixOffset.Length = len("true") - length
+			usedBinaryExpr = true
+		}
+	}
+	if !usedBinaryExpr {
 		// e.x.) SELECT * FROM table WHERE unexist_column
 		incompleteOffset := errOffset + parsedErr.TermLength - len(parsedErr.IncompleteColumnName)
 		replacedLength := len(parsedErr.IncompleteColumnName)
@@ -531,11 +555,11 @@ func addInformationToNotExistInStructError(src string, parsedErr Error) Error {
 }
 
 func addInformationToNotFoundInsideTableError(src string, parsedErr Error) Error {
-	ind := strings.Index(parsedErr.Msg, "INVALID_ARGUMENT: Name ")
+	ind := strings.Index(parsedErr.Msg, "Name ")
 	if ind == -1 {
 		return parsedErr
 	}
-	notExistColumn := parsedErr.Msg[ind+len("INVALID_ARGUMENT: Name "):]
+	notExistColumn := parsedErr.Msg[ind+len("Name "):]
 	notExistColumn = notExistColumn[:strings.Index(notExistColumn, " ")]
 
 	errOffset := positionToByteOffset(src, parsedErr.Position)

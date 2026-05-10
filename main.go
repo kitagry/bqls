@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"runtime/debug"
 
+	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver"
 	"github.com/sourcegraph/jsonrpc2"
 )
@@ -59,6 +60,12 @@ You can use your favorite lsp client.
 		fmt.Printf("%s %s (rev: %s/%s)\n", name, version, getRevision(), runtime.Version())
 		return exitCodeOK
 	}
+
+	if err := googlesql.Init(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to initialize googlesql: %v\n", err)
+		return exitCodeErr
+	}
+	defer googlesql.Close()
 
 	handler := langserver.NewHandler(*isDebug)
 	defer handler.Close()

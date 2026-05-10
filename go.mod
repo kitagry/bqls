@@ -1,6 +1,6 @@
 module github.com/kitagry/bqls
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/google/go-cmp v0.7.0
@@ -11,7 +11,7 @@ require (
 	cloud.google.com/go/bigquery v1.72.0
 	github.com/JohannesKaufmann/html-to-markdown v1.5.0
 	github.com/PuerkitoBio/goquery v1.11.0
-	github.com/goccy/go-zetasql v0.5.5
+	github.com/goccy/go-googlesql v0.2.1
 	github.com/golang/mock v1.6.0
 	github.com/kitagry/tree-sitter-bigquery v0.0.0-20251117000207-33763ce02e7f
 	github.com/mattn/go-sqlite3 v1.14.33
@@ -43,6 +43,7 @@ require (
 	github.com/klauspost/cpuid/v2 v2.2.6 // indirect
 	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/pierrec/lz4/v4 v4.1.21 // indirect
+	github.com/tetratelabs/wazero v1.11.0 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.61.0 // indirect

@@ -4,8 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/goccy/go-zetasql/ast"
-	rast "github.com/goccy/go-zetasql/resolved_ast"
+	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
@@ -17,13 +16,13 @@ func (p *Project) LookupIdent(ctx context.Context, uri lsp.DocumentURI, position
 
 	termOffset := parsedFile.TermOffset(position)
 
-	tablePathExpression, ok := file.SearchAstNode[*ast.TablePathExpressionNode](parsedFile.Node, termOffset)
+	tablePathExpression, ok := file.SearchAstNode[*googlesql.ASTTablePathExpression](parsedFile.Node, termOffset)
 	if ok {
-		// NOTE: ignore rast.ScanNode because it is not resolved
+		// NOTE: ignore ResolvedScanNode because it is not resolved
 		output, ok := parsedFile.FindTargetAnalyzeOutput(termOffset)
-		var tablePathRastNode rast.ScanNode
+		var tablePathRastNode googlesql.ResolvedScanNode
 		if ok {
-			tablePathRastNode, _ = file.SearchResolvedAstNode[rast.ScanNode](output, termOffset)
+			tablePathRastNode, _ = file.SearchResolvedAstNode[googlesql.ResolvedScanNode](output, termOffset)
 		}
 		return p.lookupTablePathExpressionNode(ctx, uri, parsedFile, tablePathExpression, tablePathRastNode)
 	}
@@ -31,16 +30,16 @@ func (p *Project) LookupIdent(ctx context.Context, uri lsp.DocumentURI, position
 	return nil, nil
 }
 
-func (p *Project) lookupTablePathExpressionNode(ctx context.Context, uri lsp.DocumentURI, parsedFile file.ParsedFile, tablePathExpression *ast.TablePathExpressionNode, tablePathRastNode rast.ScanNode) ([]lsp.Location, error) {
+func (p *Project) lookupTablePathExpressionNode(ctx context.Context, uri lsp.DocumentURI, parsedFile file.ParsedFile, tablePathExpression *googlesql.ASTTablePathExpression, tablePathRastNode googlesql.ResolvedScanNode) ([]lsp.Location, error) {
 	p.logger.Println("lookupTablePathExpressionNode", tablePathExpression, tablePathRastNode)
-	pathExpr := tablePathExpression.PathExpr()
-	if pathExpr == nil {
+	pathExpr, err := tablePathExpression.PathExpr()
+	if err != nil || pathExpr == nil {
 		return nil, nil
 	}
 
-	tableNames := make([]string, len(pathExpr.Names()))
-	for i, n := range tablePathExpression.PathExpr().Names() {
-		tableNames[i] = n.Name()
+	tableNames, err := pathExpr.ToIdentifierVector()
+	if err != nil {
+		return nil, nil
 	}
 	tableName := strings.Join(tableNames, ".")
 
@@ -53,13 +52,22 @@ func (p *Project) lookupTablePathExpressionNode(ctx context.Context, uri lsp.Doc
 	return result, nil
 }
 
-func (p *Project) listupTargetTableExpressionEntries(ctx context.Context, parsedFile file.ParsedFile, uri lsp.DocumentURI, tableName string, scanNode rast.ScanNode) []lsp.Location {
-	tableScanNode, ok := scanNode.(*rast.TableScanNode)
+func (p *Project) listupTargetTableExpressionEntries(ctx context.Context, parsedFile file.ParsedFile, uri lsp.DocumentURI, tableName string, scanNode googlesql.ResolvedScanNode) []lsp.Location {
+	tableScanNode, ok := scanNode.(*googlesql.ResolvedTableScan)
 	if !ok {
 		return nil
 	}
 
-	metadata, err := p.analyzer.GetTableMetadataFromPath(ctx, tableScanNode.Table().Name())
+	table, err := tableScanNode.Table()
+	if err != nil || table == nil {
+		return nil
+	}
+	tableFullName, err := table.Name()
+	if err != nil {
+		return nil
+	}
+
+	metadata, err := p.analyzer.GetTableMetadataFromPath(ctx, tableFullName)
 	if err != nil {
 		return nil
 	}
@@ -87,17 +95,26 @@ func (p *Project) listupTargetTableExpressionEntries(ctx context.Context, parsed
 }
 
 func (p *Project) listupTargetWithClauseEntries(parsedFile file.ParsedFile, uri lsp.DocumentURI, tableName string) []lsp.Location {
-	withClauseEntries := file.ListAstNode[*ast.WithClauseEntryNode](parsedFile.Node)
+	withClauseEntries := file.ListAstNode[*googlesql.ASTWithClauseEntry](parsedFile.Node)
 	result := make([]lsp.Location, 0, len(withClauseEntries))
 	for _, entry := range withClauseEntries {
-		if entry.Alias().Name() != tableName {
+		aliasedQuery, err := entry.AliasedQuery()
+		if err != nil || aliasedQuery == nil {
 			continue
 		}
-		locRange := entry.Alias().ParseLocationRange()
-		if locRange == nil {
+		alias, err := aliasedQuery.Alias()
+		if err != nil || alias == nil {
 			continue
 		}
-		r, ok := parsedFile.ToLspRange(locRange)
+		name, err := alias.GetAsString()
+		if err != nil || name != tableName {
+			continue
+		}
+		loc, err := alias.GetParseLocationRange()
+		if err != nil || loc == nil {
+			continue
+		}
+		r, ok := parsedFile.ToLspRange(loc)
 		if !ok {
 			continue
 		}

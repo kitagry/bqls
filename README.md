@@ -8,10 +8,7 @@ https://github.com/user-attachments/assets/3e980a26-bc9b-4c2b-8c5b-1e9582a6a644
 
 ### Prerequisites
 
-- Go 1.16 or later
-- CGO enabled (`CGO_ENABLED=1`)
-- Recommended to use `clang++` compiler
-- Set `CXX` environment variable if needed (e.g., `export CXX=clang++`)
+- Go 1.25 or later
 
 ### Install from releases
 
@@ -20,8 +17,6 @@ Download the latest binary from [GitHub Releases](https://github.com/kitagry/bql
 ### Build from source
 
 ```bash
-export CGO_ENABLED=1
-export CXX=clang++
 go install
 ```
 

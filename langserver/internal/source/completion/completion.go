@@ -4,9 +4,7 @@ import (
 	"context"
 
 	bq "cloud.google.com/go/bigquery"
-	"github.com/goccy/go-zetasql"
-	rast "github.com/goccy/go-zetasql/resolved_ast"
-	"github.com/goccy/go-zetasql/types"
+	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
@@ -40,29 +38,36 @@ func (c *completor) Complete(ctx context.Context, parsedFile file.ParsedFile, po
 	return result, nil
 }
 
-func findScanNode(output *zetasql.AnalyzerOutput, termOffset int) (node rast.ScanNode, ok bool) {
-	node, ok = file.SearchResolvedAstNode[rast.ScanNode](output, termOffset)
+func findScanNode(output *googlesql.AnalyzerOutput, termOffset int) (node googlesql.ResolvedScanNode, ok bool) {
+	node, ok = file.SearchResolvedAstNode[googlesql.ResolvedScanNode](output, termOffset)
 	if ok {
 		return node, true
 	}
 
-	// In some case, *rast.ProjectScanNode.ParseLocationRange() returns nil.
-	// So, if we cannot find *rast.ProjectScanNode, we search *rast.ProjectScanNode which ParseLocationRange returns nil.
-	rast.Walk(output.Statement(), func(n rast.Node) error {
-		if !n.IsScan() {
+	// In some case, *googlesql.ResolvedProjectScan.ParseLocationRange() returns nil.
+	// So, if we cannot find a scan node, we search for one whose ParseLocationRange returns nil.
+	stmt, err := output.ResolvedStatement()
+	if err != nil || stmt == nil {
+		return nil, false
+	}
+	file.WalkResolved(stmt, func(n googlesql.ResolvedNode) error { //nolint
+		isScan, _ := n.IsScan()
+		if !isScan {
 			return nil
 		}
 
-		sNode := n.(rast.ScanNode)
+		sNode, ok := n.(googlesql.ResolvedScanNode)
+		if !ok {
+			return nil
+		}
 
-		lRange := n.ParseLocationRange()
+		lRange, _ := n.GetParseLocationRangeOrNULL()
 		if lRange == nil {
 			node = sNode
 			return nil
 		}
-		// if the cursor is on the end of the node, the cursor is out of the node
-		// So, we need to permit the some offset.
-		if lRange.End().ByteOffset() < termOffset+5 {
+		endOff := file.ParseLocEnd(lRange)
+		if endOff < termOffset+5 {
 			node = sNode
 			return nil
 		}
@@ -76,18 +81,29 @@ func findScanNode(output *zetasql.AnalyzerOutput, termOffset int) (node rast.Sca
 	return node, true
 }
 
-type columnInterface interface {
-	Name() string
-	Type() types.Type
-}
-
-func createCompletionItemFromColumn(column columnInterface, incompleteColumnName string) CompletionItem {
+func createCompletionItemFromResolvedColumn(column *googlesql.ResolvedColumn, incompleteColumnName string) CompletionItem {
+	name, _ := column.Name()
+	typ, _ := column.Type()
+	typeName := typeNodeName(typ)
 	return CompletionItem{
 		Kind:    lsp.CIKField,
-		NewText: column.Name(),
+		NewText: name,
 		Documentation: lsp.MarkupContent{
 			Kind:  lsp.MKPlainText,
-			Value: column.Type().TypeName(types.ProductExternal),
+			Value: typeName,
+		},
+		TypedPrefix: incompleteColumnName,
+	}
+}
+
+func createCompletionItemFromStructField(field *googlesql.StructField, incompleteColumnName string) CompletionItem {
+	typeName := typeNodeName(field.Type_)
+	return CompletionItem{
+		Kind:    lsp.CIKField,
+		NewText: field.Name,
+		Documentation: lsp.MarkupContent{
+			Kind:  lsp.MKPlainText,
+			Value: typeName,
 		},
 		TypedPrefix: incompleteColumnName,
 	}
@@ -107,4 +123,12 @@ func createCompletionItemFromSchema(schema *bq.FieldSchema, incompleteColumnName
 		},
 		TypedPrefix: incompleteColumnName,
 	}
+}
+
+func typeNodeName(typ googlesql.Googlesql_TypeNode) string {
+	if typ == nil {
+		return ""
+	}
+	name, _ := typ.DebugString(false)
+	return name
 }
