@@ -6,8 +6,6 @@ builds:
   - id: bqls
     main: .
     binary: bqls
-    env:
-      - CGO_ENABLED=0
     ldflags:
       - -s -w -X main.version={{.Tag}}
     goos:
