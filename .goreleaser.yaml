@@ -6,6 +6,8 @@ builds:
   - id: bqls
     main: .
     binary: bqls
+    env:
+      - CGO_ENABLED=1
     ldflags:
       - -s -w -X main.version={{.Tag}}
     goos:
@@ -14,6 +16,19 @@ builds:
     goarch:
       - amd64
       - arm64
+    overrides:
+      - goos: linux
+        goarch: amd64
+        env:
+          - CGO_ENABLED=1
+          - CC=zig cc -target x86_64-linux-musl
+          - CXX=zig c++ -target x86_64-linux-musl
+      - goos: linux
+        goarch: arm64
+        env:
+          - CGO_ENABLED=1
+          - CC=zig cc -target aarch64-linux-musl
+          - CXX=zig c++ -target aarch64-linux-musl
 
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
