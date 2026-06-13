@@ -308,11 +308,15 @@ func (h *Handler) commandSearchTables(ctx context.Context, params lsp.ExecuteCom
 		return nil, fmt.Errorf("query argument should be string, but got %T", params.Arguments[0])
 	}
 
-	projectID := h.bqClient.GetDefaultProject()
+	projectIDs := []string{h.bqClient.GetDefaultProject()}
 	if len(params.Arguments) >= 2 {
-		projectID, ok = params.Arguments[1].(string)
-		if !ok {
-			return nil, fmt.Errorf("projectID argument should be string, but got %T", params.Arguments[1])
+		projectIDs = make([]string, 0, len(params.Arguments)-1)
+		for _, arg := range params.Arguments[1:] {
+			id, ok := arg.(string)
+			if !ok {
+				return nil, fmt.Errorf("projectID argument should be string, but got %T", arg)
+			}
+			projectIDs = append(projectIDs, id)
 		}
 	}
 
@@ -323,7 +327,7 @@ func (h *Handler) commandSearchTables(ctx context.Context, params lsp.ExecuteCom
 	})
 	defer h.workDoneProgressEnd(ctx, workDoneToken, lsp.WorkDoneProgressEnd{})
 
-	tables, err := h.bqClient.SearchTables(ctx, projectID, query)
+	tables, err := h.bqClient.SearchTables(ctx, projectIDs, query)
 	if err != nil {
 		return nil, err
 	}

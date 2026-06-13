@@ -200,18 +200,18 @@ func (mr *MockClientMockRecorder) Run(ctx, q, dryrun interface{}) *gomock.Call {
 }
 
 // SearchTables mocks base method.
-func (m *MockClient) SearchTables(ctx context.Context, projectID, query string) ([]bigquery0.TableSearchResult, error) {
+func (m *MockClient) SearchTables(ctx context.Context, projectIDs []string, query string) ([]bigquery0.TableSearchResult, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SearchTables", ctx, projectID, query)
+	ret := m.ctrl.Call(m, "SearchTables", ctx, projectIDs, query)
 	ret0, _ := ret[0].([]bigquery0.TableSearchResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // SearchTables indicates an expected call of SearchTables.
-func (mr *MockClientMockRecorder) SearchTables(ctx, projectID, query interface{}) *gomock.Call {
+func (mr *MockClientMockRecorder) SearchTables(ctx, projectIDs, query interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SearchTables", reflect.TypeOf((*MockClient)(nil).SearchTables), ctx, projectID, query)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SearchTables", reflect.TypeOf((*MockClient)(nil).SearchTables), ctx, projectIDs, query)
 }
 
 // MockBigqueryJob is a mock of BigqueryJob interface.
