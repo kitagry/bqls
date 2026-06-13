@@ -106,6 +106,30 @@ SELECT a FROM data2|`,
 				},
 			},
 		},
+		"definition to declare variable": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "DECLARE target_id INT64;\nSELECT id FROM `bigquery-public-data.samples.wikipedia` WHERE id = target_id|",
+			},
+			bqTableMetadata: &bq.TableMetadata{
+				FullID: "bigquery-public-data:samples.wikipedia",
+				Schema: bq.Schema{},
+			},
+			expectLocations: []lsp.Location{
+				{
+					URI: "a.sql",
+					Range: lsp.Range{
+						Start: lsp.Position{
+							Line:      0,
+							Character: 8,
+						},
+						End: lsp.Position{
+							Line:      0,
+							Character: 17,
+						},
+					},
+				},
+			},
+		},
 		"definition to bq table in other scan node": {
 			files: map[lsp.DocumentURI]string{
 				"a.sql": "WITH data AS (SELECT * FROM `project.dataset.table|`) SELECT * FROM data",
