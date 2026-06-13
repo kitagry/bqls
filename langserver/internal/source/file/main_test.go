@@ -13,6 +13,5 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "failed to initialize googlesql: %v\n", err)
 		os.Exit(1)
 	}
-	defer googlesql.Close()
 	os.Exit(m.Run())
 }
