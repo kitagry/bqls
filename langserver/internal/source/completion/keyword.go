@@ -4,16 +4,16 @@ import (
 	"context"
 
 	"github.com/kitagry/bqls/langserver/internal/lsp"
+	"github.com/kitagry/bqls/langserver/internal/source/bqparser"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
-	ts "github.com/tree-sitter/go-tree-sitter"
 )
 
 func (c *completor) completeKeyword(ctx context.Context, parsedFile file.ParsedFile, position lsp.Position) []CompletionItem {
-	if parsedFile.TsTree == nil {
+	if parsedFile.ParseTree == nil {
 		return []CompletionItem{}
 	}
 
-	rootNode := parsedFile.TsTree.RootNode()
+	rootNode := parsedFile.ParseTree
 
 	// Check if the program node has no children (empty file)
 	if rootNode.ChildCount() == 0 {
@@ -31,11 +31,11 @@ func completeFromEmptyProgram() []CompletionItem {
 
 // completeFromCursorPosition handles keyword completion based on cursor position
 // insideCTE indicates if we're currently inside a CTE definition
-func completeFromCursorPosition(rootNode *ts.Node, parsedFile file.ParsedFile, position lsp.Position, insideCTE bool) []CompletionItem {
+func completeFromCursorPosition(rootNode *bqparser.Node, parsedFile file.ParsedFile, position lsp.Position, insideCTE bool) []CompletionItem {
 	offset := parsedFile.TermOffset(position)
 
 	// Find the select_statement node that contains the cursor
-	var selectStmt *ts.Node
+	var selectStmt *bqparser.Node
 
 	// Check if the cursor is inside a CTE node (only if not already inside one)
 	if !insideCTE {
@@ -60,7 +60,7 @@ func completeFromCursorPosition(rootNode *ts.Node, parsedFile file.ParsedFile, p
 	clausesAfter := getClausesAfterCursor(selectStmt, uint(offset))
 
 	// Check if there's a join_expression in the from_clause
-	hasJoinWithoutOn := hasJoinExpressionWithoutOn(selectStmt)
+	hasJoinWithoutOn := hasJoinExpressionWithoutOn(selectStmt, parsedFile.Src)
 
 	// Determine what to suggest based on the last clause before cursor
 	result := []CompletionItem{}
@@ -159,7 +159,7 @@ func completeFromCursorPosition(rootNode *ts.Node, parsedFile file.ParsedFile, p
 }
 
 // hasClause checks if the select statement has a specific clause
-func hasClause(selectStmt *ts.Node, clauseKind string) bool {
+func hasClause(selectStmt *bqparser.Node, clauseKind string) bool {
 	if selectStmt == nil {
 		return false
 	}
@@ -175,7 +175,7 @@ func hasClause(selectStmt *ts.Node, clauseKind string) bool {
 }
 
 // findClause finds a specific clause in the select statement
-func findClause(selectStmt *ts.Node, clauseKind string) *ts.Node {
+func findClause(selectStmt *bqparser.Node, clauseKind string) *bqparser.Node {
 	if selectStmt == nil {
 		return nil
 	}
@@ -191,7 +191,7 @@ func findClause(selectStmt *ts.Node, clauseKind string) *ts.Node {
 }
 
 // findLastClauseBeforeCursor finds the last clause that ends before the cursor position
-func findLastClauseBeforeCursor(selectStmt *ts.Node, cursorOffset uint) string {
+func findLastClauseBeforeCursor(selectStmt *bqparser.Node, cursorOffset uint) string {
 	if selectStmt == nil {
 		return ""
 	}
@@ -219,7 +219,7 @@ func findLastClauseBeforeCursor(selectStmt *ts.Node, cursorOffset uint) string {
 }
 
 // getClausesAfterCursor returns a set of clause kinds that appear after the cursor position
-func getClausesAfterCursor(selectStmt *ts.Node, cursorOffset uint) map[string]bool {
+func getClausesAfterCursor(selectStmt *bqparser.Node, cursorOffset uint) map[string]bool {
 	if selectStmt == nil {
 		return map[string]bool{}
 	}
@@ -244,61 +244,18 @@ func getClausesAfterCursor(selectStmt *ts.Node, cursorOffset uint) map[string]bo
 	return clausesAfter
 }
 
-// findJoinExpression recursively finds a join_expression node
-func findJoinExpression(node *ts.Node) *ts.Node {
-	if node == nil {
-		return nil
-	}
-
-	if node.Kind() == "join_expression" {
-		return node
-	}
-
-	for i := uint(0); i < node.NamedChildCount(); i++ {
-		if result := findJoinExpression(node.NamedChild(i)); result != nil {
-			return result
-		}
-	}
-
-	return nil
-}
-
-// hasJoinExpressionWithoutOn checks if there's a join_expression that doesn't have an ON clause
-// Based on the S-expression: (join_expression left: (backtick_identifier) right: (backtick_identifier))
-// A complete join would have more structure including the ON condition
-func hasJoinExpressionWithoutOn(selectStmt *ts.Node) bool {
+// hasJoinExpressionWithoutOn checks if the from_clause contains a JOIN keyword
+// that is not followed by a matching ON condition.
+func hasJoinExpressionWithoutOn(selectStmt *bqparser.Node, src string) bool {
 	fromClause := findClause(selectStmt, "from_clause")
 	if fromClause == nil {
 		return false
 	}
-
-	joinExpr := findJoinExpression(fromClause)
-	if joinExpr == nil {
-		return false
-	}
-
-	// Check if the join expression has an ON clause
-	// In the new parser, a complete join has child nodes for the condition
-	// An incomplete join (without ON) will have fewer children
-	// We need to check if there are only "left" and "right" without the join condition
-
-	// Look for a field named "condition" or check the number of children
-	for i := uint(0); i < joinExpr.NamedChildCount(); i++ {
-		child := joinExpr.NamedChild(i)
-		if child != nil {
-			fieldName := joinExpr.FieldNameForChild(uint32(i))
-			if fieldName == "condition" || fieldName == "on" {
-				return false // Has ON clause
-			}
-		}
-	}
-
-	// If we only have "left" and "right" (2 children), it's a join without ON
-	return joinExpr.NamedChildCount() >= 2
+	return bqparser.FromClauseHasJoinWithoutOn(fromClause, src)
 }
 
 // hasAscOrDescInOrderBy checks if an order_by_clause contains ASC or DESC keywords
-func hasAscOrDescInOrderBy(orderByNode *ts.Node) bool {
+func hasAscOrDescInOrderBy(orderByNode *bqparser.Node) bool {
 	if orderByNode == nil {
 		return false
 	}
@@ -308,7 +265,7 @@ func hasAscOrDescInOrderBy(orderByNode *ts.Node) bool {
 }
 
 // hasAscOrDescRecursive recursively checks for ASC or DESC nodes
-func hasAscOrDescRecursive(node *ts.Node) bool {
+func hasAscOrDescRecursive(node *bqparser.Node) bool {
 	if node == nil {
 		return false
 	}
@@ -330,7 +287,7 @@ func hasAscOrDescRecursive(node *ts.Node) bool {
 
 // findSelectStatementAtPosition finds the select_statement node containing the given position
 // If insideCTE is true, skip the WITH clause when searching
-func findSelectStatementAtPosition(node *ts.Node, offset uint, insideCTE bool) *ts.Node {
+func findSelectStatementAtPosition(node *bqparser.Node, offset uint, insideCTE bool) *bqparser.Node {
 	if node == nil {
 		return nil
 	}
@@ -596,7 +553,7 @@ func createOnKeywordCompletionItem(typedPrefix string) []CompletionItem {
 
 // findCTENodeContainingPosition finds a CTE node that contains the given position
 // Returns the CTE node and the select_statement node inside it, or nil if not found
-func findCTENodeContainingPosition(node *ts.Node, offset uint) (*ts.Node, *ts.Node) {
+func findCTENodeContainingPosition(node *bqparser.Node, offset uint) (*bqparser.Node, *bqparser.Node) {
 	if node == nil {
 		return nil, nil
 	}
