@@ -283,12 +283,13 @@ func (c *client) SearchTables(ctx context.Context, projectIDs []string, query st
 		return nil, fmt.Errorf("datacatalog.NewService: %w", err)
 	}
 
-	scope := &datacatalog.GoogleCloudDatacatalogV1SearchCatalogRequestScope{}
+	scope := &datacatalog.GoogleCloudDatacatalogV1SearchCatalogRequestScope{
+		IncludeProjectIds: projectIDs,
+	}
 	for _, id := range projectIDs {
 		if id == "bigquery-public-data" {
 			scope.IncludeGcpPublicDatasets = true
-		} else {
-			scope.IncludeProjectIds = append(scope.IncludeProjectIds, id)
+			break
 		}
 	}
 
