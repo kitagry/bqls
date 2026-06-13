@@ -283,11 +283,18 @@ func (c *client) SearchTables(ctx context.Context, projectIDs []string, query st
 		return nil, fmt.Errorf("datacatalog.NewService: %w", err)
 	}
 
+	scope := &datacatalog.GoogleCloudDatacatalogV1SearchCatalogRequestScope{}
+	for _, id := range projectIDs {
+		if id == "bigquery-public-data" {
+			scope.IncludeGcpPublicDatasets = true
+		} else {
+			scope.IncludeProjectIds = append(scope.IncludeProjectIds, id)
+		}
+	}
+
 	req := &datacatalog.GoogleCloudDatacatalogV1SearchCatalogRequest{
 		Query: fmt.Sprintf("type=TABLE system=bigquery %s", query),
-		Scope: &datacatalog.GoogleCloudDatacatalogV1SearchCatalogRequestScope{
-			IncludeProjectIds: projectIDs,
-		},
+		Scope: scope,
 	}
 
 	var results []TableSearchResult
