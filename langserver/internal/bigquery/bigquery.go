@@ -59,7 +59,7 @@ type Client interface {
 	Jobs(ctx context.Context) *bigquery.JobIterator
 
 	// SearchTables searches for BigQuery tables matching the given query via Data Catalog.
-	SearchTables(ctx context.Context, projectID, query string) ([]TableSearchResult, error)
+	SearchTables(ctx context.Context, projectIDs []string, query string) ([]TableSearchResult, error)
 }
 
 type client struct {
@@ -277,7 +277,7 @@ func (c *client) Jobs(ctx context.Context) *bigquery.JobIterator {
 	return c.bqClient.Jobs(ctx)
 }
 
-func (c *client) SearchTables(ctx context.Context, projectID, query string) ([]TableSearchResult, error) {
+func (c *client) SearchTables(ctx context.Context, projectIDs []string, query string) ([]TableSearchResult, error) {
 	svc, err := datacatalog.NewService(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("datacatalog.NewService: %w", err)
@@ -286,7 +286,7 @@ func (c *client) SearchTables(ctx context.Context, projectID, query string) ([]T
 	req := &datacatalog.GoogleCloudDatacatalogV1SearchCatalogRequest{
 		Query: fmt.Sprintf("type=TABLE system=bigquery %s", query),
 		Scope: &datacatalog.GoogleCloudDatacatalogV1SearchCatalogRequestScope{
-			IncludeProjectIds: []string{projectID},
+			IncludeProjectIds: projectIDs,
 		},
 	}
 
