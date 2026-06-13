@@ -9,7 +9,7 @@ import (
 
 	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
-	ts "github.com/tree-sitter/go-tree-sitter"
+	"github.com/kitagry/bqls/langserver/internal/source/bqparser"
 )
 
 var lastDotRegex = regexp.MustCompile(`[\w.]+\.\s`)
@@ -23,16 +23,13 @@ type ParsedFile struct {
 	// index is Node's statement order
 	RNode []*googlesql.AnalyzerOutput
 
-	// tree-sitter node
-	TsTree *ts.Tree
+	ParseTree *bqparser.Node
 
 	FixOffsets []FixOffset
 	Errors     []Error
 }
 
-func (p ParsedFile) Close() {
-	p.TsTree.Close()
-}
+func (p ParsedFile) Close() {}
 
 func (p ParsedFile) TermOffset(pos lsp.Position) int {
 	termOffset := positionToByteOffset(p.Src, pos)

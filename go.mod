@@ -13,10 +13,8 @@ require (
 	github.com/PuerkitoBio/goquery v1.11.0
 	github.com/goccy/go-googlesql v0.2.1
 	github.com/golang/mock v1.6.0
-	github.com/kitagry/tree-sitter-bigquery v0.0.0-20251117000207-33763ce02e7f
 	github.com/mattn/go-sqlite3 v1.14.33
 	github.com/sirupsen/logrus v1.9.3
-	github.com/tree-sitter/go-tree-sitter v0.25.0
 	golang.org/x/text v0.33.0
 	google.golang.org/api v0.262.0
 )
@@ -41,7 +39,6 @@ require (
 	github.com/googleapis/gax-go/v2 v2.16.0 // indirect
 	github.com/klauspost/compress v1.17.6 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.6 // indirect
-	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/pierrec/lz4/v4 v4.1.21 // indirect
 	github.com/tetratelabs/wazero v1.11.0 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect

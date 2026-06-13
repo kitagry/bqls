@@ -11,8 +11,7 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/helper"
 	"github.com/sirupsen/logrus"
-	tssql "github.com/kitagry/tree-sitter-bigquery/bindings/go"
-	ts "github.com/tree-sitter/go-tree-sitter"
+	"github.com/kitagry/bqls/langserver/internal/source/bqparser"
 )
 
 type Analyzer struct {
@@ -272,18 +271,12 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 	retry:
 	}
 
-	parser := ts.NewParser()
-	defer parser.Close()
-	parser.SetLanguage(ts.NewLanguage(tssql.Language()))
-
-	tree := parser.Parse([]byte(fixedSrc), nil)
-
 	return ParsedFile{
 		URI:        uri,
 		Src:        src,
 		Node:       node,
 		RNode:      rnode,
-		TsTree:     tree,
+		ParseTree:  bqparser.Parse(fixedSrc),
 		FixOffsets: fixOffsets,
 		Errors:     errs,
 	}
