@@ -31,7 +31,48 @@ func (p *Project) LookupIdent(ctx context.Context, uri lsp.DocumentURI, position
 		return locs, nil
 	}
 
+	if locs := p.listupTargetCreateFunctionEntries(parsedFile, uri, position); len(locs) > 0 {
+		return locs, nil
+	}
+
 	return nil, nil
+}
+
+func (p *Project) listupTargetCreateFunctionEntries(parsedFile file.ParsedFile, uri lsp.DocumentURI, position lsp.Position) []lsp.Location {
+	rawOffset := rawByteOffset(parsedFile.Src, position)
+	identName := wordAtByteOffset(parsedFile.Src, rawOffset)
+	if identName == "" {
+		return nil
+	}
+
+	createFunctions := file.ListAstNode[*googlesql.ASTCreateFunctionStatement](parsedFile.Node)
+	for _, fn := range createFunctions {
+		decl, err := fn.FunctionDeclaration()
+		if err != nil || decl == nil {
+			continue
+		}
+		pathExpr, err := decl.Name()
+		if err != nil || pathExpr == nil {
+			continue
+		}
+		names, err := pathExpr.ToIdentifierVector()
+		if err != nil || len(names) == 0 {
+			continue
+		}
+		if !strings.EqualFold(names[len(names)-1], identName) {
+			continue
+		}
+		loc, err := pathExpr.GetParseLocationRange()
+		if err != nil || loc == nil {
+			continue
+		}
+		r, ok := parsedFile.ToLspRange(loc)
+		if !ok {
+			continue
+		}
+		return []lsp.Location{{URI: uri, Range: r}}
+	}
+	return nil
 }
 
 func (p *Project) listupTargetVariableDeclarationEntries(parsedFile file.ParsedFile, uri lsp.DocumentURI, position lsp.Position) []lsp.Location {

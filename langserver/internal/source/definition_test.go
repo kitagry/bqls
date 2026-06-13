@@ -106,6 +106,30 @@ SELECT a FROM data2|`,
 				},
 			},
 		},
+		"definition to create temp function": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "CREATE TEMP FUNCTION target_func(x INT64) RETURNS INT64 AS (x * 2);\nSELECT target_func|(123) FROM `project.dataset.table`",
+			},
+			bqTableMetadata: &bq.TableMetadata{
+				FullID: "project:dataset.table",
+				Schema: bq.Schema{},
+			},
+			expectLocations: []lsp.Location{
+				{
+					URI: "a.sql",
+					Range: lsp.Range{
+						Start: lsp.Position{
+							Line:      0,
+							Character: 21,
+						},
+						End: lsp.Position{
+							Line:      0,
+							Character: 32,
+						},
+					},
+				},
+			},
+		},
 		"definition to declare variable": {
 			files: map[lsp.DocumentURI]string{
 				"a.sql": "DECLARE target_id INT64;\nSELECT id FROM `bigquery-public-data.samples.wikipedia` WHERE id = target_id|",
