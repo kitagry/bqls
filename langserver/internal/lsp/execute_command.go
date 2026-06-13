@@ -31,3 +31,14 @@ type JobHistory struct {
 type SaveResultResult struct {
 	URL string `json:"url"`
 }
+
+type SearchTablesResult struct {
+	Tables []TableSearchResult `json:"tables"`
+}
+
+type TableSearchResult struct {
+	ProjectID   string `json:"projectId"`
+	DatasetID   string `json:"datasetId"`
+	TableID     string `json:"tableId"`
+	Description string `json:"description,omitempty"`
+}
