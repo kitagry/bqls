@@ -27,6 +27,7 @@ const (
 	CommandListTables       = "bqls.listTables"
 	CommandListJobHistories = "bqls.listJobHistories"
 	CommandSaveResult       = "bqls.saveResult"
+	CommandSearchTables     = "bqls.searchTables"
 )
 
 const (
@@ -100,6 +101,8 @@ func (h *Handler) handleWorkspaceExecuteCommand(ctx context.Context, conn *jsonr
 		return h.commandListJobHistories(ctx, params)
 	case CommandSaveResult:
 		return h.commandSaveResult(ctx, params)
+	case CommandSearchTables:
+		return h.commandSearchTables(ctx, params)
 	default:
 		return nil, fmt.Errorf("unknown command: %s", params.Command)
 	}
@@ -291,6 +294,51 @@ func (h *Handler) listJobs(ctx context.Context, projectID string, allUsers bool,
 		})
 	}
 	return result, nil
+}
+
+// commandSearchTables searches BigQuery tables via Data Catalog.
+// Arguments: [query string, projectID? string]
+func (h *Handler) commandSearchTables(ctx context.Context, params lsp.ExecuteCommandParams) (*lsp.SearchTablesResult, error) {
+	if len(params.Arguments) == 0 {
+		return nil, fmt.Errorf("query argument is not provided")
+	}
+
+	query, ok := params.Arguments[0].(string)
+	if !ok {
+		return nil, fmt.Errorf("query argument should be string, but got %T", params.Arguments[0])
+	}
+
+	projectID := h.bqClient.GetDefaultProject()
+	if len(params.Arguments) >= 2 {
+		projectID, ok = params.Arguments[1].(string)
+		if !ok {
+			return nil, fmt.Errorf("projectID argument should be string, but got %T", params.Arguments[1])
+		}
+	}
+
+	workDoneToken := lsp.ProgressToken("search_tables")
+	h.workDoneProgressBegin(ctx, workDoneToken, lsp.WorkDoneProgressBegin{
+		Title:   "Search Tables",
+		Message: "Searching tables...",
+	})
+	defer h.workDoneProgressEnd(ctx, workDoneToken, lsp.WorkDoneProgressEnd{})
+
+	tables, err := h.bqClient.SearchTables(ctx, projectID, query)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]lsp.TableSearchResult, 0, len(tables))
+	for _, t := range tables {
+		results = append(results, lsp.TableSearchResult{
+			ProjectID:   t.ProjectID,
+			DatasetID:   t.DatasetID,
+			TableID:     t.TableID,
+			Description: t.Description,
+		})
+	}
+
+	return &lsp.SearchTablesResult{Tables: results}, nil
 }
 
 // params.Arguments[0]: document uri

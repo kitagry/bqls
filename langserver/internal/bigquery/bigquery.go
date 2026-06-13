@@ -9,12 +9,21 @@ import (
 	"cloud.google.com/go/bigquery"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/api/cloudresourcemanager/v1"
+	datacatalog "google.golang.org/api/datacatalog/v1"
 	"google.golang.org/api/iterator"
 )
 
 const (
 	defaultLocation = "US" // Default location for BigQuery if not specified
 )
+
+// TableSearchResult holds the project/dataset/table identifiers for a search hit.
+type TableSearchResult struct {
+	ProjectID   string
+	DatasetID   string
+	TableID     string
+	Description string
+}
 
 type Client interface {
 	Close() error
@@ -48,6 +57,9 @@ type Client interface {
 
 	// Jobs returns the iterator of all jobs.
 	Jobs(ctx context.Context) *bigquery.JobIterator
+
+	// SearchTables searches for BigQuery tables matching the given query via Data Catalog.
+	SearchTables(ctx context.Context, projectID, query string) ([]TableSearchResult, error)
 }
 
 type client struct {
@@ -263,4 +275,58 @@ func (c *client) JobFromProject(ctx context.Context, projectID, jobID, location 
 
 func (c *client) Jobs(ctx context.Context) *bigquery.JobIterator {
 	return c.bqClient.Jobs(ctx)
+}
+
+func (c *client) SearchTables(ctx context.Context, projectID, query string) ([]TableSearchResult, error) {
+	svc, err := datacatalog.NewService(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("datacatalog.NewService: %w", err)
+	}
+
+	req := &datacatalog.GoogleCloudDatacatalogV1SearchCatalogRequest{
+		Query: fmt.Sprintf("type=TABLE system=bigquery %s", query),
+		Scope: &datacatalog.GoogleCloudDatacatalogV1SearchCatalogRequestScope{
+			IncludeProjectIds: []string{projectID},
+		},
+	}
+
+	var results []TableSearchResult
+	err = svc.Catalog.Search(req).Context(ctx).Pages(ctx, func(resp *datacatalog.GoogleCloudDatacatalogV1SearchCatalogResponse) error {
+		for _, r := range resp.Results {
+			result, err := parseLinkedResource(r.LinkedResource)
+			if err != nil {
+				continue
+			}
+			result.Description = r.Description
+			results = append(results, result)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("catalog.Search: %w", err)
+	}
+
+	return results, nil
+}
+
+// parseLinkedResource parses a Data Catalog linked resource string into project/dataset/table parts.
+// Format: //bigquery.googleapis.com/projects/{project}/datasets/{dataset}/tables/{table}
+func parseLinkedResource(linkedResource string) (TableSearchResult, error) {
+	const prefix = "//bigquery.googleapis.com/projects/"
+	if !strings.HasPrefix(linkedResource, prefix) {
+		return TableSearchResult{}, fmt.Errorf("unexpected linked resource format: %q", linkedResource)
+	}
+
+	rest := strings.TrimPrefix(linkedResource, prefix)
+	parts := strings.Split(rest, "/")
+	// parts: [projectID, "datasets", datasetID, "tables", tableID]
+	if len(parts) != 5 || parts[1] != "datasets" || parts[3] != "tables" {
+		return TableSearchResult{}, fmt.Errorf("unexpected linked resource path: %q", linkedResource)
+	}
+
+	return TableSearchResult{
+		ProjectID: parts[0],
+		DatasetID: parts[2],
+		TableID:   parts[4],
+	}, nil
 }
