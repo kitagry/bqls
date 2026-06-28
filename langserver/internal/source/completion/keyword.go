@@ -2,6 +2,7 @@ package completion
 
 import (
 	"context"
+	"strings"
 
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/bqparser"
@@ -59,6 +60,11 @@ func completeFromCursorPosition(rootNode *bqparser.Node, parsedFile file.ParsedF
 	// Get clauses that appear after the cursor (we should not suggest these)
 	clausesAfter := getClausesAfterCursor(selectStmt, uint(offset))
 
+	// If cursor is after a set operator (UNION/EXCEPT/INTERSECT), suggest SELECT
+	if hasSetOperatorBeforeCursor(parsedFile.Src, selectStmt, lastClause, uint(offset)) {
+		return createSelectKeywordCompletionItem("")
+	}
+
 	// Check if there's a join_expression in the from_clause
 	hasJoinWithoutOn := hasJoinExpressionWithoutOn(selectStmt, parsedFile.Src)
 
@@ -67,14 +73,16 @@ func completeFromCursorPosition(rootNode *bqparser.Node, parsedFile file.ParsedF
 
 	switch lastClause {
 	case "offset_clause":
-		// After OFFSET, nothing to suggest
+		// After OFFSET, suggest set operations to combine with another query
+		result = append(result, createSetOperationKeywordCompletionItems("")...)
 		return result
 
 	case "limit_clause":
-		// After LIMIT, suggest OFFSET (unless OFFSET already exists after cursor)
+		// After LIMIT, suggest OFFSET or set operations
 		if !clausesAfter["offset_clause"] && !hasClause(selectStmt, "offset_clause") {
 			result = append(result, createOffsetKeywordCompletionItem("")...)
 		}
+		result = append(result, createSetOperationKeywordCompletionItems("")...)
 		return result
 
 	case "order_by_clause":
@@ -91,7 +99,20 @@ func completeFromCursorPosition(rootNode *bqparser.Node, parsedFile file.ParsedF
 		return result
 
 	case "having_clause":
-		// After HAVING, suggest ORDER BY and LIMIT
+		// After HAVING, suggest QUALIFY, ORDER BY and LIMIT
+		if !clausesAfter["qualify_clause"] {
+			result = append(result, createQualifyKeywordCompletionItem("")...)
+		}
+		if !clausesAfter["order_by_clause"] {
+			result = append(result, createOrderByKeywordCompletionItem("")...)
+		}
+		if !clausesAfter["limit_clause"] {
+			result = append(result, createLimitKeywordCompletionItem("")...)
+		}
+		return result
+
+	case "qualify_clause":
+		// After QUALIFY, suggest ORDER BY and LIMIT
 		if !clausesAfter["order_by_clause"] {
 			result = append(result, createOrderByKeywordCompletionItem("")...)
 		}
@@ -101,9 +122,12 @@ func completeFromCursorPosition(rootNode *bqparser.Node, parsedFile file.ParsedF
 		return result
 
 	case "group_by_clause":
-		// After GROUP BY, suggest HAVING, ORDER BY, and LIMIT
+		// After GROUP BY, suggest HAVING, QUALIFY, ORDER BY, and LIMIT
 		if !clausesAfter["having_clause"] {
 			result = append(result, createHavingKeywordCompletionItem("")...)
+		}
+		if !clausesAfter["qualify_clause"] {
+			result = append(result, createQualifyKeywordCompletionItem("")...)
 		}
 		if !clausesAfter["order_by_clause"] {
 			result = append(result, createOrderByKeywordCompletionItem("")...)
@@ -114,9 +138,12 @@ func completeFromCursorPosition(rootNode *bqparser.Node, parsedFile file.ParsedF
 		return result
 
 	case "where_clause":
-		// After WHERE, suggest GROUP BY, ORDER BY, and LIMIT
+		// After WHERE, suggest GROUP BY, QUALIFY, ORDER BY, and LIMIT
 		if !clausesAfter["group_by_clause"] {
 			result = append(result, createGroupByKeywordCompletionItem("")...)
+		}
+		if !clausesAfter["qualify_clause"] {
+			result = append(result, createQualifyKeywordCompletionItem("")...)
 		}
 		if !clausesAfter["order_by_clause"] {
 			result = append(result, createOrderByKeywordCompletionItem("")...)
@@ -132,13 +159,16 @@ func completeFromCursorPosition(rootNode *bqparser.Node, parsedFile file.ParsedF
 			return createOnKeywordCompletionItem("")
 		}
 
-		// Otherwise suggest JOIN, WHERE, GROUP BY, ORDER BY, LIMIT
+		// Otherwise suggest JOIN, WHERE, GROUP BY, QUALIFY, ORDER BY, LIMIT
 		result = append(result, createJoinKeywordCompletionItems("")...)
 		if !clausesAfter["where_clause"] {
 			result = append(result, createWhereKeywordCompletionItem("")...)
 		}
 		if !clausesAfter["group_by_clause"] {
 			result = append(result, createGroupByKeywordCompletionItem("")...)
+		}
+		if !clausesAfter["qualify_clause"] {
+			result = append(result, createQualifyKeywordCompletionItem("")...)
 		}
 		if !clausesAfter["order_by_clause"] {
 			result = append(result, createOrderByKeywordCompletionItem("")...)
@@ -202,6 +232,7 @@ func findLastClauseBeforeCursor(selectStmt *bqparser.Node, cursorOffset uint) st
 		"where_clause",
 		"group_by_clause",
 		"having_clause",
+		"qualify_clause",
 		"order_by_clause",
 		"limit_clause",
 		"offset_clause",
@@ -229,6 +260,7 @@ func getClausesAfterCursor(selectStmt *bqparser.Node, cursorOffset uint) map[str
 		"where_clause",
 		"group_by_clause",
 		"having_clause",
+		"qualify_clause",
 		"order_by_clause",
 		"limit_clause",
 		"offset_clause",
@@ -445,6 +477,20 @@ func createHavingKeywordCompletionItem(typedPrefix string) []CompletionItem {
 	}
 }
 
+func createQualifyKeywordCompletionItem(typedPrefix string) []CompletionItem {
+	return []CompletionItem{
+		{
+			Kind:    lsp.CIKKeyword,
+			NewText: "QUALIFY ",
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: "The QUALIFY clause is used to filter the results of window functions.",
+			},
+			TypedPrefix: typedPrefix,
+		},
+	}
+}
+
 func createAscDescKeywordCompletionItems(typedPrefix string) []CompletionItem {
 	return []CompletionItem{
 		{
@@ -549,6 +595,101 @@ func createOnKeywordCompletionItem(typedPrefix string) []CompletionItem {
 			TypedPrefix: typedPrefix,
 		},
 	}
+}
+
+func createSetOperationKeywordCompletionItems(typedPrefix string) []CompletionItem {
+	return []CompletionItem{
+		{
+			Kind:    lsp.CIKKeyword,
+			NewText: "UNION ALL ",
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: "UNION ALL combines the results of two queries, including duplicates.",
+			},
+			TypedPrefix: typedPrefix,
+		},
+		{
+			Kind:    lsp.CIKKeyword,
+			NewText: "UNION DISTINCT ",
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: "UNION DISTINCT combines the results of two queries, removing duplicates.",
+			},
+			TypedPrefix: typedPrefix,
+		},
+		{
+			Kind:    lsp.CIKKeyword,
+			NewText: "EXCEPT DISTINCT ",
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: "EXCEPT DISTINCT returns rows from the left query that are not in the right query.",
+			},
+			TypedPrefix: typedPrefix,
+		},
+		{
+			Kind:    lsp.CIKKeyword,
+			NewText: "INTERSECT DISTINCT ",
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: "INTERSECT DISTINCT returns rows that appear in both queries.",
+			},
+			TypedPrefix: typedPrefix,
+		},
+	}
+}
+
+// hasSetOperatorBeforeCursor checks if the cursor is positioned right after a set operator
+// (UNION ALL, UNION DISTINCT, EXCEPT DISTINCT, INTERSECT DISTINCT) by scanning backwards
+// from the cursor in the source text.
+// When true, the next keyword should be SELECT (start of the second query).
+func hasSetOperatorBeforeCursor(src string, _ *bqparser.Node, _ string, cursorOffset uint) bool {
+	if cursorOffset == 0 || int(cursorOffset) > len(src) {
+		return false
+	}
+	// Collect tokens backwards from cursor to find the last meaningful keywords
+	tokens := tokenizeBackwards(src[:cursorOffset])
+	if len(tokens) == 0 {
+		return false
+	}
+	last := strings.ToUpper(tokens[0])
+	// Patterns: UNION ALL, UNION DISTINCT, EXCEPT DISTINCT, INTERSECT DISTINCT, UNION
+	switch last {
+	case "ALL", "DISTINCT":
+		if len(tokens) >= 2 {
+			prev := strings.ToUpper(tokens[1])
+			return prev == "UNION" || prev == "EXCEPT" || prev == "INTERSECT"
+		}
+	case "UNION", "EXCEPT", "INTERSECT":
+		return true
+	}
+	return false
+}
+
+// tokenizeBackwards returns up to the last 3 whitespace-separated tokens before the end of s,
+// ordered from last to first (tokens[0] is the rightmost token).
+func tokenizeBackwards(s string) []string {
+	// trim trailing whitespace
+	end := len(s)
+	for end > 0 && isWhitespace(s[end-1]) {
+		end--
+	}
+	var tokens []string
+	for end > 0 && len(tokens) < 3 {
+		start := end - 1
+		for start > 0 && !isWhitespace(s[start-1]) {
+			start--
+		}
+		tokens = append(tokens, s[start:end])
+		end = start
+		for end > 0 && isWhitespace(s[end-1]) {
+			end--
+		}
+	}
+	return tokens
+}
+
+func isWhitespace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
 }
 
 // findCTENodeContainingPosition finds a CTE node that contains the given position

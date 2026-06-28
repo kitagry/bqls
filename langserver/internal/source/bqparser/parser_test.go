@@ -154,3 +154,4 @@ func namedChildKinds(node *bqparser.Node) map[string]bool {
 	}
 	return result
 }
+
