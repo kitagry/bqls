@@ -472,6 +472,189 @@ func TestCompletor_CompleteKeyword(t *testing.T) {
 			},
 			expectNotContains: []string{"SELECT ", "FROM ", "WHERE ", "GROUP BY ", "HAVING "},
 		},
+		"Complete QUALIFY after HAVING": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT col, ROW_NUMBER() OVER (PARTITION BY col) AS rn FROM `project.dataset.table` GROUP BY col HAVING COUNT(*) > 1 |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "QUALIFY ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The QUALIFY clause is used to filter the results of window functions.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "FROM ", "WHERE ", "GROUP BY ", "HAVING "},
+		},
+		"Complete QUALIFY after GROUP BY": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT col, ROW_NUMBER() OVER (PARTITION BY col) AS rn FROM `project.dataset.table` GROUP BY col |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "QUALIFY ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The QUALIFY clause is used to filter the results of window functions.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "FROM "},
+		},
+		"Complete QUALIFY after WHERE": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT col, ROW_NUMBER() OVER (PARTITION BY col) AS rn FROM `project.dataset.table` WHERE col IS NOT NULL |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "QUALIFY ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The QUALIFY clause is used to filter the results of window functions.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "FROM ", "WHERE "},
+		},
+		"Complete QUALIFY after FROM": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT col, ROW_NUMBER() OVER (PARTITION BY col) AS rn FROM `project.dataset.table` |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "QUALIFY ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The QUALIFY clause is used to filter the results of window functions.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "FROM "},
+		},
+		"Complete ORDER BY and LIMIT after QUALIFY": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT col, ROW_NUMBER() OVER (PARTITION BY col) AS rn FROM `project.dataset.table` QUALIFY rn = 1 |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "ORDER BY ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The ORDER BY clause is used to sort the result set.",
+					},
+				},
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "LIMIT ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The LIMIT clause is used to limit the number of rows returned.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "FROM ", "WHERE ", "GROUP BY ", "HAVING ", "QUALIFY "},
+		},
+		"Complete UNION ALL and EXCEPT after LIMIT": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT col FROM `project.dataset.table` LIMIT 10 |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "UNION ALL ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "UNION ALL combines the results of two queries, including duplicates.",
+					},
+				},
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "UNION DISTINCT ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "UNION DISTINCT combines the results of two queries, removing duplicates.",
+					},
+				},
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "EXCEPT DISTINCT ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "EXCEPT DISTINCT returns rows from the left query that are not in the right query.",
+					},
+				},
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "INTERSECT DISTINCT ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTERSECT DISTINCT returns rows that appear in both queries.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "FROM "},
+		},
+		"Complete SELECT after UNION ALL": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT col FROM `project.dataset.table` UNION ALL |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "SELECT ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The SELECT statement is used to query data from a table.",
+					},
+				},
+			},
+			expectNotContains: []string{"WHERE ", "GROUP BY ", "HAVING ", "QUALIFY ", "UNION ALL "},
+		},
+		"Complete SELECT after EXCEPT DISTINCT": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT col FROM `project.dataset.table` EXCEPT DISTINCT |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "SELECT ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The SELECT statement is used to query data from a table.",
+					},
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {
