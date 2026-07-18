@@ -61,7 +61,7 @@ func completeFromCursorPosition(rootNode *bqparser.Node, parsedFile file.ParsedF
 	clausesAfter := getClausesAfterCursor(selectStmt, uint(offset))
 
 	// If cursor is after a set operator (UNION/EXCEPT/INTERSECT), suggest SELECT
-	if hasSetOperatorBeforeCursor(parsedFile.Src, selectStmt, lastClause, uint(offset)) {
+	if hasSetOperatorBeforeCursor(parsedFile.Src, uint(offset)) {
 		return createSelectKeywordCompletionItem("")
 	}
 
@@ -86,7 +86,7 @@ func completeFromCursorPosition(rootNode *bqparser.Node, parsedFile file.ParsedF
 		return result
 
 	case "order_by_clause":
-		// After ORDER BY, suggest ASC/DESC and LIMIT
+		// After ORDER BY, suggest ASC/DESC, LIMIT, and set operations
 		orderByNode := findClause(selectStmt, "order_by_clause")
 		hasAscOrDesc := hasAscOrDescInOrderBy(orderByNode)
 
@@ -96,6 +96,7 @@ func completeFromCursorPosition(rootNode *bqparser.Node, parsedFile file.ParsedF
 		if !clausesAfter["limit_clause"] {
 			result = append(result, createLimitKeywordCompletionItem("")...)
 		}
+		result = append(result, createSetOperationKeywordCompletionItems("")...)
 		return result
 
 	case "having_clause":
@@ -179,7 +180,12 @@ func completeFromCursorPosition(rootNode *bqparser.Node, parsedFile file.ParsedF
 		return result
 
 	case "select_clause":
-		// After SELECT, suggest FROM
+		selectClause := findClause(selectStmt, "select_clause")
+		// If cursor is immediately after SELECT with no column expressions yet, suggest DISTINCT.
+		// Otherwise suggest FROM (cursor is after the column list).
+		if selectClause != nil && isSelectKeywordOnly(parsedFile.Src, selectClause.StartByte(), uint(offset)) {
+			return createDistinctKeywordCompletionItem("")
+		}
 		return createFromKeywordCompletionItem("")
 
 	default:
@@ -391,6 +397,31 @@ func createWithKeywordCompletionItem(typedPrefix string) []CompletionItem {
 			TypedPrefix: typedPrefix,
 		},
 	}
+}
+
+func createDistinctKeywordCompletionItem(typedPrefix string) []CompletionItem {
+	return []CompletionItem{
+		{
+			Kind:    lsp.CIKKeyword,
+			NewText: "DISTINCT ",
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: "DISTINCT eliminates duplicate rows from the result set.",
+			},
+			TypedPrefix: typedPrefix,
+		},
+	}
+}
+
+// isSelectKeywordOnly returns true when the text between the SELECT keyword and
+// the cursor contains only whitespace (no column expressions typed yet).
+func isSelectKeywordOnly(src string, selectStart, cursorOffset uint) bool {
+	afterKeyword := selectStart + uint(len("SELECT"))
+	if cursorOffset <= afterKeyword || int(afterKeyword) >= len(src) {
+		return true
+	}
+	between := src[afterKeyword:cursorOffset]
+	return strings.TrimSpace(between) == ""
 }
 
 func createFromKeywordCompletionItem(typedPrefix string) []CompletionItem {
@@ -642,7 +673,7 @@ func createSetOperationKeywordCompletionItems(typedPrefix string) []CompletionIt
 // (UNION ALL, UNION DISTINCT, EXCEPT DISTINCT, INTERSECT DISTINCT) by scanning backwards
 // from the cursor in the source text.
 // When true, the next keyword should be SELECT (start of the second query).
-func hasSetOperatorBeforeCursor(src string, _ *bqparser.Node, _ string, cursorOffset uint) bool {
+func hasSetOperatorBeforeCursor(src string, cursorOffset uint) bool {
 	if cursorOffset == 0 || int(cursorOffset) > len(src) {
 		return false
 	}

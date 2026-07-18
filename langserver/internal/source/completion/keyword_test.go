@@ -655,6 +655,42 @@ func TestCompletor_CompleteKeyword(t *testing.T) {
 				},
 			},
 		},
+		"Complete set operations after ORDER BY": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT col FROM `project.dataset.table` ORDER BY col |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "UNION ALL ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "UNION ALL combines the results of two queries, including duplicates.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "FROM ", "WHERE "},
+		},
+		"Complete DISTINCT after SELECT": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "DISTINCT ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "DISTINCT eliminates duplicate rows from the result set.",
+					},
+				},
+			},
+			expectNotContains: []string{"FROM ", "WHERE ", "GROUP BY "},
+		},
 	}
 
 	for n, tt := range tests {
