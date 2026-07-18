@@ -1,0 +1,85 @@
+{
+  "name": "bqls",
+  "displayName": "bqls",
+  "description": "BigQuery language server client for VSCode",
+  "version": "0.1.0",
+  "publisher": "kitagry",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kitagry/bqls"
+  },
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:sql"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "sql",
+        "extensions": [
+          ".sql",
+          ".bq"
+        ]
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "bqls",
+      "properties": {
+        "bqls.path": {
+          "type": "string",
+          "default": "bqls",
+          "description": "Path to the bqls executable."
+        },
+        "bqls.projectId": {
+          "type": "string",
+          "default": "",
+          "description": "BigQuery project ID. If empty, bqls uses `gcloud config get project`."
+        },
+        "bqls.location": {
+          "type": "string",
+          "default": "",
+          "description": "BigQuery location (e.g. US, asia-northeast1). If empty, bqls uses \"US\"."
+        },
+        "bqls.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace communication between VSCode and the bqls language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.js --production",
+    "watch": "node esbuild.js --watch",
+    "compile": "tsc --noEmit -p ./",
+    "lint": "eslint src",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^7.16.0",
+    "@typescript-eslint/parser": "^7.16.0",
+    "esbuild": "^0.25.0",
+    "eslint": "^8.57.0",
+    "typescript": "^5.5.4",
+    "vitest": "^3.2.4"
+  }
+}

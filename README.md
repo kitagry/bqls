@@ -52,7 +52,9 @@ vim.lsp.buf_notify(0, "workspace/didChangeConfiguration", { settings = { project
 
 ### VSCode
 
-You can use [bqls-vscode](https://github.com/yokomotod/bqls-vscode).
+The official VSCode extension lives in [editors/vscode](./editors/vscode) in this repository.
+
+You can also use the community extension [bqls-vscode](https://github.com/yokomotod/bqls-vscode).
 
 ## Save Result
 
