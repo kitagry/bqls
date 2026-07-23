@@ -2,22 +2,11 @@ package langserver
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/kitagry/bqls/langserver/internal/lsp"
-	"github.com/sourcegraph/jsonrpc2"
 )
 
-func (h *Handler) handleTextDocumentCompletion(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
-	if req.Params == nil {
-		return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams}
-	}
-
-	var params lsp.TextDocumentPositionParams
-	if err := json.Unmarshal(*req.Params, &params); err != nil {
-		return nil, err
-	}
-
+func (h *Handler) handleTextDocumentCompletion(ctx context.Context, params lsp.TextDocumentPositionParams) ([]lsp.CompletionItem, error) {
 	items, err := h.project.Complete(ctx, params.TextDocument.URI, params.Position)
 	if err != nil {
 		return nil, err
@@ -31,17 +20,10 @@ func (h *Handler) handleTextDocumentCompletion(ctx context.Context, conn *jsonrp
 	return completionItems, nil
 }
 
-func (h *Handler) handleCompletionItemResolve(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
-	if req.Params == nil {
-		return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams}
-	}
-	var params lsp.CompletionItem
-	if err := json.Unmarshal(*req.Params, &params); err != nil {
-		return nil, err
-	}
+func (h *Handler) handleCompletionItemResolve(ctx context.Context, params lsp.CompletionItem) (lsp.CompletionItem, error) {
 	item, err := h.project.ResolveCompletionItem(ctx, params)
 	if err != nil {
-		return nil, err
+		return lsp.CompletionItem{}, err
 	}
 	return item, nil
 }

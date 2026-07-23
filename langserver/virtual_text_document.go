@@ -2,28 +2,17 @@ package langserver
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	"cloud.google.com/go/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
-	"github.com/sourcegraph/jsonrpc2"
 	"google.golang.org/api/iterator"
 )
 
-func (h *Handler) handleVirtualTextDocument(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (any, error) {
-	if req.Params == nil {
-		return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams}
-	}
-
-	var params lsp.VirtualTextDocumentParams
-	if err := json.Unmarshal(*req.Params, &params); err != nil {
-		return nil, err
-	}
-
+func (h *Handler) handleVirtualTextDocument(ctx context.Context, params lsp.VirtualTextDocumentParams) (lsp.VirtualTextDocument, error) {
 	virtualTextDocument, err := params.TextDocument.URI.VirtualTextDocumentInfo()
 	if err != nil {
-		return nil, err
+		return lsp.VirtualTextDocument{}, err
 	}
 
 	workDoneToken := lsp.ProgressToken("virtual_text_document")
@@ -41,7 +30,7 @@ func (h *Handler) handleVirtualTextDocument(ctx context.Context, conn *jsonrpc2.
 		})
 		markedStrings, it, err = h.project.GetTableInfo(ctx, virtualTextDocument.ProjectID, virtualTextDocument.DatasetID, virtualTextDocument.TableID)
 		if err != nil {
-			return nil, err
+			return lsp.VirtualTextDocument{}, err
 		}
 	}
 
@@ -51,7 +40,7 @@ func (h *Handler) handleVirtualTextDocument(ctx context.Context, conn *jsonrpc2.
 		})
 		markedStrings, it, err = h.project.GetJobInfo(ctx, virtualTextDocument.ProjectID, virtualTextDocument.JobID, virtualTextDocument.Location)
 		if err != nil {
-			return nil, err
+			return lsp.VirtualTextDocument{}, err
 		}
 	}
 

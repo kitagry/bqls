@@ -7,10 +7,12 @@ import (
 	"os"
 	"runtime"
 	"runtime/debug"
+	"time"
 
 	googlesql "github.com/goccy/go-googlesql"
+	jsonrpc "github.com/gumeniukcom/golang-jsonrpc2/v2"
+	"github.com/gumeniukcom/golang-jsonrpc2/v2/jsonrpcstdio"
 	"github.com/kitagry/bqls/langserver"
-	"github.com/sourcegraph/jsonrpc2"
 )
 
 const (
@@ -68,7 +70,27 @@ You can use your favorite lsp client.
 
 	handler := langserver.NewHandler(*isDebug)
 	defer handler.Close()
-	<-jsonrpc2.NewConn(context.Background(), jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}), handler).DisconnectNotify()
+
+	rpc := jsonrpc.New()
+	// LSP sessions and long-running BigQuery execute-command handlers need a
+	// generous per-request timeout; the 30s default would break them.
+	rpc.SetDefaultTimeOut(15 * time.Minute)
+	handler.Register(rpc)
+
+	// WithMaxMessageSize(256 MiB) is mandatory: LSP full-document sync sends
+	// entire files in textDocument/didOpen, and the 8 MiB transport default
+	// would fatally kill the stream on a large document.
+	if err := jsonrpcstdio.Serve(
+		context.Background(),
+		rpc,
+		jsonrpcstdio.FramingContentLength,
+		os.Stdin,
+		os.Stdout,
+		jsonrpcstdio.WithMaxMessageSize(256<<20),
+	); err != nil {
+		fmt.Fprintf(os.Stderr, "jsonrpc serve error: %v\n", err)
+		return exitCodeErr
+	}
 	return exitCodeOK
 }
 
@@ -94,21 +116,4 @@ func getRevision() string {
 		revision += "(modified)"
 	}
 	return revision
-}
-
-type stdrwc struct{}
-
-func (stdrwc) Read(p []byte) (int, error) {
-	return os.Stdin.Read(p)
-}
-
-func (c stdrwc) Write(p []byte) (int, error) {
-	return os.Stdout.Write(p)
-}
-
-func (c stdrwc) Close() error {
-	if err := os.Stdin.Close(); err != nil {
-		return err
-	}
-	return os.Stdout.Close()
 }

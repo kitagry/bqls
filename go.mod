@@ -4,7 +4,7 @@ go 1.25.8
 
 require (
 	github.com/google/go-cmp v0.7.0
-	github.com/sourcegraph/jsonrpc2 v0.2.1
+	github.com/gumeniukcom/golang-jsonrpc2/v2 v2.7.0
 )
 
 require (
@@ -38,8 +38,10 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.16 // indirect
 	github.com/googleapis/gax-go/v2 v2.22.0 // indirect
+	github.com/josharian/intern v1.0.0 // indirect
 	github.com/klauspost/compress v1.17.6 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.6 // indirect
+	github.com/mailru/easyjson v0.9.1 // indirect
 	github.com/pierrec/lz4/v4 v4.1.21 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect

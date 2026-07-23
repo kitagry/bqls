@@ -7,30 +7,30 @@ import (
 )
 
 func (h *Handler) workDoneProgressBegin(ctx context.Context, token lsp.ProgressToken, params lsp.WorkDoneProgressBegin) error {
-	if !h.initializeParams.Capabilities.Window.WorkDoneProgress {
+	if !h.initializeParams.Capabilities.Window.WorkDoneProgress || h.pusher == nil {
 		return nil
 	}
-	return h.conn.Notify(ctx, "$/progress", lsp.ProgressParams[lsp.WorkDoneProgressBegin]{
+	return h.pusher.Notify(ctx, "$/progress", lsp.ProgressParams[lsp.WorkDoneProgressBegin]{
 		Token: token,
 		Value: &params,
 	})
 }
 
 func (h *Handler) workDoneProgressReport(ctx context.Context, token lsp.ProgressToken, params lsp.WorkDoneProgressReport) error {
-	if !h.initializeParams.Capabilities.Window.WorkDoneProgress {
+	if !h.initializeParams.Capabilities.Window.WorkDoneProgress || h.pusher == nil {
 		return nil
 	}
-	return h.conn.Notify(ctx, "$/progress", lsp.ProgressParams[lsp.WorkDoneProgressReport]{
+	return h.pusher.Notify(ctx, "$/progress", lsp.ProgressParams[lsp.WorkDoneProgressReport]{
 		Token: token,
 		Value: &params,
 	})
 }
 
 func (h *Handler) workDoneProgressEnd(ctx context.Context, token lsp.ProgressToken, params lsp.WorkDoneProgressEnd) error {
-	if !h.initializeParams.Capabilities.Window.WorkDoneProgress {
+	if !h.initializeParams.Capabilities.Window.WorkDoneProgress || h.pusher == nil {
 		return nil
 	}
-	return h.conn.Notify(ctx, "$/progress", lsp.ProgressParams[lsp.WorkDoneProgressEnd]{
+	return h.pusher.Notify(ctx, "$/progress", lsp.ProgressParams[lsp.WorkDoneProgressEnd]{
 		Token: token,
 		Value: &params,
 	})

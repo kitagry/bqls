@@ -3,19 +3,20 @@ package langserver
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
-	"runtime/debug"
 
+	jsonrpc "github.com/gumeniukcom/golang-jsonrpc2/v2"
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source"
 	"github.com/sirupsen/logrus"
-	"github.com/sourcegraph/jsonrpc2"
 )
 
 type Handler struct {
-	conn   *jsonrpc2.Conn
+	// pusher sends server-initiated notifications (publishDiagnostics,
+	// $/progress, window/showMessage). It is nil until captured from the
+	// request context in handleInitialize.
+	pusher jsonrpc.Pusher
 	logger *logrus.Logger
 
 	bqClient bigquery.Client
@@ -25,8 +26,6 @@ type Handler struct {
 	dryrunRequest     chan lsp.DocumentURI
 	initializeParams  lsp.InitializeParams[InitializeOption]
 }
-
-var _ jsonrpc2.Handler = (*Handler)(nil)
 
 func NewHandler(isDebug bool) *Handler {
 	logger := logrus.New()
@@ -66,61 +65,46 @@ func (h *Handler) setupByInitializeParams() error {
 	return nil
 }
 
-func (h *Handler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	defer func() {
-		if err := recover(); err != nil {
-			h.logger.Errorf("panic! %#v", err)
-			h.logger.Errorf("stack trace: %s", string(debug.Stack()))
+// Register wires every supported LSP method onto the dispatcher. Method-not-found
+// and panic recovery are handled by the library, so no fallback case is needed.
+// Dispatch is sequential (the transport default), matching LSP ordering.
+func (h *Handler) Register(rpc *jsonrpc.JSONRPC) {
+	must := func(err error) {
+		if err != nil {
+			h.logger.Fatalf("failed to register method: %v", err)
 		}
-	}()
-	jsonrpc2.HandlerWithError(h.handle).Handle(ctx, conn, req)
+	}
+
+	must(jsonrpc.RegisterTyped(rpc, "initialize", h.handleInitialize))
+	must(jsonrpc.RegisterTyped(rpc, "initialized", h.handleInitialized))
+	must(jsonrpc.RegisterTyped(rpc, "textDocument/didOpen", h.handleTextDocumentDidOpen))
+	must(jsonrpc.RegisterTyped(rpc, "textDocument/didChange", h.handleTextDocumentDidChange))
+	must(jsonrpc.RegisterTyped(rpc, "textDocument/didClose", h.handleTextDocumentDidClose))
+	must(jsonrpc.RegisterTyped(rpc, "textDocument/didSave", h.handleTextDocumentDidSave))
+	must(jsonrpc.RegisterTyped(rpc, "textDocument/formatting", h.handleTextDocumentFormatting))
+	must(jsonrpc.RegisterTyped(rpc, "textDocument/hover", h.handleTextDocumentHover))
+	must(jsonrpc.RegisterTyped(rpc, "textDocument/completion", h.handleTextDocumentCompletion))
+	must(jsonrpc.RegisterTyped(rpc, "completionItem/resolve", h.handleCompletionItemResolve))
+	must(jsonrpc.RegisterTyped(rpc, "textDocument/definition", h.handleTextDocumentDefinition))
+	must(jsonrpc.RegisterTyped(rpc, "textDocument/codeAction", h.handleTextDocumentCodeAction))
+	must(jsonrpc.RegisterTyped(rpc, "workspace/executeCommand", h.handleWorkspaceExecuteCommand))
+	must(jsonrpc.RegisterTyped(rpc, "workspace/didChangeConfiguration", h.handleWorkspaceDidChangeConfiguration))
+	must(jsonrpc.RegisterTyped(rpc, "bqls/virtualTextDocument", h.handleVirtualTextDocument))
+}
+
+// handleInitialized is the no-op handler for the "initialized" notification.
+func (h *Handler) handleInitialized(ctx context.Context, _ struct{}) (struct{}, error) {
+	return struct{}{}, nil
 }
 
 func (h *Handler) Close() error {
 	var errs []error
-	if h.conn != nil {
-		errs = append(errs, h.conn.Close())
-	}
+	// The stdio transport now owns the connection lifecycle, so there is no
+	// connection to close here.
 	if h.project != nil {
 		errs = append(errs, h.project.Close())
 	}
 	close(h.diagnosticRequest)
 	close(h.dryrunRequest)
 	return errors.Join(errs...)
-}
-
-func (h *Handler) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
-	switch req.Method {
-	case "initialize":
-		return h.handleInitialize(ctx, conn, req)
-	case "initialized":
-		return
-	case "textDocument/didOpen":
-		return h.handleTextDocumentDidOpen(ctx, conn, req)
-	case "textDocument/didChange":
-		return h.handleTextDocumentDidChange(ctx, conn, req)
-	case "textDocument/didClose":
-		return h.handleTextDocumentDidClose(ctx, conn, req)
-	case "textDocument/didSave":
-		return h.handleTextDocumentDidSave(ctx, conn, req)
-	case "textDocument/formatting":
-		return h.handleTextDocumentFormatting(ctx, conn, req)
-	case "textDocument/hover":
-		return h.handleTextDocumentHover(ctx, conn, req)
-	case "textDocument/completion":
-		return h.handleTextDocumentCompletion(ctx, conn, req)
-	case "completionItem/resolve":
-		return h.handleCompletionItemResolve(ctx, conn, req)
-	case "textDocument/definition":
-		return h.handleTextDocumentDefinition(ctx, conn, req)
-	case "textDocument/codeAction":
-		return h.handleTextDocumentCodeAction(ctx, conn, req)
-	case "workspace/executeCommand":
-		return h.handleWorkspaceExecuteCommand(ctx, conn, req)
-	case "workspace/didChangeConfiguration":
-		return h.handleWorkspaceDidChangeConfiguration(ctx, conn, req)
-	case "bqls/virtualTextDocument":
-		return h.handleVirtualTextDocument(ctx, conn, req)
-	}
-	return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeMethodNotFound, Message: fmt.Sprintf("method not supported: %s", req.Method)}
 }

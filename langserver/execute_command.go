@@ -16,7 +16,6 @@ import (
 
 	"cloud.google.com/go/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
-	"github.com/sourcegraph/jsonrpc2"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/sheets/v4"
 )
@@ -35,16 +34,7 @@ const (
 	spreadsheetURI = "sheet://new"
 )
 
-func (h *Handler) handleTextDocumentCodeAction(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
-	if req.Params == nil {
-		return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams}
-	}
-
-	var params lsp.CodeActionParams
-	if err := json.Unmarshal(*req.Params, &params); err != nil {
-		return nil, err
-	}
-
+func (h *Handler) handleTextDocumentCodeAction(ctx context.Context, params lsp.CodeActionParams) ([]lsp.Command, error) {
 	if params.TextDocument.URI.IsVirtualTextDocument() {
 		csvPath := fmt.Sprintf("%s/Downloads/%d.csv", os.Getenv("HOME"), time.Now().Unix())
 		commands := []lsp.Command{
@@ -80,16 +70,7 @@ func (h *Handler) handleTextDocumentCodeAction(ctx context.Context, conn *jsonrp
 	return commands, nil
 }
 
-func (h *Handler) handleWorkspaceExecuteCommand(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
-	if req.Params == nil {
-		return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams}
-	}
-
-	var params lsp.ExecuteCommandParams
-	if err := json.Unmarshal(*req.Params, &params); err != nil {
-		return nil, err
-	}
-
+func (h *Handler) handleWorkspaceExecuteCommand(ctx context.Context, params lsp.ExecuteCommandParams) (any, error) {
 	switch params.Command {
 	case CommandExecuteQuery:
 		return h.commandExecuteQuery(ctx, params)

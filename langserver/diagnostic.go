@@ -110,14 +110,20 @@ func (h *Handler) scheduleDryRun() {
 }
 
 func (h *Handler) publishDiagnostics(ctx context.Context, uri lsp.DocumentURI, diagnostics []lsp.Diagnostic) error {
-	return h.conn.Notify(ctx, "textDocument/publishDiagnostics", lsp.PublishDiagnosticsParams{
+	if h.pusher == nil {
+		return nil
+	}
+	return h.pusher.Notify(ctx, "textDocument/publishDiagnostics", lsp.PublishDiagnosticsParams{
 		URI:         uri,
 		Diagnostics: diagnostics,
 	})
 }
 
 func (h *Handler) showMessage(ctx context.Context, level lsp.MessageType, message string) error {
-	return h.conn.Notify(ctx, "window/showMessage", lsp.ShowMessageParams{
+	if h.pusher == nil {
+		return nil
+	}
+	return h.pusher.Notify(ctx, "window/showMessage", lsp.ShowMessageParams{
 		Type:    level,
 		Message: message,
 	})

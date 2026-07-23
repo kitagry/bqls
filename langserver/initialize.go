@@ -2,10 +2,9 @@ package langserver
 
 import (
 	"context"
-	"encoding/json"
 
+	jsonrpc "github.com/gumeniukcom/golang-jsonrpc2/v2"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
-	"github.com/sourcegraph/jsonrpc2"
 )
 
 type InitializeOption struct {
@@ -13,22 +12,17 @@ type InitializeOption struct {
 	Location  string `json:"location"`
 }
 
-func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
-	if req.Params == nil {
-		return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams}
+func (h *Handler) handleInitialize(ctx context.Context, params lsp.InitializeParams[InitializeOption]) (lsp.InitializeResult, error) {
+	// Capture the transport's pusher so background goroutines can send
+	// server-initiated notifications for the life of the connection.
+	if p, ok := jsonrpc.PusherFromContext(ctx); ok {
+		h.pusher = p
 	}
 
-	h.conn = conn
-
-	var params lsp.InitializeParams[InitializeOption]
-	if err := json.Unmarshal(*req.Params, &params); err != nil {
-		return nil, err
-	}
 	h.initializeParams = params
 
-	err = h.setupByInitializeParams()
-	if err != nil {
-		return nil, err
+	if err := h.setupByInitializeParams(); err != nil {
+		return lsp.InitializeResult{}, err
 	}
 
 	return lsp.InitializeResult{
