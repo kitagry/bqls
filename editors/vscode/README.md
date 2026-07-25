@@ -6,6 +6,7 @@ Official VSCode extension for [bqls](https://github.com/kitagry/bqls), the BigQu
 
 - Hover, completion, definition, formatting, and code actions for `.sql` / `.bq` files, powered by `bqls`.
 - View query results and table/job information through the `bqls://` virtual document scheme.
+- Running "Execute Query" or picking a job from "List Job Histories" opens the result automatically; "Save Result to Spreadsheet" opens the created sheet in your browser.
 
 ## Requirements
 
