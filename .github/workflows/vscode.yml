@@ -1,0 +1,47 @@
+name: vscode extension
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "editors/vscode/**"
+      - ".github/workflows/vscode.yml"
+  pull_request:
+    paths:
+      - "editors/vscode/**"
+      - ".github/workflows/vscode.yml"
+
+defaults:
+  run:
+    working-directory: editors/vscode
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      - name: install dependencies
+        run: npm ci
+
+      - name: lint
+        run: npm run lint
+
+      - name: type check
+        run: npm run compile
+
+      - name: test
+        run: npm run test
+
+      - name: build
+        run: npm run build

@@ -49,6 +49,8 @@ You can use your favorite lsp client.
 
 	showVersion := fs.Bool("version", false, "print version")
 	isDebug := fs.Bool("debug", false, "log debug")
+	// vscode-languageclient auto-appends this flag when using TransportKind.stdio; bqls always talks stdio, so it's safe to ignore.
+	fs.Bool("stdio", false, "use stdio for communication (no-op, always enabled)")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return exitCodeOK
