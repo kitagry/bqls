@@ -1,0 +1,51 @@
+name: vscode extension release
+
+on:
+  push:
+    tags:
+      - "vscode-v*"
+
+defaults:
+  run:
+    working-directory: editors/vscode
+
+jobs:
+  publish:
+    name: Publish to VS Code Marketplace
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      - name: install dependencies
+        run: npm ci
+
+      - name: verify tag matches package.json version
+        run: |
+          tag_version="${GITHUB_REF_NAME#vscode-v}"
+          pkg_version="$(node -p "require('./package.json').version")"
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "Tag version ($tag_version) does not match package.json version ($pkg_version)"
+            exit 1
+          fi
+
+      - name: lint
+        run: npm run lint
+
+      - name: type check
+        run: npm run compile
+
+      - name: test
+        run: npm run test
+
+      - name: publish
+        run: npx vsce publish
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
