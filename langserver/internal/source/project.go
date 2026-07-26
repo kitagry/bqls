@@ -120,7 +120,10 @@ func (p *Project) Run(ctx context.Context, uri lsp.DocumentURI) (bigquery.Bigque
 	return result, nil
 }
 
-func (p *Project) GetJobInfo(ctx context.Context, projectID, jobID, location string) ([]lsp.MarkedString, *bq.RowIterator, error) {
+// GetJobDetails polls until the job is done, then returns its details
+// markdown. The returned closure reads the query result rows lazily, reusing
+// the already-fetched (and already-polled-to-completion) job.
+func (p *Project) GetJobDetails(ctx context.Context, projectID, jobID, location string) ([]lsp.MarkedString, func(context.Context) (*bq.RowIterator, error), error) {
 	job, err := p.bqClient.JobFromProject(ctx, projectID, jobID, location)
 	if err != nil {
 		return nil, nil, err
@@ -140,7 +143,20 @@ func (p *Project) GetJobInfo(ctx context.Context, projectID, jobID, location str
 		return nil, nil, err
 	}
 
-	it, err := job.Read(ctx)
+	fetchPreview := func(ctx context.Context) (*bq.RowIterator, error) {
+		return job.Read(ctx)
+	}
+
+	return markedStrings, fetchPreview, nil
+}
+
+func (p *Project) GetJobInfo(ctx context.Context, projectID, jobID, location string) ([]lsp.MarkedString, *bq.RowIterator, error) {
+	markedStrings, fetchPreview, err := p.GetJobDetails(ctx, projectID, jobID, location)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	it, err := fetchPreview(ctx)
 	if err != nil {
 		return markedStrings, nil, nil
 	}
@@ -202,28 +218,47 @@ func buildBigQueryJobMarkedString(job bigquery.BigqueryJob) ([]lsp.MarkedString,
 	return result, nil
 }
 
-func (p *Project) GetTableInfo(ctx context.Context, projectID, datasetID, tableID string) ([]lsp.MarkedString, *bq.RowIterator, error) {
+// GetTableDetails fetches table metadata and its details markdown without
+// fetching preview rows. The returned closure fetches the preview rows
+// lazily, reusing the already-fetched metadata instead of calling
+// GetTableMetadata again.
+// GetTableDetails fetches table metadata and its details markdown without
+// fetching preview rows. It also returns the schema as structured
+// FieldSchema data (in addition to the Markdown summary in markedStrings)
+// so callers like the Details webview tab can render a collapsible tree
+// instead of a flat Markdown table. The returned closure fetches the
+// preview rows lazily, reusing the already-fetched metadata instead of
+// calling GetTableMetadata again.
+func (p *Project) GetTableDetails(ctx context.Context, projectID, datasetID, tableID string) ([]lsp.MarkedString, []lsp.FieldSchema, func(context.Context) (*bq.RowIterator, error), error) {
 	tableMetadata, err := p.bqClient.GetTableMetadata(ctx, projectID, datasetID, tableID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	markedStrings, err := buildBigQueryTableMetadataMarkedString(tableMetadata)
 	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	fetchPreview := func(ctx context.Context) (*bq.RowIterator, error) {
+		if tableMetadata.Type != bq.RegularTable {
+			return nil, nil
+		}
+		return p.bqClient.GetTableRecord(ctx, projectID, datasetID, tableID)
+	}
+
+	return markedStrings, BuildFieldSchema(tableMetadata.Schema), fetchPreview, nil
+}
+
+func (p *Project) GetTableInfo(ctx context.Context, projectID, datasetID, tableID string) ([]lsp.MarkedString, *bq.RowIterator, error) {
+	markedStrings, _, fetchPreview, err := p.GetTableDetails(ctx, projectID, datasetID, tableID)
+	if err != nil {
 		return nil, nil, err
 	}
 
-	if tableMetadata.Type != bq.RegularTable {
-		return markedStrings, nil, nil
-	}
-
-	it, err := p.bqClient.GetTableRecord(ctx, projectID, datasetID, tableID)
+	it, err := fetchPreview(ctx)
 	if err != nil {
 		return markedStrings, nil, err
 	}
 	return markedStrings, it, nil
-}
-
-func (p *Project) GetTablePreview(ctx context.Context, projectID, datasetID, tableID string) (*bq.RowIterator, error) {
-	return p.bqClient.GetTableRecord(ctx, projectID, datasetID, tableID)
 }

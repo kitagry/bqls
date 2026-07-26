@@ -163,10 +163,66 @@ Response:
 interface VirtualTextDocument {
     contents: MarkedString[];
     result: QueryResult;
+    // The table's schema as structured data, letting clients render a
+    // collapsible tree instead of parsing the Markdown table already in
+    // contents. Only set for table (not job) virtual documents.
+    schema?: FieldSchema[];
+    // Set when the client declared `supports_async_virtual_text_document`
+    // (see below) and the real result will follow via
+    // `bqls/publishVirtualTextDocument` instead of being included here.
+    pending?: boolean;
 }
 
 interface QueryResult {
     columns: string[];
-    rows: any[][];
+    data: any[][];
+    // Additional column type information (name/type/repeated/required/fields)
+    // used to render nested RECORD/REPEATED values. Omitted when empty.
+    schema?: FieldSchema[];
+}
+```
+
+### Async virtual text document fetching
+
+Fetching a virtual text document can be slow (it calls out to BigQuery), which blocks the
+connection while the request is in flight. Clients that don't want to block can opt in to an
+async flow:
+
+1. Send `supports_async_virtual_text_document: true` in the `initialize` request's
+   `initializationOptions`.
+2. `bqls/virtualTextDocument` then responds immediately with `{ pending: true }` instead of the
+   full result.
+3. Once details (table/job metadata) are ready, `bqls` pushes them via a
+   `bqls/publishVirtualTextDocument` notification with `kind: "details"`. Once the preview (query
+   result rows) is ready — which is usually slower, since it may need to wait for a job to finish
+   or scan a large table — a second notification with `kind: "preview"` follows. These are plain
+   notifications, not a request/response — no reply is expected.
+4. Sending another `bqls/virtualTextDocument` request for the same uri cancels any still-running
+   fetch for that uri; only the latest request's notifications are published.
+
+Clients that omit the flag (the default) keep getting the original fully-synchronous response,
+so this is fully backwards compatible.
+
+## `bqls/publishVirtualTextDocument`
+
+A notification (not a request) pushed by the server once part of an async
+`bqls/virtualTextDocument` fetch completes or fails. Only sent to clients that opted in via
+`supports_async_virtual_text_document`. Sent twice per request — once for `kind: "details"` and
+once for `kind: "preview"` — so a client can render details as soon as they're available instead
+of waiting for the (usually slower) preview too.
+
+```ts
+interface PublishVirtualTextDocumentParams {
+    textDocument: TextDocumentIdentifier;
+    kind: "details" | "preview";
+    // Set when kind is "details".
+    contents?: MarkedString[];
+    // Set alongside contents when kind is "details", for table virtual
+    // documents; see VirtualTextDocument.schema.
+    schema?: FieldSchema[];
+    // Set when kind is "preview".
+    result?: QueryResult;
+    // Set instead of contents/result if the fetch failed.
+    error?: string;
 }
 ```

@@ -67,13 +67,7 @@ table description
 * Total logical bytes: 0 bytes
 `,
 				},
-				{
-					Language: "yaml",
-					Value: `- name: name
-  type: STRING
-  description: name description
-`,
-				},
+				lsp.RawMarkedString("| Name | Type | Mode | Description |\n| --- | --- | --- | --- |\n| name | STRING | NULLABLE | name description |\n"),
 			},
 		},
 		"hover default project table": {
@@ -116,13 +110,7 @@ table description
 * Total logical bytes: 0 bytes
 `,
 				},
-				{
-					Language: "yaml",
-					Value: `- name: name
-  type: STRING
-  description: name description
-`,
-				},
+				lsp.RawMarkedString("| Name | Type | Mode | Description |\n| --- | --- | --- | --- |\n| name | STRING | NULLABLE | name description |\n"),
 			},
 		},
 		"hover table with time partitioning": {
@@ -175,15 +163,7 @@ partitioned table description
 * Total logical bytes: 0 bytes
 `,
 				},
-				{
-					Language: "yaml",
-					Value: `- name: id
-  type: INTEGER
-  description: id description
-- name: created_at
-  type: TIMESTAMP
-`,
-				},
+				lsp.RawMarkedString("| Name | Type | Mode | Description |\n| --- | --- | --- | --- |\n| id | INTEGER | NULLABLE | id description |\n| created_at | TIMESTAMP | NULLABLE |  |\n"),
 			},
 		},
 		"hover table with range partitioning": {
@@ -242,15 +222,7 @@ range partitioned table description
 * Total logical bytes: 0 bytes
 `,
 				},
-				{
-					Language: "yaml",
-					Value: `- name: customer_id
-  type: INTEGER
-  description: customer id description
-- name: order_date
-  type: DATE
-`,
-				},
+				lsp.RawMarkedString("| Name | Type | Mode | Description |\n| --- | --- | --- | --- |\n| customer_id | INTEGER | NULLABLE | customer id description |\n| order_date | DATE | NULLABLE |  |\n"),
 			},
 		},
 		"hover joined table": {
@@ -290,13 +262,7 @@ range partitioned table description
 * Total logical bytes: 0 bytes
 `,
 				},
-				{
-					Language: "yaml",
-					Value: `- name: name
-  type: STRING
-  description: name description
-`,
-				},
+				lsp.RawMarkedString("| Name | Type | Mode | Description |\n| --- | --- | --- | --- |\n| name | STRING | NULLABLE | name description |\n"),
 			},
 		},
 		"hover column": {
@@ -326,13 +292,7 @@ range partitioned table description
 				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
-				{
-					Language: "yaml",
-					Value: `- name: name
-  type: STRING
-  description: name description
-`,
-				},
+				lsp.RawMarkedString("| Name | Type | Mode | Description |\n| --- | --- | --- | --- |\n| name | STRING | NULLABLE | name description |\n"),
 			},
 		},
 		"hover column with alias": {
@@ -357,13 +317,7 @@ range partitioned table description
 				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
-				{
-					Language: "yaml",
-					Value: `- name: name
-  type: STRING
-  description: name description
-`,
-				},
+				lsp.RawMarkedString("| Name | Type | Mode | Description |\n| --- | --- | --- | --- |\n| name | STRING | NULLABLE | name description |\n"),
 			},
 		},
 		"hover column with table alias": {
@@ -386,13 +340,7 @@ range partitioned table description
 				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
-				{
-					Language: "yaml",
-					Value: `- name: name
-  type: STRING
-  description: name description
-`,
-				},
+				lsp.RawMarkedString("| Name | Type | Mode | Description |\n| --- | --- | --- | --- |\n| name | STRING | NULLABLE | name description |\n"),
 			},
 		},
 		"hover column unnest record": {
@@ -453,13 +401,7 @@ range partitioned table description
 				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
-				{
-					Language: "yaml",
-					Value: `- name: name
-  type: STRING
-  description: name description
-`,
-				},
+				lsp.RawMarkedString("| Name | Type | Mode | Description |\n| --- | --- | --- | --- |\n| name | STRING | NULLABLE | name description |\n"),
 			},
 		},
 		"hover unnest table": {
@@ -494,18 +436,7 @@ range partitioned table description
 				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
-				{
-					Language: "yaml",
-					Value: `- name: params
-  type: RECORD
-  mode: REPEATED
-  description: params description
-  - name: key
-    type: STRING
-  - name: value
-    type: STRING
-`,
-				},
+				lsp.RawMarkedString("| Name | Type | Mode | Description |\n| --- | --- | --- | --- |\n| params | RECORD | REPEATED | params description |\n| &nbsp;&nbsp;key | STRING | NULLABLE |  |\n| &nbsp;&nbsp;value | STRING | NULLABLE |  |\n"),
 			},
 		},
 		"hover function call": {
@@ -569,13 +500,7 @@ range partitioned table description
 				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
-				{
-					Language: "yaml",
-					Value: `- name: json
-  type: JSON
-  description: json description
-`,
-				},
+				lsp.RawMarkedString("| Name | Type | Mode | Description |\n| --- | --- | --- | --- |\n| json | JSON | NULLABLE | json description |\n"),
 			},
 		},
 		"hover with WITH clause": {
@@ -597,12 +522,7 @@ range partitioned table description
 				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
-				{
-					Language: "yaml",
-					Value: `- name: id
-  type: INT64
-`,
-				},
+				lsp.RawMarkedString("| Name | Type |\n| --- | --- |\n| id | INT64 |\n"),
 			},
 		},
 		"hover in WITH clause": {
@@ -625,13 +545,7 @@ range partitioned table description
 				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
-				{
-					Language: "yaml",
-					Value: `- name: id
-  type: INTEGER
-  description: id description
-`,
-				},
+				lsp.RawMarkedString("| Name | Type | Mode | Description |\n| --- | --- | --- | --- |\n| id | INTEGER | NULLABLE | id description |\n"),
 			},
 		},
 		"hover WITH clause reference name": {
@@ -654,12 +568,7 @@ range partitioned table description
 				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
-				{
-					Language: "yaml",
-					Value: `- name: hoge
-  type: INT64
-`,
-				},
+				lsp.RawMarkedString("| Name | Type |\n| --- | --- |\n| hoge | INT64 |\n"),
 				{
 					Language: "sql",
 					Value:    "WITH data AS (\nSELECT id AS hoge FROM `project.dataset.table`\n)",
@@ -686,12 +595,7 @@ range partitioned table description
 				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
-				{
-					Language: "yaml",
-					Value: `- name: id
-  type: INT64
-`,
-				},
+				lsp.RawMarkedString("| Name | Type |\n| --- | --- |\n| id | INT64 |\n"),
 				{
 					Language: "sql",
 					Value:    "WITH data AS (\nSELECT id FROM `project.dataset.table`\n)",
