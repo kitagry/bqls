@@ -67,7 +67,9 @@
     "watch": "node esbuild.js --watch",
     "compile": "tsc --noEmit -p ./",
     "lint": "eslint src",
-    "test": "vitest run"
+    "test": "vitest run",
+    "package": "vsce package",
+    "publish": "vsce publish"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
@@ -77,6 +79,7 @@
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^7.16.0",
     "@typescript-eslint/parser": "^7.16.0",
+    "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.25.0",
     "eslint": "^8.57.0",
     "typescript": "^5.5.4",
