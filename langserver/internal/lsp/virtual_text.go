@@ -18,6 +18,18 @@ type VirtualTextDocument struct {
 type QueryResult struct {
 	Columns []string           `json:"columns"`
 	Data    [][]bigquery.Value `json:"data"`
+	// Schema is additional column type information used to render nested
+	// (RECORD/REPEATED) values on the client. Omitted when empty so that
+	// older clients ignoring this field keep working unchanged.
+	Schema []FieldSchema `json:"schema,omitempty"`
+}
+
+type FieldSchema struct {
+	Name     string        `json:"name"`
+	Type     string        `json:"type"`
+	Repeated bool          `json:"repeated,omitempty"`
+	Required bool          `json:"required,omitempty"`
+	Fields   []FieldSchema `json:"fields,omitempty"`
 }
 
 func NewJobVirtualTextDocumentURI(projectID, jobID, location string) DocumentURI {

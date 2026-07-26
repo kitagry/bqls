@@ -68,12 +68,30 @@ func (h *Handler) handleVirtualTextDocument(ctx context.Context, conn *jsonrpc2.
 	return result, nil
 }
 
+func buildFieldSchema(schema bigquery.Schema) []lsp.FieldSchema {
+	if len(schema) == 0 {
+		return nil
+	}
+	result := make([]lsp.FieldSchema, 0, len(schema))
+	for _, f := range schema {
+		result = append(result, lsp.FieldSchema{
+			Name:     f.Name,
+			Type:     string(f.Type),
+			Repeated: f.Repeated,
+			Required: f.Required,
+			Fields:   buildFieldSchema(f.Schema),
+		})
+	}
+	return result
+}
+
 func buildQueryResult(it *bigquery.RowIterator, maxRowNum int) (lsp.QueryResult, error) {
 	var result lsp.QueryResult
 
 	for _, field := range it.Schema {
 		result.Columns = append(result.Columns, field.Name)
 	}
+	result.Schema = buildFieldSchema(it.Schema)
 
 	for i := 0; i < maxRowNum; i++ {
 		var values []bigquery.Value
