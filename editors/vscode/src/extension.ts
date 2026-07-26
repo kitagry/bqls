@@ -1,3 +1,9 @@
+import * as crypto from "node:crypto";
+import { execFile } from "node:child_process";
+import * as fs from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import * as https from "node:https";
+import { promisify } from "node:util";
 import * as vscode from "vscode";
 import {
   LanguageClient,
@@ -5,6 +11,7 @@ import {
   ServerOptions,
   TransportKind,
 } from "vscode-languageclient/node";
+import { InstallerDeps, resolveBqlsCommand } from "./bqlsInstaller";
 import {
   PublishVirtualTextDocumentParams,
   VirtualTextDocumentResult,
@@ -166,6 +173,102 @@ async function handleDefinitionResult(
   return otherLocations as vscode.Definition | vscode.DefinitionLink[];
 }
 
+const execFileAsync = promisify(execFile);
+
+// GitHub release asset downloads respond with a redirect to
+// objects.githubusercontent.com; https.get does not follow redirects itself.
+function httpGetFollowingRedirects(
+  url: string,
+  redirectsLeft = 5,
+): Promise<NodeJS.ReadableStream> {
+  return new Promise((resolve, reject) => {
+    https
+      .get(url, (res) => {
+        const status = res.statusCode ?? 0;
+        if (status >= 300 && status < 400 && res.headers.location) {
+          res.resume();
+          if (redirectsLeft === 0) {
+            reject(new Error(`too many redirects for ${url}`));
+            return;
+          }
+          resolve(httpGetFollowingRedirects(res.headers.location, redirectsLeft - 1));
+          return;
+        }
+        if (status !== 200) {
+          res.resume();
+          reject(new Error(`request to ${url} failed with status ${status}`));
+          return;
+        }
+        resolve(res);
+      })
+      .on("error", reject);
+  });
+}
+
+async function downloadText(url: string): Promise<string> {
+  const stream = await httpGetFollowingRedirects(url);
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+async function downloadFile(url: string, destPath: string): Promise<void> {
+  const stream = await httpGetFollowingRedirects(url);
+  await new Promise<void>((resolve, reject) => {
+    const fileStream = createWriteStream(destPath);
+    stream.on("error", reject);
+    fileStream.on("error", reject);
+    fileStream.on("finish", resolve);
+    stream.pipe(fileStream);
+  });
+}
+
+function createNodeInstallerDeps(): InstallerDeps {
+  return {
+    fileExists: async (path) => {
+      try {
+        await fs.access(path);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    mkdir: async (path) => {
+      await fs.mkdir(path, { recursive: true });
+    },
+    downloadText,
+    downloadFile: async (url, destPath) => {
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "Downloading bqls...",
+        },
+        () => downloadFile(url, destPath),
+      );
+    },
+    extractTarGz: async (archivePath, destDir) => {
+      await execFileAsync("tar", ["-xzf", archivePath, "-C", destDir]);
+    },
+    chmodExecutable: async (path) => {
+      await fs.chmod(path, 0o755);
+    },
+    sha256File: async (path) => {
+      const data = await fs.readFile(path);
+      return crypto.createHash("sha256").update(data).digest("hex");
+    },
+    checkOnPath: async (command) => {
+      try {
+        await execFileAsync(command, ["--version"]);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  };
+}
+
 function buildSettings(): {
   project_id: string;
   location: string;
@@ -183,7 +286,17 @@ export async function activate(
   context: vscode.ExtensionContext,
 ): Promise<void> {
   const config = vscode.workspace.getConfiguration("bqls");
-  const command = config.get<string>("path") ?? "bqls";
+  const configuredPath = config.get<string>("path") ?? "bqls";
+  const { command, error } = await resolveBqlsCommand(
+    configuredPath,
+    context.globalStorageUri.fsPath,
+    process.platform,
+    process.arch,
+    createNodeInstallerDeps(),
+  );
+  if (error) {
+    void vscode.window.showWarningMessage(error);
+  }
 
   const serverOptions: ServerOptions = {
     command,
