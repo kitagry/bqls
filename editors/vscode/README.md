@@ -10,7 +10,13 @@ Official VSCode extension for [bqls](https://github.com/kitagry/bqls), the BigQu
 
 ## Requirements
 
-Install the `bqls` binary and make sure it's on your `PATH` (or set `bqls.path`).
+On macOS and Linux, the extension downloads a matching `bqls` release from
+GitHub automatically the first time it activates (cached under the
+extension's global storage), so no manual install is required. If `bqls` is
+already on your `PATH` (e.g. via `go install`), that one is used instead.
+
+Windows is not yet supported by the automatic download. Install `bqls`
+manually and point `bqls.path` at it:
 
 ```bash
 go install github.com/kitagry/bqls@latest
