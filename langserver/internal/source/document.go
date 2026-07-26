@@ -100,10 +100,7 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 		if err != nil {
 			// cannot find table metadata
 			return []lsp.MarkedString{
-				{
-					Language: "yaml",
-					Value:    createColumnYamlString(column),
-				},
+				lsp.RawMarkedString(createColumnMarkdownTable(column)),
 			}, nil
 		}
 
@@ -111,10 +108,7 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 		for _, f := range tableMetadata.Schema {
 			if colName == f.Name {
 				return []lsp.MarkedString{
-					{
-						Language: "yaml",
-						Value:    createBigQueryFieldYamlString(f, 0),
-					},
+					lsp.RawMarkedString(createBigQuerySchemaMarkdownTable(bigquery.Schema{f})),
 				}, nil
 			}
 		}
@@ -130,10 +124,7 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 		tableMetadata, err := p.analyzer.GetTableMetadataFromPath(ctx, tableName)
 		if err != nil {
 			return []lsp.MarkedString{
-				{
-					Language: "yaml",
-					Value:    createColumnYamlString(column),
-				},
+				lsp.RawMarkedString(createColumnMarkdownTable(column)),
 			}, nil
 		}
 
@@ -141,10 +132,7 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 		for _, f := range tableMetadata.Schema {
 			if colName == f.Name {
 				return []lsp.MarkedString{
-					{
-						Language: "yaml",
-						Value:    createBigQueryFieldYamlString(f, 0),
-					},
+					lsp.RawMarkedString(createBigQuerySchemaMarkdownTable(bigquery.Schema{f})),
 				}, nil
 			}
 		}
@@ -168,6 +156,7 @@ func (p *Project) termDocumentFromAstNode(ctx context.Context, targetNode *googl
 	if err != nil {
 		return nil, false
 	}
+	result = append(result, lsp.RawMarkedString(createBigQuerySchemaMarkdownTable(targetTable.Schema)))
 	return result, true
 }
 
@@ -289,10 +278,7 @@ func (p *Project) termDocumentFromASTColumnRef(ctx context.Context, parsedFile f
 		for _, f := range meta.Schema {
 			if f.Name == colName {
 				return []lsp.MarkedString{
-					{
-						Language: "yaml",
-						Value:    createBigQueryFieldYamlString(f, 0),
-					},
+					lsp.RawMarkedString(createBigQuerySchemaMarkdownTable(bigquery.Schema{f})),
 				}, true
 			}
 		}
@@ -340,10 +326,7 @@ func (p *Project) termDocumentForInputScan(ctx context.Context, termOffset int, 
 
 		columns, _ := node.MutableColumnList()
 		result := []lsp.MarkedString{
-			{
-				Language: "yaml",
-				Value:    createColumnListYamlString(columns),
-			},
+			lsp.RawMarkedString(createColumnListMarkdownTable(columns)),
 		}
 		withQueryName, _ := node.WithQueryName()
 		for _, entry := range withEntries {
@@ -392,7 +375,12 @@ func (p *Project) createTableMarkedString(ctx context.Context, node *googlesql.R
 		return nil, fmt.Errorf("failed to get table metadata: %w", err)
 	}
 
-	return buildBigQueryTableMetadataMarkedString(targetTable)
+	result, err := buildBigQueryTableMetadataMarkedString(targetTable)
+	if err != nil {
+		return nil, err
+	}
+	result = append(result, lsp.RawMarkedString(createBigQuerySchemaMarkdownTable(targetTable.Schema)))
+	return result, nil
 }
 
 func (p *Project) getSelectColumnNodeToAnalyzedOutputColumnNode(output *googlesql.AnalyzerOutput, column *googlesql.ASTSelectColumn, termOffset int) (*googlesql.ResolvedColumn, error) {
@@ -624,53 +612,44 @@ func getSelectColumnName(targetNode *googlesql.ASTSelectColumn) (string, bool) {
 	return strings.Join(names, "."), true
 }
 
-func createColumnListYamlString(columnList []*googlesql.ResolvedColumn) string {
-	markdownBuilder := &strings.Builder{}
-	for _, column := range columnList {
-		markdownBuilder.WriteString(createColumnYamlString(column))
-	}
-	return markdownBuilder.String()
+// columnNameType is the minimal (name, type) pair needed to render a column
+// table row, factored out so it doesn't depend on *googlesql.ResolvedColumn
+// (which is awkward to construct directly in tests).
+type columnNameType struct {
+	name     string
+	typeName string
 }
 
-func createColumnYamlString(column *googlesql.ResolvedColumn) string {
+func columnMarkdownTable(columns []columnNameType) string {
+	var sb strings.Builder
+	sb.WriteString("| Name | Type |\n")
+	sb.WriteString("| --- | --- |\n")
+	for _, c := range columns {
+		fmt.Fprintf(&sb, "| %s | %s |\n", c.name, c.typeName)
+	}
+	return sb.String()
+}
+
+func createColumnListMarkdownTable(columnList []*googlesql.ResolvedColumn) string {
+	columns := make([]columnNameType, 0, len(columnList))
+	for _, column := range columnList {
+		columns = append(columns, resolvedColumnNameType(column))
+	}
+	return columnMarkdownTable(columns)
+}
+
+func createColumnMarkdownTable(column *googlesql.ResolvedColumn) string {
+	return columnMarkdownTable([]columnNameType{resolvedColumnNameType(column)})
+}
+
+func resolvedColumnNameType(column *googlesql.ResolvedColumn) columnNameType {
 	name, _ := column.Name()
 	typ, _ := column.Type()
 	typeName := ""
 	if typ != nil {
 		typeName, _ = typ.DebugString(false)
 	}
-	return fmt.Sprintf("- name: %s\n  type: %s\n", name, typeName)
-}
-
-func createBigQuerySchemaYamlString(schema bigquery.Schema, depth int) string {
-	builder := &strings.Builder{}
-	for _, f := range schema {
-		builder.WriteString(createBigQueryFieldYamlString(f, depth))
-	}
-	return builder.String()
-}
-
-func createBigQueryFieldYamlString(field *bigquery.FieldSchema, depth int) string {
-	indent := strings.Repeat("  ", depth)
-	builder := &strings.Builder{}
-	fmt.Fprintf(builder, "%s- name: %s\n", indent, field.Name)
-	fmt.Fprintf(builder, "%s  type: %s\n", indent, field.Type)
-
-	if field.Repeated {
-		fmt.Fprintf(builder, "%s  mode: REPEATED\n", indent)
-	} else if field.Required {
-		fmt.Fprintf(builder, "%s  mode: REQUIRED\n", indent)
-	}
-
-	if field.Description != "" {
-		fmt.Fprintf(builder, "%s  description: %s\n", indent, field.Description)
-	}
-
-	if len(field.Schema) > 0 {
-		builder.WriteString(createBigQuerySchemaYamlString(field.Schema, depth+1))
-	}
-
-	return builder.String()
+	return columnNameType{name: name, typeName: typeName}
 }
 
 func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([]lsp.MarkedString, error) {
@@ -740,14 +719,15 @@ func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([
 		fmt.Fprintf(&sb, "\n[Docs](https://console.cloud.google.com/bigquery?project=%[1]s&ws=!1m5!1m4!4m3!1s%[1]s!2s%[2]s!3s%[3]s)\n", projectID, datasetID, tableID)
 	}
 
+	// Schema is intentionally not included here: Hover callers append their
+	// own createBigQuerySchemaMarkdownTable(...) MarkedString, while the
+	// Details webview tab (GetTableDetails) uses the structured
+	// BuildFieldSchema data instead, to avoid showing the same schema twice
+	// in two different formats.
 	return []lsp.MarkedString{
 		{
 			Language: "markdown",
 			Value:    sb.String(),
-		},
-		{
-			Language: "yaml",
-			Value:    createBigQuerySchemaYamlString(metadata.Schema, 0),
 		},
 	}, nil
 }

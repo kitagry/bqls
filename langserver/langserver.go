@@ -14,16 +14,24 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 )
 
+// jsonrpcConn is the subset of *jsonrpc2.Conn the handler needs, factored
+// out so tests can substitute a fake and assert on notifications sent.
+type jsonrpcConn interface {
+	Notify(ctx context.Context, method string, params interface{}, opts ...jsonrpc2.CallOption) error
+	Close() error
+}
+
 type Handler struct {
-	conn   *jsonrpc2.Conn
+	conn   jsonrpcConn
 	logger *logrus.Logger
 
 	bqClient bigquery.Client
 	project  *source.Project
 
-	diagnosticRequest chan lsp.DocumentURI
-	dryrunRequest     chan lsp.DocumentURI
-	initializeParams  lsp.InitializeParams[InitializeOption]
+	diagnosticRequest          chan lsp.DocumentURI
+	dryrunRequest              chan lsp.DocumentURI
+	virtualTextDocumentRequest chan lsp.DocumentURI
+	initializeParams           lsp.InitializeParams[InitializeOption]
 }
 
 var _ jsonrpc2.Handler = (*Handler)(nil)
@@ -38,12 +46,14 @@ func NewHandler(isDebug bool) *Handler {
 	}
 
 	handler := &Handler{
-		logger:            logger,
-		diagnosticRequest: make(chan lsp.DocumentURI, 3),
-		dryrunRequest:     make(chan lsp.DocumentURI, 3),
+		logger:                     logger,
+		diagnosticRequest:          make(chan lsp.DocumentURI, 3),
+		dryrunRequest:              make(chan lsp.DocumentURI, 3),
+		virtualTextDocumentRequest: make(chan lsp.DocumentURI, 3),
 	}
 	go handler.scheduleDiagnostics()
 	go handler.scheduleDryRun()
+	go handler.scheduleVirtualTextDocument()
 	return handler
 }
 
@@ -86,6 +96,7 @@ func (h *Handler) Close() error {
 	}
 	close(h.diagnosticRequest)
 	close(h.dryrunRequest)
+	close(h.virtualTextDocumentRequest)
 	return errors.Join(errs...)
 }
 

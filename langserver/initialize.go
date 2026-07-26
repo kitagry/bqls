@@ -11,6 +11,11 @@ import (
 type InitializeOption struct {
 	ProjectID string `json:"project_id"`
 	Location  string `json:"location"`
+	// SupportsAsyncVirtualTextDocument declares that the client understands
+	// the bqls/publishVirtualTextDocument notification and can render a
+	// pending state. Clients that omit this (zero value: false) keep
+	// getting the fully-synchronous bqls/virtualTextDocument response.
+	SupportsAsyncVirtualTextDocument bool `json:"supports_async_virtual_text_document"`
 }
 
 func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {

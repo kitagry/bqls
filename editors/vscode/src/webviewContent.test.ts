@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildDetailsHtml,
+  buildPreviewHtml,
+  buildVirtualDocumentHtml,
   escapeHtml,
   renderCellValue,
   renderMarkedString,
   renderPage,
   renderQueryResultTable,
+  renderSchemaTable,
   virtualDocumentTitle,
 } from "./webviewContent";
 
@@ -132,6 +136,152 @@ describe("renderPage", () => {
     expect(html).toContain("<p>details</p>");
     expect(html).not.toContain('data-tab="preview"');
   });
+
+  it("includes a script that listens for postMessage updates from the extension", () => {
+    const html = renderPage({
+      detailsHtml: "Loading...",
+      previewHtml: "Loading...",
+    });
+    expect(html).toContain('addEventListener("message"');
+    expect(html).toContain('data-tabpanel="details"');
+    expect(html).toContain('data-tabpanel="preview"');
+  });
+
+  it("includes a script that handles separate details/preview message updates", () => {
+    const html = renderPage({
+      detailsHtml: "Loading...",
+      previewHtml: "Loading...",
+    });
+    expect(html).toContain('message.type === "details"');
+    expect(html).toContain('message.type === "preview"');
+  });
+
+  it("puts the Details tab before the Preview tab and makes Details active by default", () => {
+    const html = renderPage({
+      detailsHtml: "<p>details</p>",
+      previewHtml: "<table>preview</table>",
+    });
+    const detailsTabIndex = html.indexOf('data-tab="details"');
+    const previewTabIndex = html.indexOf('data-tab="preview"');
+    expect(detailsTabIndex).toBeGreaterThan(-1);
+    expect(previewTabIndex).toBeGreaterThan(-1);
+    expect(detailsTabIndex).toBeLessThan(previewTabIndex);
+    expect(html).toContain(
+      '<button class="bqls-tab active" data-tab="details">',
+    );
+    expect(html).toContain(
+      '<div class="bqls-tabpanel active" data-tabpanel="details">',
+    );
+  });
+});
+
+describe("buildVirtualDocumentHtml", () => {
+  it("renders contents and a query result table", () => {
+    const html = buildVirtualDocumentHtml(
+      ["## Job info"],
+      { columns: ["id"], data: [[1]] },
+    );
+    expect(html.detailsHtml).toBe("<h2>Job info</h2>");
+    expect(html.previewHtml).toBe(
+      '<table class="bqls-result"><thead><tr><th>id</th></tr></thead>' +
+        "<tbody><tr><td>1</td></tr></tbody></table>",
+    );
+  });
+
+  it("shows a placeholder preview when there is no query result (DDL/DML jobs)", () => {
+    const html = buildVirtualDocumentHtml(["## Job info"], undefined);
+    expect(html.detailsHtml).toBe("<h2>Job info</h2>");
+    expect(html.previewHtml).toContain("No query result");
+  });
+
+  it("treats missing contents as empty", () => {
+    const html = buildVirtualDocumentHtml(undefined, undefined);
+    expect(html.detailsHtml).toBe("");
+  });
+});
+
+describe("buildDetailsHtml", () => {
+  it("renders contents", () => {
+    expect(buildDetailsHtml(["## Job info"])).toBe("<h2>Job info</h2>");
+  });
+
+  it("treats missing contents as empty", () => {
+    expect(buildDetailsHtml(undefined)).toBe("");
+    expect(buildDetailsHtml(null)).toBe("");
+  });
+
+  it("appends a schema table when schema is provided", () => {
+    const html = buildDetailsHtml(["## Job info"], [
+      { name: "id", type: "INTEGER" },
+    ]);
+    expect(html).toBe(
+      "<h2>Job info</h2>\n" +
+        '<table class="bqls-result"><thead><tr><th>Name</th><th>Type</th><th>Mode</th><th>Description</th></tr></thead>' +
+        "<tbody><tr><td>id</td><td>INTEGER</td><td>NULLABLE</td><td></td></tr></tbody></table>",
+    );
+  });
+
+  it("omits the schema table when schema is empty", () => {
+    expect(buildDetailsHtml(["## Job info"], [])).toBe("<h2>Job info</h2>");
+  });
+});
+
+describe("renderSchemaTable", () => {
+  it("renders a flat schema as a Name/Type/Mode/Description table", () => {
+    const html = renderSchemaTable([
+      { name: "id", type: "INTEGER", required: true, description: "primary key" },
+      { name: "name", type: "STRING" },
+    ]);
+    expect(html).toBe(
+      '<table class="bqls-result"><thead><tr><th>Name</th><th>Type</th><th>Mode</th><th>Description</th></tr></thead>' +
+        "<tbody>" +
+        "<tr><td>id</td><td>INTEGER</td><td>REQUIRED</td><td>primary key</td></tr>" +
+        "<tr><td>name</td><td>STRING</td><td>NULLABLE</td><td></td></tr>" +
+        "</tbody></table>",
+    );
+  });
+
+  it("renders a repeated field's mode as REPEATED", () => {
+    const html = renderSchemaTable([
+      { name: "tags", type: "STRING", repeated: true },
+    ]);
+    expect(html).toContain("<td>REPEATED</td>");
+  });
+
+  it("indents nested RECORD fields", () => {
+    const html = renderSchemaTable([
+      {
+        name: "address",
+        type: "RECORD",
+        fields: [
+          { name: "city", type: "STRING" },
+          { name: "zip", type: "STRING" },
+        ],
+      },
+    ]);
+    expect(html).toBe(
+      '<table class="bqls-result"><thead><tr><th>Name</th><th>Type</th><th>Mode</th><th>Description</th></tr></thead>' +
+        "<tbody>" +
+        "<tr><td>address</td><td>RECORD</td><td>NULLABLE</td><td></td></tr>" +
+        "<tr><td>&nbsp;&nbsp;city</td><td>STRING</td><td>NULLABLE</td><td></td></tr>" +
+        "<tr><td>&nbsp;&nbsp;zip</td><td>STRING</td><td>NULLABLE</td><td></td></tr>" +
+        "</tbody></table>",
+    );
+  });
+});
+
+describe("buildPreviewHtml", () => {
+  it("renders a query result table", () => {
+    expect(buildPreviewHtml({ columns: ["id"], data: [[1]] })).toBe(
+      '<table class="bqls-result"><thead><tr><th>id</th></tr></thead>' +
+        "<tbody><tr><td>1</td></tr></tbody></table>",
+    );
+  });
+
+  it("shows a placeholder when there is no query result", () => {
+    expect(buildPreviewHtml(undefined)).toContain("No query result");
+    expect(buildPreviewHtml(null)).toContain("No query result");
+  });
 });
 
 describe("virtualDocumentTitle", () => {
@@ -175,6 +325,30 @@ describe("renderQueryResultTable", () => {
         "<tbody><tr><td>" +
         '<details class="bqls-nested"><summary>[2]</summary><ul><li>a</li><li>b</li></ul></details>' +
         "</td></tr></tbody></table>",
+    );
+  });
+
+  it("adds a title attribute with the column description when available", () => {
+    const html = renderQueryResultTable({
+      columns: ["id"],
+      data: [[1]],
+      schema: [{ name: "id", type: "INTEGER", description: "primary key" }],
+    });
+    expect(html).toBe(
+      '<table class="bqls-result"><thead><tr><th title="primary key">id</th></tr></thead>' +
+        "<tbody><tr><td>1</td></tr></tbody></table>",
+    );
+  });
+
+  it("omits the title attribute when there is no description", () => {
+    const html = renderQueryResultTable({
+      columns: ["id"],
+      data: [[1]],
+      schema: [{ name: "id", type: "INTEGER" }],
+    });
+    expect(html).toBe(
+      '<table class="bqls-result"><thead><tr><th>id</th></tr></thead>' +
+        "<tbody><tr><td>1</td></tr></tbody></table>",
     );
   });
 });

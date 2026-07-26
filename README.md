@@ -50,6 +50,11 @@ You can change project_id with `workspace/didChangeConfiguration`.
 vim.lsp.buf_notify(0, "workspace/didChangeConfiguration", { settings = { project_id = "ANOTHER_PROJECT_ID", location = "ANOTHER_LOCATION" } })
 ```
 
+`bqls` also supports fetching virtual document previews (table/job info) asynchronously so the
+client isn't blocked while BigQuery is queried; see [`bqls/publishVirtualTextDocument`](./docs/api_reference.md)
+in the API reference. This is opt-in via `supports_async_virtual_text_document` in
+`initializationOptions`, so bqls.nvim keeps working unmodified until it adopts the new flow.
+
 ### VSCode
 
 The official VSCode extension lives in [editors/vscode](./editors/vscode) in this repository.

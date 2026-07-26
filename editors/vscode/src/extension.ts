@@ -5,16 +5,20 @@ import {
   ServerOptions,
   TransportKind,
 } from "vscode-languageclient/node";
-import { VirtualTextDocumentResult } from "./virtualDocument";
+import {
+  PublishVirtualTextDocumentParams,
+  VirtualTextDocumentResult,
+} from "./virtualDocument";
 import {
   isExternalUrl,
   jobHistoryQuickPickItems,
   ListJobHistoryResult,
 } from "./commandResultHandler";
 import {
-  renderMarkedString,
+  buildDetailsHtml,
+  buildPreviewHtml,
+  buildVirtualDocumentHtml,
   renderPage,
-  renderQueryResultTable,
   virtualDocumentTitle,
 } from "./webviewContent";
 
@@ -32,7 +36,11 @@ const webviewPanels = new Map<string, vscode.WebviewPanel>();
 
 // Whatever route opens a bqls:// document (Execute Query, List Job
 // Histories, Go to Definition), render it in the same BigQuery
-// console-style tabbed webview.
+// console-style tabbed webview. The panel opens immediately in a loading
+// state; if the server supports async fetching it responds with
+// `pending: true` and the real content arrives later via
+// bqls/publishVirtualTextDocument (see the onNotification handler in
+// activate). Older servers just return the full result synchronously.
 async function openVirtualDocument(uriString: string): Promise<void> {
   if (!client) {
     return;
@@ -44,30 +52,42 @@ async function openVirtualDocument(uriString: string): Promise<void> {
     return;
   }
 
+  const panel = vscode.window.createWebviewPanel(
+    "bqlsVirtualDocument",
+    virtualDocumentTitle(uriString),
+    vscode.ViewColumn.Active,
+    // retainContextWhenHidden: without this, VSCode tears down the webview's
+    // DOM state whenever the panel is backgrounded (e.g. the user switches
+    // tabs). Since the async fetch's postMessage updates only touch the live
+    // DOM (not panel.webview.html), a backgrounded-then-reopened panel would
+    // otherwise reload from the original "Loading..." html and get stuck
+    // there even though the data already arrived.
+    { enableScripts: true, retainContextWhenHidden: true },
+  );
+  panel.webview.html = renderPage({
+    detailsHtml: "Loading...",
+    previewHtml: "Loading...",
+  });
+  webviewPanels.set(uriString, panel);
+  panel.onDidDispose(() => {
+    webviewPanels.delete(uriString);
+  });
+
   const result = await client.sendRequest<VirtualTextDocumentResult>(
     "bqls/virtualTextDocument",
     { textDocument: { uri: uriString } },
   );
 
-  const panel = vscode.window.createWebviewPanel(
-    "bqlsVirtualDocument",
-    virtualDocumentTitle(uriString),
-    vscode.ViewColumn.Active,
-    { enableScripts: true },
-  );
-
-  const detailsHtml = (result.contents ?? [])
-    .map(renderMarkedString)
-    .join("\n");
-  const previewHtml = result.result?.columns
-    ? renderQueryResultTable(result.result)
-    : null;
-  panel.webview.html = renderPage({ detailsHtml, previewHtml });
-
-  webviewPanels.set(uriString, panel);
-  panel.onDidDispose(() => {
-    webviewPanels.delete(uriString);
-  });
+  if (!result.pending) {
+    const { detailsHtml, previewHtml } = buildVirtualDocumentHtml(
+      result.contents,
+      result.result,
+      result.schema,
+    );
+    panel.webview.html = renderPage({ detailsHtml, previewHtml });
+  }
+  // If result.pending is true, wait for the bqls/publishVirtualTextDocument
+  // notification to fill in the panel via postMessage.
 }
 
 // Executing a Code Action (Command) that bqls returns doesn't show anything
@@ -146,11 +166,16 @@ async function handleDefinitionResult(
   return otherLocations as vscode.Definition | vscode.DefinitionLink[];
 }
 
-function buildSettings(): { project_id: string; location: string } {
+function buildSettings(): {
+  project_id: string;
+  location: string;
+  supports_async_virtual_text_document: boolean;
+} {
   const config = vscode.workspace.getConfiguration("bqls");
   return {
     project_id: config.get<string>("projectId") ?? "",
     location: config.get<string>("location") ?? "",
+    supports_async_virtual_text_document: true,
   };
 }
 
@@ -182,6 +207,38 @@ export async function activate(
   };
 
   client = new LanguageClient("bqls", "bqls", serverOptions, clientOptions);
+
+  context.subscriptions.push(
+    client.onNotification(
+      "bqls/publishVirtualTextDocument",
+      (params: PublishVirtualTextDocumentParams) => {
+        const panel = webviewPanels.get(params.textDocument.uri);
+        if (!panel) {
+          return; // panel was closed before the fetch completed
+        }
+        if (params.error) {
+          void panel.webview.postMessage({
+            type: "error",
+            message: params.error,
+          });
+          return;
+        }
+        if (params.kind === "details") {
+          void panel.webview.postMessage({
+            type: "details",
+            detailsHtml: buildDetailsHtml(params.contents, params.schema),
+          });
+          return;
+        }
+        if (params.kind === "preview") {
+          void panel.webview.postMessage({
+            type: "preview",
+            previewHtml: buildPreviewHtml(params.result),
+          });
+        }
+      },
+    ),
+  );
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
