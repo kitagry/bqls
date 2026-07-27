@@ -27,14 +27,10 @@ jobs:
       - name: install dependencies
         run: npm ci
 
-      - name: verify tag matches package.json version
+      - name: set version from tag
         run: |
           tag_version="${GITHUB_REF_NAME#vscode-v}"
-          pkg_version="$(node -p "require('./package.json').version")"
-          if [ "$tag_version" != "$pkg_version" ]; then
-            echo "Tag version ($tag_version) does not match package.json version ($pkg_version)"
-            exit 1
-          fi
+          npm version "$tag_version" --no-git-tag-version --allow-same-version
 
       - name: lint
         run: npm run lint
