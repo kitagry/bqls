@@ -156,7 +156,7 @@
     "@typescript-eslint/eslint-plugin": "^7.16.0",
     "@typescript-eslint/parser": "^7.16.0",
     "@vscode/vsce": "^3.9.2",
-    "esbuild": "^0.25.0",
+    "esbuild": "^0.28.1",
     "eslint": "^8.57.0",
     "typescript": "^5.5.4",
     "vitest": "^3.2.4"
