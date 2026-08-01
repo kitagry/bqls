@@ -36,7 +36,15 @@ func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req
 		return nil, err
 	}
 
+	return h.buildInitializeResult(), nil
+}
+
+func (h *Handler) buildInitializeResult() lsp.InitializeResult {
 	return lsp.InitializeResult{
+		ServerInfo: &lsp.ServerInfo{
+			Name:    "bqls",
+			Version: h.version,
+		},
 		Capabilities: lsp.ServerCapabilities{
 			TextDocumentSync: &lsp.TextDocumentSyncOptionsOrKind{
 				Kind: toPtr(lsp.TDSKFull),
@@ -61,7 +69,7 @@ func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req
 				},
 			},
 		},
-	}, nil
+	}
 }
 
 func toPtr[T any](s T) *T {

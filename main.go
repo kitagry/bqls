@@ -68,7 +68,7 @@ You can use your favorite lsp client.
 		return exitCodeErr
 	}
 
-	handler := langserver.NewHandler(*isDebug)
+	handler := langserver.NewHandler(*isDebug, version)
 	defer handler.Close()
 	<-jsonrpc2.NewConn(context.Background(), jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}), handler).DisconnectNotify()
 	return exitCodeOK

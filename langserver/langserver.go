@@ -22,8 +22,9 @@ type jsonrpcConn interface {
 }
 
 type Handler struct {
-	conn   jsonrpcConn
-	logger *logrus.Logger
+	conn    jsonrpcConn
+	logger  *logrus.Logger
+	version string
 
 	bqClient bigquery.Client
 	project  *source.Project
@@ -36,7 +37,7 @@ type Handler struct {
 
 var _ jsonrpc2.Handler = (*Handler)(nil)
 
-func NewHandler(isDebug bool) *Handler {
+func NewHandler(isDebug bool, version string) *Handler {
 	logger := logrus.New()
 	logger.Out = os.Stderr
 	if isDebug {
@@ -47,6 +48,7 @@ func NewHandler(isDebug bool) *Handler {
 
 	handler := &Handler{
 		logger:                     logger,
+		version:                    version,
 		diagnosticRequest:          make(chan lsp.DocumentURI, 3),
 		dryrunRequest:              make(chan lsp.DocumentURI, 3),
 		virtualTextDocumentRequest: make(chan lsp.DocumentURI, 3),
