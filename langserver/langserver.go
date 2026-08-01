@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
+	"strings"
 
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
@@ -134,6 +135,13 @@ func (h *Handler) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2
 		return h.handleWorkspaceDidChangeConfiguration(ctx, conn, req)
 	case "bqls/virtualTextDocument":
 		return h.handleVirtualTextDocument(ctx, conn, req)
+	}
+	// Per the LSP spec, "$/"-prefixed notifications (e.g. $/setTrace,
+	// $/cancelRequest) are protocol-implementation-dependent and may be
+	// freely ignored by servers that don't implement them; only "$/"
+	// requests must still be errored with MethodNotFound.
+	if req.Notif && strings.HasPrefix(req.Method, "$/") {
+		return nil, nil
 	}
 	return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeMethodNotFound, Message: fmt.Sprintf("method not supported: %s", req.Method)}
 }
