@@ -9,7 +9,19 @@ import (
 
 	"cloud.google.com/go/bigquery"
 	"google.golang.org/api/cloudresourcemanager/v1"
+	"google.golang.org/api/googleapi"
 )
+
+// formatCacheError condenses a googleapi.Error down to its code and message,
+// dropping the nested Details/Body fields that would otherwise dump a large
+// JSON blob to the log for what is a non-fatal, background recache failure.
+func formatCacheError(err error) string {
+	var apiErr *googleapi.Error
+	if errors.As(err, &apiErr) {
+		return fmt.Sprintf("googleapi: %d: %s", apiErr.Code, apiErr.Message)
+	}
+	return err.Error()
+}
 
 type cache struct {
 	Client
@@ -59,7 +71,7 @@ func (c *cache) ListProjects(ctx context.Context) ([]*cloudresourcemanager.Proje
 			ctx := context.WithoutCancel(ctx)
 			_, err := c.callListProjects(ctx)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "failed to recache projects: %v\n", err)
+				fmt.Fprintf(os.Stderr, "failed to recache projects: %s\n", formatCacheError(err))
 			}
 		})
 		return results, nil
@@ -102,7 +114,7 @@ func (c *cache) ListDatasets(ctx context.Context, projectID string) ([]*bigquery
 			ctx := context.WithoutCancel(ctx)
 			_, err := c.callListDatasets(ctx, projectID)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "failed to recache datasets: %v\n", err)
+				fmt.Fprintf(os.Stderr, "failed to recache datasets: %s\n", formatCacheError(err))
 			}
 		})
 		return results, nil
@@ -143,7 +155,7 @@ func (c *cache) ListTables(ctx context.Context, projectID, datasetID string) ([]
 			ctx := context.WithoutCancel(ctx)
 			_, err := c.callListTables(ctx, projectID, datasetID)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "failed to recache tables: %v\n", err)
+				fmt.Fprintf(os.Stderr, "failed to recache tables: %s\n", formatCacheError(err))
 			}
 		})
 
