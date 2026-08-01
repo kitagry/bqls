@@ -23,9 +23,19 @@ export interface SearchTablesResult {
   tables: TableSearchResult[];
 }
 
+export interface ProjectInfo {
+  projectId: string;
+  name: string;
+}
+
+export interface ListProjectsResult {
+  projects: ProjectInfo[];
+}
+
 export const COMMAND_LIST_DATASETS = "bqls.listDatasets";
 export const COMMAND_LIST_TABLES = "bqls.listTables";
 export const COMMAND_SEARCH_TABLES = "bqls.searchTables";
+export const COMMAND_LIST_PROJECTS = "bqls.listProjects";
 
 export function tableVirtualDocumentUri(
   projectId: string,
@@ -35,18 +45,21 @@ export function tableVirtualDocumentUri(
   return `bqls://project/${projectId}/dataset/${datasetId}/table/${tableId}`;
 }
 
-// The BigQuery API requires a concrete project id, so when bqls.projectId
-// is unset, just show a message node prompting the user to configure it.
-export function rootNodes(projectId: string): BqlsTreeNode[] {
-  if (!projectId) {
+// projectIds is the explicit list the user has added to the explorer
+// (bqls.projectIds), independent of the single bqls.projectId setting used
+// as the LSP server's default project. When it's empty, show a message node
+// prompting the user to add one via the "+" button instead of a project node.
+export function rootNodes(projectIds: string[]): BqlsTreeNode[] {
+  const uniqueProjectIds = Array.from(new Set(projectIds));
+  if (uniqueProjectIds.length === 0) {
     return [
       {
         kind: "message",
-        text: 'Set "bqls.projectId" in Settings to browse BigQuery datasets.',
+        text: 'Click "+" above to add a BigQuery project to the Datasets explorer.',
       },
     ];
   }
-  return [{ kind: "project", projectId }];
+  return uniqueProjectIds.map((projectId) => ({ kind: "project", projectId }));
 }
 
 export function listDatasetsArguments(projectId: string): unknown[] {
@@ -86,9 +99,9 @@ export function tableNodes(
 
 export function searchTablesArguments(
   query: string,
-  projectId: string,
+  projectIds: string[],
 ): unknown[] {
-  return [query, projectId];
+  return [query, ...projectIds];
 }
 
 export interface SearchTablesQuickPickItem {
@@ -107,10 +120,42 @@ export function searchResultQuickPickItems(
   }));
 }
 
+export function listProjectsArguments(): unknown[] {
+  return [];
+}
+
+export interface ProjectQuickPickItem {
+  label: string;
+  description: string;
+  projectId: string;
+}
+
+export function addableProjectQuickPickItems(
+  result: ListProjectsResult,
+  existingProjectIds: string[],
+): ProjectQuickPickItem[] {
+  const existing = new Set(existingProjectIds);
+  return result.projects
+    .filter((p) => !existing.has(p.projectId))
+    .map((p) => ({ label: p.projectId, description: p.name, projectId: p.projectId }));
+}
+
+export function addProjectId(projectIds: string[], projectId: string): string[] {
+  if (projectIds.includes(projectId)) {
+    return projectIds;
+  }
+  return [...projectIds, projectId];
+}
+
+export function removeProjectId(projectIds: string[], projectId: string): string[] {
+  return projectIds.filter((id) => id !== projectId);
+}
+
 export interface TreeItemDescriptor {
   label: string;
   collapsible: "none" | "collapsed";
   icon: "info" | "database" | "table";
+  contextValue?: "bqlsProject";
 }
 
 export function describeTreeItem(node: BqlsTreeNode): TreeItemDescriptor {
@@ -118,7 +163,12 @@ export function describeTreeItem(node: BqlsTreeNode): TreeItemDescriptor {
     case "message":
       return { label: node.text, collapsible: "none", icon: "info" };
     case "project":
-      return { label: node.projectId, collapsible: "collapsed", icon: "database" };
+      return {
+        label: node.projectId,
+        collapsible: "collapsed",
+        icon: "database",
+        contextValue: "bqlsProject",
+      };
     case "dataset":
       return { label: node.datasetId, collapsible: "collapsed", icon: "database" };
     case "table":

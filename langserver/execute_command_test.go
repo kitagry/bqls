@@ -1,12 +1,59 @@
 package langserver
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/golang/mock/gomock"
 	"github.com/google/go-cmp/cmp"
+	"github.com/kitagry/bqls/langserver/internal/bigquery/mock_bigquery"
+	"github.com/kitagry/bqls/langserver/internal/lsp"
+	cloudresourcemanager "google.golang.org/api/cloudresourcemanager/v1"
 )
+
+func TestHandler_commandListProjects(t *testing.T) {
+	t.Run("maps ListProjects results to lsp.ProjectInfo", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		bqClient := mock_bigquery.NewMockClient(ctrl)
+		bqClient.EXPECT().ListProjects(gomock.Any()).Return([]*cloudresourcemanager.Project{
+			{ProjectId: "my-project", Name: "My Project"},
+			{ProjectId: "other-project", Name: "Other Project"},
+		}, nil)
+
+		h := &Handler{bqClient: bqClient}
+
+		got, err := h.commandListProjects(t.Context(), lsp.ExecuteCommandParams{Command: CommandListProjects})
+		if err != nil {
+			t.Fatalf("commandListProjects() error = %v", err)
+		}
+
+		want := &lsp.ListProjectsResult{
+			Projects: []lsp.ProjectInfo{
+				{ProjectID: "my-project", Name: "My Project"},
+				{ProjectID: "other-project", Name: "Other Project"},
+			},
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("commandListProjects() mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("propagates errors from ListProjects", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		bqClient := mock_bigquery.NewMockClient(ctrl)
+		wantErr := errors.New("permission denied")
+		bqClient.EXPECT().ListProjects(gomock.Any()).Return(nil, wantErr)
+
+		h := &Handler{bqClient: bqClient}
+
+		_, err := h.commandListProjects(t.Context(), lsp.ExecuteCommandParams{Command: CommandListProjects})
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("commandListProjects() error = %v, want %v", err, wantErr)
+		}
+	})
+}
 
 func TestParseSpreadsheetURL(t *testing.T) {
 	tests := map[string]struct {

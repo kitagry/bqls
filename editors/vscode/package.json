@@ -48,6 +48,12 @@
     },
     "commands": [
       {
+        "command": "bqls.addProjectToExplorer",
+        "title": "Add Project…",
+        "icon": "$(add)",
+        "category": "BigQuery"
+      },
+      {
         "command": "bqls.refreshDatasetExplorer",
         "title": "Refresh",
         "icon": "$(refresh)",
@@ -58,10 +64,21 @@
         "title": "Search Tables",
         "icon": "$(search)",
         "category": "BigQuery"
+      },
+      {
+        "command": "bqls.removeProjectFromExplorer",
+        "title": "Remove from BigQuery Explorer",
+        "icon": "$(trash)",
+        "category": "BigQuery"
       }
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "bqls.addProjectToExplorer",
+          "when": "view == bqlsDatasetExplorer",
+          "group": "navigation"
+        },
         {
           "command": "bqls.refreshDatasetExplorer",
           "when": "view == bqlsDatasetExplorer",
@@ -71,6 +88,12 @@
           "command": "bqls.searchTablesInExplorer",
           "when": "view == bqlsDatasetExplorer",
           "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "bqls.removeProjectFromExplorer",
+          "when": "view == bqlsDatasetExplorer && viewItem == bqlsProject"
         }
       ]
     },
@@ -87,6 +110,14 @@
           "type": "string",
           "default": "",
           "description": "BigQuery project ID. If empty, bqls uses `gcloud config get project`."
+        },
+        "bqls.projectIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "BigQuery project IDs shown in the Datasets explorer view. Add more via the \"+\" button on the view, or edit this list directly. Independent of bqls.projectId."
         },
         "bqls.location": {
           "type": "string",

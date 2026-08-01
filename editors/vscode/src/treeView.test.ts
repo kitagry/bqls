@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  addProjectId,
+  addableProjectQuickPickItems,
   datasetNodes,
   describeTreeItem,
   listDatasetsArguments,
+  listProjectsArguments,
   listTablesArguments,
+  removeProjectId,
   rootNodes,
   searchResultQuickPickItems,
   searchTablesArguments,
@@ -20,14 +24,21 @@ describe("tableVirtualDocumentUri", () => {
 });
 
 describe("rootNodes", () => {
-  it("returns a message node prompting configuration when projectId is empty", () => {
-    expect(rootNodes("")).toEqual([
-      { kind: "message", text: expect.stringContaining("bqls.projectId") },
+  it("returns a message node prompting the user to add a project when the list is empty", () => {
+    expect(rootNodes([])).toEqual([
+      { kind: "message", text: expect.stringContaining("project") },
     ]);
   });
 
-  it("returns a single project node when projectId is set", () => {
-    expect(rootNodes("my-project")).toEqual([
+  it("returns one project node per project id, in order", () => {
+    expect(rootNodes(["my-project", "other-project"])).toEqual([
+      { kind: "project", projectId: "my-project" },
+      { kind: "project", projectId: "other-project" },
+    ]);
+  });
+
+  it("de-duplicates project ids", () => {
+    expect(rootNodes(["my-project", "my-project"])).toEqual([
       { kind: "project", projectId: "my-project" },
     ]);
   });
@@ -79,11 +90,16 @@ describe("tableNodes", () => {
 });
 
 describe("searchTablesArguments", () => {
-  it("returns [query, projectId]", () => {
-    expect(searchTablesArguments("users", "my-project")).toEqual([
+  it("returns [query, ...projectIds]", () => {
+    expect(searchTablesArguments("users", ["my-project", "other-project"])).toEqual([
       "users",
       "my-project",
+      "other-project",
     ]);
+  });
+
+  it("returns just [query] when there are no project ids", () => {
+    expect(searchTablesArguments("users", [])).toEqual(["users"]);
   });
 });
 
@@ -126,6 +142,67 @@ describe("searchResultQuickPickItems", () => {
   });
 });
 
+describe("listProjectsArguments", () => {
+  it("takes no arguments", () => {
+    expect(listProjectsArguments()).toEqual([]);
+  });
+});
+
+describe("addableProjectQuickPickItems", () => {
+  it("maps projects to quick pick items keyed by projectId", () => {
+    expect(
+      addableProjectQuickPickItems(
+        {
+          projects: [
+            { projectId: "my-project", name: "My Project" },
+            { projectId: "other-project", name: "Other Project" },
+          ],
+        },
+        [],
+      ),
+    ).toEqual([
+      { label: "my-project", description: "My Project", projectId: "my-project" },
+      { label: "other-project", description: "Other Project", projectId: "other-project" },
+    ]);
+  });
+
+  it("excludes projects already in the explorer", () => {
+    expect(
+      addableProjectQuickPickItems(
+        {
+          projects: [
+            { projectId: "my-project", name: "My Project" },
+            { projectId: "other-project", name: "Other Project" },
+          ],
+        },
+        ["my-project"],
+      ),
+    ).toEqual([
+      { label: "other-project", description: "Other Project", projectId: "other-project" },
+    ]);
+  });
+});
+
+describe("addProjectId", () => {
+  it("appends a new project id", () => {
+    expect(addProjectId(["a"], "b")).toEqual(["a", "b"]);
+  });
+
+  it("leaves the list unchanged when the project id is already present", () => {
+    expect(addProjectId(["a", "b"], "b")).toEqual(["a", "b"]);
+  });
+});
+
+describe("removeProjectId", () => {
+  it("removes the matching project id", () => {
+    expect(removeProjectId(["a", "b"], "a")).toEqual(["b"]);
+  });
+
+  it("leaves the list unchanged when the project id is absent", () => {
+    expect(removeProjectId(["a", "b"], "c")).toEqual(["a", "b"]);
+  });
+});
+
 describe("describeTreeItem", () => {
   it("describes a message node as non-collapsible with an info icon", () => {
     expect(describeTreeItem({ kind: "message", text: "hello" })).toEqual({
@@ -135,11 +212,12 @@ describe("describeTreeItem", () => {
     });
   });
 
-  it("describes a project node as collapsible with a database icon", () => {
+  it("describes a project node as collapsible with a database icon and a removable contextValue", () => {
     expect(describeTreeItem({ kind: "project", projectId: "my-project" })).toEqual({
       label: "my-project",
       collapsible: "collapsed",
       icon: "database",
+      contextValue: "bqlsProject",
     });
   });
 

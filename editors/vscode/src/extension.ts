@@ -31,15 +31,21 @@ import {
 import {
   BqlsTreeNode,
   COMMAND_LIST_DATASETS,
+  COMMAND_LIST_PROJECTS,
   COMMAND_LIST_TABLES,
   COMMAND_SEARCH_TABLES,
   ListDatasetsResult,
+  ListProjectsResult,
   ListTablesResult,
   SearchTablesResult,
+  addProjectId,
+  addableProjectQuickPickItems,
   datasetNodes,
   describeTreeItem,
   listDatasetsArguments,
+  listProjectsArguments,
   listTablesArguments,
+  removeProjectId,
   rootNodes,
   searchResultQuickPickItems,
   searchTablesArguments,
@@ -56,6 +62,8 @@ const COMMAND_SAVE_RESULT = "bqls.saveResult";
 const COMMAND_OPEN_TABLE_FROM_TREE = "bqls.openTableFromTree";
 const COMMAND_REFRESH_DATASET_EXPLORER = "bqls.refreshDatasetExplorer";
 const COMMAND_SEARCH_TABLES_IN_EXPLORER = "bqls.searchTablesInExplorer";
+const COMMAND_ADD_PROJECT_TO_EXPLORER = "bqls.addProjectToExplorer";
+const COMMAND_REMOVE_PROJECT_FROM_EXPLORER = "bqls.removeProjectFromExplorer";
 
 let client: LanguageClient | undefined;
 
@@ -304,8 +312,14 @@ function buildSettings(): {
   };
 }
 
-function getProjectId(): string {
-  return vscode.workspace.getConfiguration("bqls").get<string>("projectId") ?? "";
+// The list of projects shown in the Datasets explorer (bqls.projectIds) is
+// deliberately independent of bqls.projectId: the latter is the LSP
+// server's single default project (used for query execution, hover, etc.),
+// while the former is a user-managed list of projects to browse. Falling
+// back from one to the other would make "remove" ambiguous (removing the
+// last explorer project could make it reappear via bqls.projectId).
+function getExplorerProjectIds(): string[] {
+  return vscode.workspace.getConfiguration("bqls").get<string[]>("projectIds") ?? [];
 }
 
 // Mirrors bqls.nvim's sidebar (lua/bqls/sidebar.lua): a lazily-loaded
@@ -334,6 +348,9 @@ class BqlsTreeDataProvider implements vscode.TreeDataProvider<BqlsTreeNode> {
         : vscode.TreeItemCollapsibleState.None,
     );
     item.iconPath = new vscode.ThemeIcon(descriptor.icon);
+    if (descriptor.contextValue) {
+      item.contextValue = descriptor.contextValue;
+    }
     if (node.kind === "table") {
       item.command = {
         command: COMMAND_OPEN_TABLE_FROM_TREE,
@@ -344,9 +361,8 @@ class BqlsTreeDataProvider implements vscode.TreeDataProvider<BqlsTreeNode> {
       };
     } else if (node.kind === "message") {
       item.command = {
-        command: "workbench.action.openSettings",
-        title: "Configure",
-        arguments: ["bqls.projectId"],
+        command: COMMAND_ADD_PROJECT_TO_EXPLORER,
+        title: "Add Project",
       };
     }
     return item;
@@ -357,7 +373,7 @@ class BqlsTreeDataProvider implements vscode.TreeDataProvider<BqlsTreeNode> {
       return [];
     }
     if (!node) {
-      return rootNodes(getProjectId());
+      return rootNodes(getExplorerProjectIds());
     }
     try {
       switch (node.kind) {
@@ -392,14 +408,65 @@ class BqlsTreeDataProvider implements vscode.TreeDataProvider<BqlsTreeNode> {
   }
 }
 
+async function setExplorerProjectIds(projectIds: string[]): Promise<void> {
+  await vscode.workspace
+    .getConfiguration("bqls")
+    .update("projectIds", projectIds, vscode.ConfigurationTarget.Global);
+}
+
+async function addProjectToExplorer(): Promise<void> {
+  if (!client) {
+    return;
+  }
+
+  let projectId: string | undefined;
+  try {
+    const result = await client.sendRequest<ListProjectsResult>(
+      "workspace/executeCommand",
+      { command: COMMAND_LIST_PROJECTS, arguments: listProjectsArguments() },
+    );
+    const items = addableProjectQuickPickItems(result, getExplorerProjectIds());
+    if (items.length === 0) {
+      void vscode.window.showInformationMessage(
+        "bqls: no more accessible BigQuery projects to add",
+      );
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(items, {
+      placeHolder: "Select a BigQuery project to add",
+    });
+    projectId = picked?.projectId;
+  } catch (err) {
+    // Listing projects requires resourcemanager.projects.list; fall back to
+    // manual entry so the explorer still works without that permission.
+    const message = err instanceof Error ? err.message : String(err);
+    void vscode.window.showWarningMessage(
+      `bqls: failed to list BigQuery projects (${message}). Enter a project id manually.`,
+    );
+    projectId = await vscode.window.showInputBox({ prompt: "BigQuery project ID" });
+  }
+
+  if (!projectId) {
+    return;
+  }
+  await setExplorerProjectIds(addProjectId(getExplorerProjectIds(), projectId));
+}
+
+async function removeProjectFromExplorer(node?: BqlsTreeNode): Promise<void> {
+  if (!node || node.kind !== "project") {
+    return;
+  }
+  await setExplorerProjectIds(removeProjectId(getExplorerProjectIds(), node.projectId));
+}
+
 async function searchTablesInExplorer(): Promise<void> {
   if (!client) {
     return;
   }
-  const projectId = getProjectId();
-  if (!projectId) {
+  const projectIds = getExplorerProjectIds();
+  if (projectIds.length === 0) {
     void vscode.window.showWarningMessage(
-      'Set "bqls.projectId" in Settings before searching tables.',
+      'Add a BigQuery project to the Datasets explorer (click "+") before searching tables.',
     );
     return;
   }
@@ -414,7 +481,7 @@ async function searchTablesInExplorer(): Promise<void> {
       "workspace/executeCommand",
       {
         command: COMMAND_SEARCH_TABLES,
-        arguments: searchTablesArguments(query, projectId),
+        arguments: searchTablesArguments(query, projectIds),
       },
     );
     const items = searchResultQuickPickItems(result);
@@ -489,6 +556,14 @@ export async function activate(
       COMMAND_SEARCH_TABLES_IN_EXPLORER,
       searchTablesInExplorer,
     ),
+    vscode.commands.registerCommand(
+      COMMAND_ADD_PROJECT_TO_EXPLORER,
+      addProjectToExplorer,
+    ),
+    vscode.commands.registerCommand(
+      COMMAND_REMOVE_PROJECT_FROM_EXPLORER,
+      removeProjectFromExplorer,
+    ),
   );
 
   context.subscriptions.push(
@@ -536,8 +611,8 @@ export async function activate(
           settings: buildSettings(),
         });
       }
-      // The tree's root node reflects bqls.projectId, so re-render it too.
-      if (event.affectsConfiguration("bqls.projectId")) {
+      // The tree's root nodes reflect bqls.projectIds, so re-render it too.
+      if (event.affectsConfiguration("bqls.projectIds")) {
         treeDataProvider.refresh();
       }
     }),

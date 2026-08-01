@@ -36,6 +36,15 @@ type SearchTablesResult struct {
 	Tables []TableSearchResult `json:"tables"`
 }
 
+type ListProjectsResult struct {
+	Projects []ProjectInfo `json:"projects"`
+}
+
+type ProjectInfo struct {
+	ProjectID string `json:"projectId"`
+	Name      string `json:"name"`
+}
+
 type TableSearchResult struct {
 	ProjectID   string `json:"projectId"`
 	DatasetID   string `json:"datasetId"`
