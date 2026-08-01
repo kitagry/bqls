@@ -214,6 +214,12 @@ type WindowClientCapabilities struct {
 
 type InitializeResult struct {
 	Capabilities ServerCapabilities `json:"capabilities,omitempty"`
+	ServerInfo   *ServerInfo        `json:"serverInfo,omitempty"`
+}
+
+type ServerInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
 }
 
 type InitializeError struct {
