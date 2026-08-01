@@ -29,6 +29,51 @@
         ]
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "bqls",
+          "title": "BigQuery",
+          "icon": "media/bqls.svg"
+        }
+      ]
+    },
+    "views": {
+      "bqls": [
+        {
+          "id": "bqlsDatasetExplorer",
+          "name": "Datasets"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "bqls.refreshDatasetExplorer",
+        "title": "Refresh",
+        "icon": "$(refresh)",
+        "category": "BigQuery"
+      },
+      {
+        "command": "bqls.searchTablesInExplorer",
+        "title": "Search Tables",
+        "icon": "$(search)",
+        "category": "BigQuery"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "bqls.refreshDatasetExplorer",
+          "when": "view == bqlsDatasetExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "bqls.searchTablesInExplorer",
+          "when": "view == bqlsDatasetExplorer",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "type": "object",
       "title": "bqls",
