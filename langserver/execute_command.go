@@ -28,6 +28,7 @@ const (
 	CommandListJobHistories = "bqls.listJobHistories"
 	CommandSaveResult       = "bqls.saveResult"
 	CommandSearchTables     = "bqls.searchTables"
+	CommandListProjects     = "bqls.listProjects"
 )
 
 const (
@@ -103,6 +104,8 @@ func (h *Handler) handleWorkspaceExecuteCommand(ctx context.Context, conn *jsonr
 		return h.commandSaveResult(ctx, params)
 	case CommandSearchTables:
 		return h.commandSearchTables(ctx, params)
+	case CommandListProjects:
+		return h.commandListProjects(ctx, params)
 	default:
 		return nil, fmt.Errorf("unknown command: %s", params.Command)
 	}
@@ -134,6 +137,32 @@ func (h *Handler) commandExecuteQuery(ctx context.Context, params lsp.ExecuteCom
 		TextDocument: lsp.TextDocumentIdentifier{
 			URI: lsp.NewJobVirtualTextDocumentURI(job.ProjectID(), job.ID(), job.Location()),
 		},
+	}, nil
+}
+
+func (h *Handler) commandListProjects(ctx context.Context, params lsp.ExecuteCommandParams) (*lsp.ListProjectsResult, error) {
+	workDoneToken := lsp.ProgressToken("list_projects")
+	h.workDoneProgressBegin(ctx, workDoneToken, lsp.WorkDoneProgressBegin{
+		Title:   "List projects",
+		Message: "Loading projects...",
+	})
+	defer h.workDoneProgressEnd(ctx, workDoneToken, lsp.WorkDoneProgressEnd{})
+
+	projects, err := h.bqClient.ListProjects(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]lsp.ProjectInfo, 0, len(projects))
+	for _, p := range projects {
+		results = append(results, lsp.ProjectInfo{
+			ProjectID: p.ProjectId,
+			Name:      p.Name,
+		})
+	}
+
+	return &lsp.ListProjectsResult{
+		Projects: results,
 	}, nil
 }
 

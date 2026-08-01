@@ -56,6 +56,8 @@ func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req
 					CommandListTables,
 					CommandListJobHistories,
 					CommandSaveResult,
+					CommandSearchTables,
+					CommandListProjects,
 				},
 			},
 		},
