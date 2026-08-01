@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"cloud.google.com/go/bigquery"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 	"google.golang.org/api/cloudresourcemanager/v1"
 )
 
@@ -24,7 +24,7 @@ func newDB() (*database, error) {
 	}
 
 	path = filepath.Join(path, "cache.sqlite3")
-	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s", path))
+	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s", path))
 	if err != nil {
 		return nil, fmt.Errorf("sql.Open: %w", err)
 	}
