@@ -40,6 +40,9 @@ jobs:
       - name: lint
         run: npm run lint
 
+      - name: format check
+        run: npm run format
+
       - name: type check
         run: npm run compile
 
