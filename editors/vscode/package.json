@@ -142,7 +142,7 @@
     "build": "node esbuild.js --production",
     "watch": "node esbuild.js --watch",
     "compile": "tsc --noEmit -p ./",
-    "lint": "eslint src",
+    "lint": "biome lint src",
     "test": "vitest run",
     "package": "vsce package",
     "publish": "vsce publish"
@@ -151,13 +151,11 @@
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.6",
     "@types/node": "^26.1.2",
     "@types/vscode": "^1.85.0",
-    "@typescript-eslint/eslint-plugin": "^8.65.0",
-    "@typescript-eslint/parser": "^8.65.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.1",
-    "eslint": "^8.57.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }
