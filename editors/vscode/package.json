@@ -1,162 +1,164 @@
 {
-  "name": "bqls",
-  "displayName": "bqls",
-  "description": "BigQuery language server client for VSCode",
-  "version": "0.1.0",
-  "publisher": "kitagry",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/kitagry/bqls"
-  },
-  "license": "MIT",
-  "engines": {
-    "vscode": "^1.85.0"
-  },
-  "categories": [
-    "Programming Languages"
-  ],
-  "activationEvents": [
-    "onLanguage:sql"
-  ],
-  "main": "./dist/extension.js",
-  "contributes": {
-    "languages": [
-      {
-        "id": "sql",
-        "extensions": [
-          ".sql",
-          ".bq"
-        ]
-      }
-    ],
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "bqls",
-          "title": "BigQuery",
-          "icon": "media/bqls.svg"
-        }
-      ]
-    },
-    "views": {
-      "bqls": [
-        {
-          "id": "bqlsDatasetExplorer",
-          "name": "Datasets"
-        }
-      ]
-    },
-    "commands": [
-      {
-        "command": "bqls.addProjectToExplorer",
-        "title": "Add Project…",
-        "icon": "$(add)",
-        "category": "BigQuery"
-      },
-      {
-        "command": "bqls.refreshDatasetExplorer",
-        "title": "Refresh",
-        "icon": "$(refresh)",
-        "category": "BigQuery"
-      },
-      {
-        "command": "bqls.searchTablesInExplorer",
-        "title": "Search Tables",
-        "icon": "$(search)",
-        "category": "BigQuery"
-      },
-      {
-        "command": "bqls.removeProjectFromExplorer",
-        "title": "Remove from BigQuery Explorer",
-        "icon": "$(trash)",
-        "category": "BigQuery"
-      }
-    ],
-    "menus": {
-      "view/title": [
-        {
-          "command": "bqls.addProjectToExplorer",
-          "when": "view == bqlsDatasetExplorer",
-          "group": "navigation"
-        },
-        {
-          "command": "bqls.refreshDatasetExplorer",
-          "when": "view == bqlsDatasetExplorer",
-          "group": "navigation"
-        },
-        {
-          "command": "bqls.searchTablesInExplorer",
-          "when": "view == bqlsDatasetExplorer",
-          "group": "navigation"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "bqls.removeProjectFromExplorer",
-          "when": "view == bqlsDatasetExplorer && viewItem == bqlsProject"
-        }
-      ]
-    },
-    "configuration": {
-      "type": "object",
-      "title": "bqls",
-      "properties": {
-        "bqls.path": {
-          "type": "string",
-          "default": "bqls",
-          "description": "Path to the bqls executable."
-        },
-        "bqls.projectId": {
-          "type": "string",
-          "default": "",
-          "description": "BigQuery project ID. If empty, bqls uses `gcloud config get project`."
-        },
-        "bqls.projectIds": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": [],
-          "description": "BigQuery project IDs shown in the Datasets explorer view. Add more via the \"+\" button on the view, or edit this list directly. Independent of bqls.projectId."
-        },
-        "bqls.location": {
-          "type": "string",
-          "default": "",
-          "description": "BigQuery location (e.g. US, asia-northeast1). If empty, bqls uses \"US\"."
-        },
-        "bqls.trace.server": {
-          "type": "string",
-          "enum": [
-            "off",
-            "messages",
-            "verbose"
-          ],
-          "default": "off",
-          "description": "Trace communication between VSCode and the bqls language server."
-        }
-      }
-    }
-  },
-  "scripts": {
-    "vscode:prepublish": "npm run build",
-    "build": "node esbuild.js --production",
-    "watch": "node esbuild.js --watch",
-    "compile": "tsc --noEmit -p ./",
-    "lint": "biome lint src",
-    "test": "vitest run",
-    "package": "vsce package",
-    "publish": "vsce publish"
-  },
-  "dependencies": {
-    "vscode-languageclient": "^9.0.1"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "^2.5.6",
-    "@types/node": "^26.1.2",
-    "@types/vscode": "^1.85.0",
-    "@vscode/vsce": "^3.9.2",
-    "esbuild": "^0.28.1",
-    "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
-  }
+	"name": "bqls",
+	"displayName": "bqls",
+	"description": "BigQuery language server client for VSCode",
+	"version": "0.1.0",
+	"publisher": "kitagry",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/kitagry/bqls"
+	},
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.85.0"
+	},
+	"categories": [
+		"Programming Languages"
+	],
+	"activationEvents": [
+		"onLanguage:sql"
+	],
+	"main": "./dist/extension.js",
+	"contributes": {
+		"languages": [
+			{
+				"id": "sql",
+				"extensions": [
+					".sql",
+					".bq"
+				]
+			}
+		],
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "bqls",
+					"title": "BigQuery",
+					"icon": "media/bqls.svg"
+				}
+			]
+		},
+		"views": {
+			"bqls": [
+				{
+					"id": "bqlsDatasetExplorer",
+					"name": "Datasets"
+				}
+			]
+		},
+		"commands": [
+			{
+				"command": "bqls.addProjectToExplorer",
+				"title": "Add Project…",
+				"icon": "$(add)",
+				"category": "BigQuery"
+			},
+			{
+				"command": "bqls.refreshDatasetExplorer",
+				"title": "Refresh",
+				"icon": "$(refresh)",
+				"category": "BigQuery"
+			},
+			{
+				"command": "bqls.searchTablesInExplorer",
+				"title": "Search Tables",
+				"icon": "$(search)",
+				"category": "BigQuery"
+			},
+			{
+				"command": "bqls.removeProjectFromExplorer",
+				"title": "Remove from BigQuery Explorer",
+				"icon": "$(trash)",
+				"category": "BigQuery"
+			}
+		],
+		"menus": {
+			"view/title": [
+				{
+					"command": "bqls.addProjectToExplorer",
+					"when": "view == bqlsDatasetExplorer",
+					"group": "navigation"
+				},
+				{
+					"command": "bqls.refreshDatasetExplorer",
+					"when": "view == bqlsDatasetExplorer",
+					"group": "navigation"
+				},
+				{
+					"command": "bqls.searchTablesInExplorer",
+					"when": "view == bqlsDatasetExplorer",
+					"group": "navigation"
+				}
+			],
+			"view/item/context": [
+				{
+					"command": "bqls.removeProjectFromExplorer",
+					"when": "view == bqlsDatasetExplorer && viewItem == bqlsProject"
+				}
+			]
+		},
+		"configuration": {
+			"type": "object",
+			"title": "bqls",
+			"properties": {
+				"bqls.path": {
+					"type": "string",
+					"default": "bqls",
+					"description": "Path to the bqls executable."
+				},
+				"bqls.projectId": {
+					"type": "string",
+					"default": "",
+					"description": "BigQuery project ID. If empty, bqls uses `gcloud config get project`."
+				},
+				"bqls.projectIds": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": [],
+					"description": "BigQuery project IDs shown in the Datasets explorer view. Add more via the \"+\" button on the view, or edit this list directly. Independent of bqls.projectId."
+				},
+				"bqls.location": {
+					"type": "string",
+					"default": "",
+					"description": "BigQuery location (e.g. US, asia-northeast1). If empty, bqls uses \"US\"."
+				},
+				"bqls.trace.server": {
+					"type": "string",
+					"enum": [
+						"off",
+						"messages",
+						"verbose"
+					],
+					"default": "off",
+					"description": "Trace communication between VSCode and the bqls language server."
+				}
+			}
+		}
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run build",
+		"build": "node esbuild.js --production",
+		"watch": "node esbuild.js --watch",
+		"compile": "tsc --noEmit -p ./",
+		"lint": "biome lint src",
+		"format": "biome format .",
+		"format:fix": "biome format --write .",
+		"test": "vitest run",
+		"package": "vsce package",
+		"publish": "vsce publish"
+	},
+	"dependencies": {
+		"vscode-languageclient": "^9.0.1"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.6",
+		"@types/node": "^26.1.2",
+		"@types/vscode": "^1.85.0",
+		"@vscode/vsce": "^3.9.2",
+		"esbuild": "^0.28.1",
+		"typescript": "^7.0.2",
+		"vitest": "^4.1.10"
+	}
 }
