@@ -11,7 +11,7 @@ require (
 	cloud.google.com/go/bigquery v1.79.0
 	github.com/JohannesKaufmann/html-to-markdown v1.5.0
 	github.com/PuerkitoBio/goquery v1.11.0
-	github.com/goccy/go-googlesql v0.3.0
+	github.com/goccy/go-googlesql v0.4.0
 	github.com/golang/mock v1.6.0
 	github.com/sirupsen/logrus v1.9.3
 	golang.org/x/text v0.38.0
@@ -33,7 +33,7 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
-	github.com/goccy/googlesqlwasm2go v0.1.0 // indirect
+	github.com/goccy/googlesqlwasm2go v0.2.0 // indirect
 	github.com/google/flatbuffers v23.5.26+incompatible // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
