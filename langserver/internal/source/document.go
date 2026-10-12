@@ -119,7 +119,9 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 	if selectColumnNode, ok := file.LookupNode[*googlesql.ASTSelectColumn](targetNode); ok {
 		column, err := p.getSelectColumnNodeToAnalyzedOutputColumnNode(output, selectColumnNode, termOffset)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get column info: %w", err)
+			// Not finding the column is not a failure of the request, so no hover is shown.
+			p.logger.Debugf("failed to get column info: %v", err)
+			return nil, nil
 		}
 
 		tableName, _ := column.TableName()
@@ -414,7 +416,81 @@ func (p *Project) getSelectColumnNodeToAnalyzedOutputColumnNode(output *googlesq
 			return c, nil
 		}
 	}
+
+	if c, ok := getSelectColumnByPosition(targetScanNode, column); ok {
+		return c, nil
+	}
 	return nil, fmt.Errorf("failed to find column info")
+}
+
+// getSelectColumnByPosition finds the column by its position in the select
+// list. Pipe operators such as RENAME and AS change the names that SELECT
+// refers to without creating new columns, so the name does not always match
+// the resolved column.
+func getSelectColumnByPosition(scanNode googlesql.ResolvedScanNode, column *googlesql.ASTSelectColumn) (*googlesql.ResolvedColumn, bool) {
+	projectScan, ok := scanNode.(*googlesql.ResolvedProjectScan)
+	if !ok {
+		return nil, false
+	}
+	parent, err := column.Parent()
+	if err != nil {
+		return nil, false
+	}
+	selectList, ok := parent.(*googlesql.ASTSelectList)
+	if !ok {
+		return nil, false
+	}
+	columnLoc, err := column.GetParseLocationRange()
+	if err != nil || columnLoc == nil {
+		return nil, false
+	}
+
+	n, err := selectList.NumChildren()
+	if err != nil {
+		return nil, false
+	}
+	index := -1
+	starsBefore, starsAfter := 0, 0
+	for i := int32(0); i < n; i++ {
+		c, err := selectList.Columns(i)
+		if err != nil || c == nil {
+			return nil, false
+		}
+		expr, err := c.Expression()
+		if err != nil {
+			return nil, false
+		}
+		switch expr.(type) {
+		case *googlesql.ASTStar, *googlesql.ASTStarWithModifiers, *googlesql.ASTDotStar, *googlesql.ASTDotStarWithModifiers:
+			if index == -1 {
+				starsBefore++
+			} else {
+				starsAfter++
+			}
+			continue
+		}
+		loc, err := c.GetParseLocationRange()
+		if err != nil || loc == nil {
+			continue
+		}
+		if file.ParseLocStart(loc) == file.ParseLocStart(columnLoc) {
+			index = int(i)
+		}
+	}
+	if index == -1 {
+		return nil, false
+	}
+
+	// A star expands to an unknown number of columns, so the position is
+	// counted from the side that has no star.
+	columns, _ := projectScan.MutableColumnList()
+	switch {
+	case starsBefore == 0 && index < len(columns):
+		return columns[index], true
+	case starsAfter == 0 && len(columns)-(int(n)-index) >= 0:
+		return columns[len(columns)-(int(n)-index)], true
+	}
+	return nil, false
 }
 
 func (p *Project) listRefNamesForScanNode(scanNode googlesql.ResolvedScanNode) []string {
