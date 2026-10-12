@@ -150,6 +150,17 @@ func (c *Catalog) addTable(path []string) error {
 				_ = table.AddColumn2(col, false)
 			}
 		}
+		// BigQuery exposes _PARTITIONDATE only on daily ingestion-time partitioned tables.
+		tp := metadata.TimePartitioning
+		if tp.Field == "" && (tp.Type == "" || tp.Type == bq.DayPartitioningType) {
+			dateType, err := c.typeFactory.GetDate()
+			if err == nil {
+				col, err := googlesql.NewSimpleColumn(tableName, "_PARTITIONDATE", dateType, false, true)
+				if err == nil {
+					_ = table.AddColumn2(col, false)
+				}
+			}
+		}
 	}
 
 	if isWildCardTable(path) {
