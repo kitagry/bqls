@@ -1125,6 +1125,28 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 			expectedErrs:     []file.Error{},
 			expectedRNodeLen: 0,
 		},
+		// Error positions are byte offsets within the line, like errors in
+		// other statements; "あ" is 3 bytes and a tab is 1 byte.
+		"SET error after multibyte identifier": {
+			file: "DECLARE `あ` INT64;\nSET `あ` = UNKNOWN_FUNC();",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 1, Character: 12},
+				},
+			},
+			expectedRNodeLen: 0,
+		},
+		"SET error after tab": {
+			file: "DECLARE x INT64;\nSET\tx = UNKNOWN_FUNC();",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 1, Character: 8},
+				},
+			},
+			expectedRNodeLen: 0,
+		},
 		"SET with unknown function": {
 			file: "DECLARE x DATE;\nSET x = UNKNOWN_FUNC();",
 			expectedErrs: []file.Error{

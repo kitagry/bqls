@@ -181,17 +181,21 @@ func (a *Analyzer) analyzeAssignmentExpression(rawText string, stmt googlesql.AS
 	return err
 }
 
-// maskOutside blanks everything except rawText[start:end] while keeping the
-// byte length and newlines, so error positions reported for the result are
-// valid positions in rawText.
+// maskOutside blanks everything except rawText[start:end]. Each character
+// becomes one space and line breaks and tabs are kept, so the masked text has
+// the same code-point/tab column layout as rawText in GoogleSQL's eyes and
+// reported columns can be converted to byte offsets against rawText.
 func maskOutside(rawText string, start, end int) string {
-	b := []byte(rawText)
-	for i := range b {
-		if (i < start || i >= end) && b[i] != '\n' {
-			b[i] = ' '
+	var b strings.Builder
+	b.Grow(len(rawText))
+	for i, r := range rawText {
+		if (i >= start && i < end) || r == '\n' || r == '\r' || r == '\t' {
+			b.WriteRune(r)
+			continue
 		}
+		b.WriteByte(' ')
 	}
-	return string(b)
+	return b.String()
 }
 
 func (a *Analyzer) parseScript(src string) (*googlesql.ASTScript, error) {
