@@ -3,6 +3,8 @@ package lint_test
 import (
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/kitagry/bqls/langserver/internal/lint"
 )
 
@@ -139,6 +141,55 @@ func TestSuppressions_Suppressed(t *testing.T) {
 				if got := s.Suppressed(c.rule, c.line); got != c.want {
 					t.Errorf("Suppressed(%q, %d) = %v, want %v", c.rule, c.line, got, c.want)
 				}
+			}
+		})
+	}
+}
+
+func TestParseIgnoreLine(t *testing.T) {
+	tests := map[string]struct {
+		line   string
+		wantOK bool
+		want   lint.IgnoreLine
+	}{
+		"line comment with rules": {
+			line:   "  -- bqls:ignore a, b",
+			wantOK: true,
+			want:   lint.IgnoreLine{Rules: []string{"a", "b"}, RulesEnd: 21},
+		},
+		"explanation after rules": {
+			line:   "-- bqls:ignore a -- because",
+			wantOK: true,
+			want:   lint.IgnoreLine{Rules: []string{"a"}, RulesEnd: 16},
+		},
+		"block comment": {
+			line:   "/* bqls:ignore a */",
+			wantOK: true,
+			want:   lint.IgnoreLine{Rules: []string{"a"}, RulesEnd: 16},
+		},
+		"hash comment ignoring all rules": {
+			line:   "# bqls:ignore",
+			wantOK: true,
+			want:   lint.IgnoreLine{RulesEnd: 13},
+		},
+		"trailing directive after code is not standalone": {
+			line: "SELECT 1 -- bqls:ignore a",
+		},
+		"block comment followed by code is not standalone": {
+			line: "/* bqls:ignore a */ SELECT 1",
+		},
+		"plain comment": {
+			line: "-- hello",
+		},
+	}
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			got, ok := lint.ParseIgnoreLine(tt.line)
+			if ok != tt.wantOK {
+				t.Fatalf("ParseIgnoreLine() ok = %v, want %v", ok, tt.wantOK)
+			}
+			if diff := cmp.Diff(tt.want, got); ok && diff != "" {
+				t.Errorf("ParseIgnoreLine() diff (-want +got):\n%s", diff)
 			}
 		})
 	}

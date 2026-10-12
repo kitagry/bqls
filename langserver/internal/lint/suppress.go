@@ -125,21 +125,84 @@ func parseDirective(body string) ([]string, bool) {
 	if !ok {
 		return nil, false
 	}
-	if rest != "" && !strings.ContainsAny(rest[:1], " \t,") {
-		return nil, false
-	}
+	rules, _, ok := scanRules(rest)
+	return rules, ok
+}
 
+// scanRules parses the rule list that follows `bqls:ignore` and returns the
+// byte offset in rest just after the last rule name.
+func scanRules(rest string) ([]string, int, bool) {
+	if rest != "" && !strings.ContainsAny(rest[:1], " \t,") {
+		return nil, 0, false
+	}
 	var rules []string
-	for _, f := range strings.FieldsFunc(rest, func(r rune) bool {
-		return r == ',' || r == ' ' || r == '\t'
-	}) {
+	end := 0
+	i := 0
+	for i < len(rest) {
+		if strings.ContainsRune(" \t,", rune(rest[i])) {
+			i++
+			continue
+		}
+		j := i
+		for j < len(rest) && !strings.ContainsRune(" \t,", rune(rest[j])) {
+			j++
+		}
+		tok := rest[i:j]
 		// Allow an explanation after the rule list, e.g. `-- bqls:ignore rule -- reason`.
-		if strings.HasPrefix(f, "--") {
+		if strings.HasPrefix(tok, "--") {
 			break
 		}
-		rules = append(rules, f)
+		rules = append(rules, tok)
+		end = j
+		i = j
 	}
-	return rules, true
+	return rules, end, true
+}
+
+// IgnoreLine is a line consisting only of a `bqls:ignore` comment.
+type IgnoreLine struct {
+	// Rules is empty when every rule is ignored.
+	Rules []string
+	// RulesEnd is the byte offset in the line where another rule name can be
+	// appended.
+	RulesEnd int
+}
+
+// ParseIgnoreLine reports whether line is a standalone `bqls:ignore`
+// directive, which ParseSuppressions applies to the following line.
+func ParseIgnoreLine(line string) (IgnoreLine, bool) {
+	trimmed := strings.TrimLeft(line, " \t")
+	bodyStart := len(line) - len(trimmed)
+	var body string
+	switch {
+	case strings.HasPrefix(trimmed, "--"):
+		bodyStart += 2
+		body = line[bodyStart:]
+	case strings.HasPrefix(trimmed, "#"):
+		bodyStart++
+		body = line[bodyStart:]
+	case strings.HasPrefix(trimmed, "/*"):
+		end := strings.Index(trimmed, "*/")
+		if end < 0 || strings.TrimSpace(trimmed[end+2:]) != "" {
+			return IgnoreLine{}, false
+		}
+		bodyStart += 2
+		body = trimmed[2:end]
+	default:
+		return IgnoreLine{}, false
+	}
+
+	afterSpace := strings.TrimLeft(body, " \t")
+	rest, ok := strings.CutPrefix(afterSpace, ignoreDirective)
+	if !ok {
+		return IgnoreLine{}, false
+	}
+	rules, end, ok := scanRules(rest)
+	if !ok {
+		return IgnoreLine{}, false
+	}
+	directiveStart := bodyStart + len(body) - len(afterSpace)
+	return IgnoreLine{Rules: rules, RulesEnd: directiveStart + len(ignoreDirective) + end}, true
 }
 
 // skipQuoted returns the offset just after the string literal or quoted

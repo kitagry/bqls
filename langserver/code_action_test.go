@@ -92,3 +92,25 @@ func TestHandler_handleTextDocumentCodeAction_Lint(t *testing.T) {
 		})
 	}
 }
+
+func TestHandler_handleTextDocumentCodeAction_ExtendsExistingIgnore(t *testing.T) {
+	const uri lsp.DocumentURI = "file:///a.sql"
+	const src = "SELECT x\nFROM UNNEST([1]) AS x\n  -- bqls:ignore other-rule -- legacy\n  WHERE x = CAST(NULL AS INT64)"
+	h := newTestHandlerWithFile(t, uri, src)
+	h.initializeParams.Capabilities.TextDocument.CodeAction.CodeActionLiteralSupport.CodeActionKind.ValueSet = []lsp.CodeActionKind{lsp.CAKQuickFix}
+
+	pos := lsp.Position{Line: 3, Character: 10}
+	actions := h.lintCodeActions(t.Context(), uri, lsp.Range{Start: pos, End: pos})
+
+	var got []lsp.TextEdit
+	for _, a := range actions {
+		if ca, ok := a.(lsp.CodeAction); ok && ca.Title == "Ignore null-comparison on this line" {
+			got = ca.Edit.Changes[string(uri)]
+		}
+	}
+	insertAt := lsp.Position{Line: 2, Character: 27}
+	want := []lsp.TextEdit{{Range: lsp.Range{Start: insertAt, End: insertAt}, NewText: ", null-comparison"}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("ignore edit diff (-want +got):\n%s", diff)
+	}
+}

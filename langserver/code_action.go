@@ -49,7 +49,9 @@ func (h *Handler) lintCodeActions(ctx context.Context, uri lsp.DocumentURI, rng 
 			continue
 		}
 		ignored[key] = true
-		result = append(result, ignoreCodeAction(uri, lines, d.Rule, d.Range.Start.Line, lspDiag))
+		if action, ok := ignoreCodeAction(uri, src, lines, d.Rule, d.Range.Start.Line, lspDiag); ok {
+			result = append(result, action)
+		}
 	}
 	return result
 }
@@ -64,24 +66,41 @@ func (h *Handler) supportsCodeActionLiterals() bool {
 
 // ignoreCodeAction inserts a standalone directive above the line rather than
 // a trailing one, so it never lands inside a multi-line expression's tail.
-func ignoreCodeAction(uri lsp.DocumentURI, lines []string, rule string, line int, diag lsp.Diagnostic) lsp.CodeAction {
-	var indent string
-	if line < len(lines) {
-		text := lines[line]
-		indent = text[:len(text)-len(strings.TrimLeft(text, " \t"))]
+// When the line above already is a standalone directive, the rule is appended
+// to it instead, because a new line would push that directive off its target.
+func ignoreCodeAction(uri lsp.DocumentURI, src string, lines []string, rule string, line int, diag lsp.Diagnostic) (lsp.CodeAction, bool) {
+	var edit lsp.TextEdit
+	if prev, ok := previousIgnoreLine(lines, line); ok {
+		if len(prev.Rules) == 0 {
+			return lsp.CodeAction{}, false
+		}
+		pos := lsp.Position{Line: line - 1, Character: prev.RulesEnd}
+		edit = lsp.TextEdit{Range: lsp.Range{Start: pos, End: pos}, NewText: ", " + rule}
+		if !lint.EditsASCIISafe(src, []lsp.TextEdit{edit}) {
+			return lsp.CodeAction{}, false
+		}
+	} else {
+		var indent string
+		if line < len(lines) {
+			text := lines[line]
+			indent = text[:len(text)-len(strings.TrimLeft(text, " \t"))]
+		}
+		pos := lsp.Position{Line: line}
+		edit = lsp.TextEdit{Range: lsp.Range{Start: pos, End: pos}, NewText: fmt.Sprintf("%s-- bqls:ignore %s\n", indent, rule)}
 	}
-	pos := lsp.Position{Line: line}
 	return lsp.CodeAction{
 		Title:       fmt.Sprintf("Ignore %s on this line", rule),
 		Kind:        lsp.CAKQuickFix,
 		Diagnostics: []lsp.Diagnostic{diag},
-		Edit: &lsp.WorkspaceEdit{Changes: map[string][]lsp.TextEdit{
-			string(uri): {{
-				Range:   lsp.Range{Start: pos, End: pos},
-				NewText: fmt.Sprintf("%s-- bqls:ignore %s\n", indent, rule),
-			}},
-		}},
+		Edit:        &lsp.WorkspaceEdit{Changes: map[string][]lsp.TextEdit{string(uri): {edit}}},
+	}, true
+}
+
+func previousIgnoreLine(lines []string, line int) (lint.IgnoreLine, bool) {
+	if line == 0 || line > len(lines) {
+		return lint.IgnoreLine{}, false
 	}
+	return lint.ParseIgnoreLine(lines[line-1])
 }
 
 func rangesOverlap(a, b lsp.Range) bool {
