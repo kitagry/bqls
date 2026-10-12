@@ -741,6 +741,38 @@ func TestProject_ParseFile(t *testing.T) {
 				},
 			},
 		},
+		"unknown column in GROUP BY of pipe AGGREGATE": {
+			file: "FROM `project.dataset.table` |> AGGREGATE COUNT(*) GROUP BY unknown",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg:                  "Unrecognized name: unknown",
+					Position:             lsp.Position{Line: 0, Character: 60},
+					TermLength:           7,
+					IncompleteColumnName: "unknown",
+				},
+			},
+		},
+		"unknown column in pipe ORDER BY": {
+			file: "FROM `project.dataset.table` |> ORDER BY unknown",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg:                  "Unrecognized name: unknown",
+					Position:             lsp.Position{Line: 0, Character: 41},
+					TermLength:           7,
+					IncompleteColumnName: "unknown",
+				},
+			},
+		},
 		"parse with clause only": {
 			file: "WITH t1 AS (SELECT * FROM `project.dataset.table` t1)\n",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{

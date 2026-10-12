@@ -372,7 +372,12 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				} else if _, ok := SearchAstNode[*googlesql.ASTWhereClause](node, errTermOffset); ok {
 					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
 				} else if _, ok := SearchAstNode[*googlesql.ASTGroupBy](node, errTermOffset); ok {
-					fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
+					if _, ok := SearchAstNode[*googlesql.ASTPipeAggregate](node, errTermOffset); ok {
+						// Pipe AGGREGATE rejects both GROUP BY ordinals and literals.
+						fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "1+1")
+					} else {
+						fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
+					}
 				} else if _, ok := SearchAstNode[*googlesql.ASTOrderBy](node, errTermOffset); ok {
 					fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
 				} else if _, ok := SearchAstNode[*googlesql.ASTOnClause](node, errTermOffset); ok {
