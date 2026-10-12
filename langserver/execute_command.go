@@ -63,6 +63,7 @@ func (h *Handler) handleTextDocumentCodeAction(ctx context.Context, conn *jsonrp
 		}
 		return commands, nil
 	}
+	actions := h.lintCodeActions(ctx, params.TextDocument.URI, params.Range)
 	commands := []lsp.Command{
 		{
 			Title:     "Execute Query",
@@ -79,7 +80,10 @@ func (h *Handler) handleTextDocumentCodeAction(ctx context.Context, conn *jsonrp
 			Arguments: []any{"--all-user"},
 		},
 	}
-	return commands, nil
+	for _, c := range commands {
+		actions = append(actions, c)
+	}
+	return actions, nil
 }
 
 func (h *Handler) handleWorkspaceExecuteCommand(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
