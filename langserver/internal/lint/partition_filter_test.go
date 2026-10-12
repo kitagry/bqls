@@ -285,6 +285,22 @@ func TestPartitionFilter(t *testing.T) {
 		"COUNT(*) over a subquery reads no column": {
 			src: "SELECT COUNT(*) FROM (SELECT x FROM p.d.by_col)",
 		},
+		"COUNT(*) over UNION ALL reads no column": {
+			src: "SELECT COUNT(*) FROM (SELECT x FROM p.d.by_col UNION ALL SELECT x FROM p.d.plain)",
+		},
+		// Deduplicating or matching rows reads every column of the inputs.
+		"COUNT(*) over UNION DISTINCT": {
+			src:  "SELECT COUNT(*) FROM (SELECT x FROM p.d.by_col UNION DISTINCT SELECT x FROM p.d.plain)",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"COUNT(*) over EXCEPT DISTINCT": {
+			src:  "SELECT COUNT(*) FROM (SELECT x FROM p.d.by_col EXCEPT DISTINCT SELECT x FROM p.d.plain)",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"COUNT(*) over INTERSECT DISTINCT": {
+			src:  "SELECT COUNT(*) FROM (SELECT x FROM p.d.plain INTERSECT DISTINCT SELECT x FROM p.d.by_col)",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
 		"COUNT(*) is still rejected when a partition filter is required": {
 			src:  "SELECT COUNT(*) FROM p.d.required",
 			want: []report{{sub: "p.d.required", table: "p.d.required", columns: "`dt`", consequence: reject}},

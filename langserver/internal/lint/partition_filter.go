@@ -185,10 +185,13 @@ func analyzeColumnFlow(stmt googlesql.ResolvedStatementNode) (*columnFlow, bool)
 		case *googlesql.ResolvedSetOperationScan:
 			items, err := n.InputItemList()
 			out, err2 := n.ColumnList()
-			if err != nil || err2 != nil {
+			op, err3 := n.OpType()
+			if err != nil || err2 != nil || err3 != nil {
 				ok = false
 				break
 			}
+			// Every operation but UNION ALL compares rows, reading all input columns.
+			compares := op != googlesql.ResolvedSetOperationScanEnums_SetOperationTypeUnionAll
 			for _, item := range items {
 				in, err := item.OutputColumnList()
 				if err != nil || len(in) != len(out) {
@@ -197,6 +200,11 @@ func analyzeColumnFlow(stmt googlesql.ResolvedStatementNode) (*columnFlow, bool)
 				}
 				for i, c := range out {
 					derive(c, columnIDs(in[i:i+1]))
+				}
+				if compares {
+					for _, id := range columnIDs(in) {
+						flow.used[id] = true
+					}
 				}
 			}
 		case *googlesql.ResolvedUpdateStmt:
