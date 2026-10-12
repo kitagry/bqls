@@ -142,10 +142,14 @@ func (c *Catalog) addTable(path []string) error {
 		}
 	}
 
-	if metadata.TimePartitioning != nil {
+	// Partition pseudo columns exist only on ingestion-time partitioned tables;
+	// column-partitioned tables filter on their partitioning column instead.
+	if metadata.TimePartitioning != nil && metadata.TimePartitioning.Field == "" {
+		// Pseudo so that it stays out of SELECT *, but writable because BigQuery
+		// accepts INSERT INTO t (_PARTITIONTIME, ...) on ingestion-time tables.
 		tsType, err := c.typeFactory.GetTimestamp()
 		if err == nil {
-			col, err := googlesql.NewSimpleColumn(tableName, "_PARTITIONTIME", tsType, false, true)
+			col, err := googlesql.NewSimpleColumn(tableName, "_PARTITIONTIME", tsType, true, true)
 			if err == nil {
 				_ = table.AddColumn2(col, false)
 			}

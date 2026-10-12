@@ -89,7 +89,7 @@ func TestCatalog_AddTable(t *testing.T) {
 				return bqClient
 			},
 			expectTableName:   "project.dataset.table",
-			expectColumnNames: []string{"name", "_PARTITIONTIME"},
+			expectColumnNames: []string{"name"},
 		},
 	}
 
@@ -168,7 +168,7 @@ func TestCatalog_shouldNotGetSchemaTwice(t *testing.T) {
 	}
 }
 
-func TestCatalog_PartitionDatePseudoColumn(t *testing.T) {
+func TestCatalog_PartitionPseudoColumns(t *testing.T) {
 	tables := map[string]*bq.TableMetadata{
 		"daily": {
 			TimePartitioning: &bq.TimePartitioning{Type: bq.DayPartitioningType},
@@ -244,9 +244,33 @@ func TestCatalog_PartitionDatePseudoColumn(t *testing.T) {
 			}
 			got = append(got, name)
 		}
-		// _PARTITIONTIME is still a regular column; see #387.
-		if diff := cmp.Diff([]string{"x", "_PARTITIONTIME"}, got); diff != "" {
+		if diff := cmp.Diff([]string{"x"}, got); diff != "" {
 			t.Errorf("SELECT * columns diff (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("_PARTITIONTIME referenced by name on ingestion-time tables", func(t *testing.T) {
+		for _, table := range []string{"daily", "untyped", "hourly"} {
+			parsed := parse(t, "SELECT _PARTITIONTIME FROM p.d."+table)
+			if len(parsed.Errors) > 0 {
+				t.Errorf("%s: unexpected errors: %v", table, parsed.Errors)
+			}
+		}
+	})
+
+	t.Run("_PARTITIONTIME absent elsewhere", func(t *testing.T) {
+		for _, table := range []string{"by_col", "plain"} {
+			parsed := parse(t, "SELECT _PARTITIONTIME FROM p.d."+table)
+			if len(parsed.Errors) == 0 {
+				t.Errorf("%s: _PARTITIONTIME resolved, want an error", table)
+			}
+		}
+	})
+
+	t.Run("_PARTITIONTIME writable", func(t *testing.T) {
+		parsed := parse(t, "INSERT INTO p.d.daily (_PARTITIONTIME, x) SELECT CURRENT_TIMESTAMP(), x FROM p.d.daily")
+		if len(parsed.Errors) > 0 {
+			t.Errorf("unexpected errors: %v", parsed.Errors)
 		}
 	})
 
