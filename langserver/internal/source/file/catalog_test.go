@@ -257,3 +257,90 @@ func TestCatalog_PartitionDatePseudoColumn(t *testing.T) {
 		}
 	})
 }
+
+func TestCatalog_PreloadDMLTargets(t *testing.T) {
+	tests := map[string]struct {
+		src string
+		// tables in p.d that must be fetched; any other GetTableMetadata call fails the test.
+		tables []string
+		// errors to tolerate because they come from bugs outside DML target preloading.
+		tolerate func(file.Error) bool
+	}{
+		"INSERT INTO ... SELECT": {
+			src:    "INSERT INTO p.d.t (x) SELECT 1",
+			tables: []string{"t"},
+		},
+		"INSERT without INTO": {
+			src:    "INSERT p.d.t (x) VALUES (1)",
+			tables: []string{"t"},
+		},
+		"INSERT with backticked path": {
+			src:    "INSERT `p.d.t` (x) VALUES (1)",
+			tables: []string{"t"},
+		},
+		"INSERT with dataset-qualified path": {
+			src:    "INSERT d.t (x) VALUES (1)",
+			tables: []string{"t"},
+			// The table is fetched with the default project, but the analyzer
+			// cannot resolve 2-part names yet, even in FROM.
+			tolerate: func(e file.Error) bool { return e.Msg == "Table not found: d.t" },
+		},
+		"UPDATE with alias": {
+			src:    "UPDATE p.d.t AS u SET x = 1 WHERE true",
+			tables: []string{"t"},
+		},
+		"UPDATE with FROM": {
+			src:    "UPDATE p.d.t SET x = s.x FROM p.d.s s WHERE true",
+			tables: []string{"t", "s"},
+		},
+		"DELETE FROM": {
+			src:    "DELETE FROM p.d.t WHERE true",
+			tables: []string{"t"},
+		},
+		"DELETE without FROM": {
+			src:    "DELETE p.d.t WHERE true",
+			tables: []string{"t"},
+		},
+		"MERGE USING table": {
+			src:    "MERGE p.d.t T USING p.d.s S ON T.x = S.x WHEN MATCHED THEN UPDATE SET x = S.x",
+			tables: []string{"t", "s"},
+		},
+		"MERGE USING subquery": {
+			src:    "MERGE p.d.t T USING (SELECT 1 AS x) S ON T.x = S.x WHEN NOT MATCHED THEN INSERT (x) VALUES (S.x)",
+			tables: []string{"t"},
+		},
+		"DML inside BEGIN END": {
+			src:    "BEGIN\n  DELETE FROM p.d.t WHERE true;\nEND;",
+			tables: []string{"t"},
+			// BEGIN...END itself is reported as unsupported.
+			tolerate: func(e file.Error) bool { return !strings.Contains(e.Msg, "Table not found") },
+		},
+		"nested DML targets are array columns": {
+			src:    "UPDATE p.d.t SET (DELETE FROM arr WHERE true), (INSERT d.arr VALUES (1)) WHERE true",
+			tables: []string{"t"},
+			// Nested DML is analyzed standalone and fails to resolve the array column.
+			tolerate: func(file.Error) bool { return true },
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+			for _, table := range tt.tables {
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "p", "d", table).
+					Return(&bq.TableMetadata{Schema: bq.Schema{
+						{Name: "x", Type: bq.IntegerFieldType},
+						{Name: "arr", Type: bq.IntegerFieldType, Repeated: true},
+					}}, nil).MinTimes(1)
+			}
+
+			parsed := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("file:///a.sql", tt.src)
+			for _, e := range parsed.Errors {
+				if tt.tolerate == nil || !tt.tolerate(e) {
+					t.Errorf("unexpected error: %s", e.Msg)
+				}
+			}
+		})
+	}
+}
