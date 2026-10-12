@@ -344,7 +344,10 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) 
 //
 //	SELECT 1 FROM table
 func fixSelectListMustNotBeEmptyStatement(src string, parsedErr Error) (fixedSrc string, err Error, fixOffsets []FixOffset) {
-	errOffset := positionToByteOffset(src, parsedErr.Position)
+	errOffset, ok := errorByteOffset(src, parsedErr.Position)
+	if !ok {
+		return src, parsedErr, nil
+	}
 	return src[:errOffset] + "1 " + src[errOffset:], parsedErr, []FixOffset{
 		{
 			Offset: errOffset,
@@ -388,7 +391,10 @@ func fixUnexpectedEndOfScript(src string, parsedErr Error) (fixedSrc string, err
 
 // `WITH t1 AS (SELECT 1)` return error Expected "(" or "," or keyword SELECT but got end of script
 func fixOnlyWithClauseSyntaxError(src string, parsedErr Error) (fixedSrc string, err Error, fixOffsets []FixOffset) {
-	errOffset := positionToByteOffset(src, parsedErr.Position)
+	errOffset, ok := errorByteOffset(src, parsedErr.Position)
+	if !ok {
+		return src, parsedErr, nil
+	}
 	return src[:errOffset] + " SELECT 1 " + src[errOffset:], parsedErr, []FixOffset{
 		{
 			Offset: errOffset,
@@ -405,7 +411,10 @@ func fixOnlyWithClauseSyntaxError(src string, parsedErr Error) (fixedSrc string,
 //
 //	SELECT * FROM table
 func fixUnexpectedEndOfScriptWithDeletion(src string, parsedErr Error, targetUnexpectedEndKeyword []string) (fixedSrc string, err Error, fixOffsets []FixOffset) {
-	errOffset := positionToByteOffset(src, parsedErr.Position)
+	errOffset, ok := errorByteOffset(src, parsedErr.Position)
+	if !ok {
+		return src, parsedErr, nil
+	}
 
 	oneLineSrc := strings.Join(strings.Fields(src), " ")
 	targetIndex := -1
@@ -443,7 +452,10 @@ func fixUnexpectedEndOfScriptWithDeletion(src string, parsedErr Error, targetUne
 //
 //	SELECT * FROM table WHERE 1=1
 func fixUnexpectedEndOfScriptWithCondition(src string, parsedErr Error, targetUnexpectedEndKeyword []string) (fixedSrc string, err Error, fixOffsets []FixOffset) {
-	errOffset := positionToByteOffset(src, parsedErr.Position)
+	errOffset, ok := errorByteOffset(src, parsedErr.Position)
+	if !ok {
+		return src, parsedErr, nil
+	}
 
 	oneLineSrc := strings.Join(strings.Fields(src), " ")
 	targetIndex := -1
@@ -484,12 +496,15 @@ func addInformationToUnrecognizedNameError(src string, parsedErr Error) Error {
 }
 
 func fixDeclarationError(src string, parsedErr Error, defaultVal string) (fixedSrc string, fixOffsets []FixOffset) {
-	errOffset := positionToByteOffset(src, parsedErr.Position)
-	if errOffset == 0 || errOffset == len(src) {
+	errOffset, ok := errorByteOffset(src, parsedErr.Position)
+	if !ok || errOffset == 0 || errOffset == len(src) {
 		return src, nil
 	}
 
 	replaceOffset := errOffset + parsedErr.TermLength - len(parsedErr.IncompleteColumnName)
+	if replaceOffset < 0 || replaceOffset+len(parsedErr.IncompleteColumnName) > len(src) {
+		return src, nil
+	}
 	fixedSrc = src[:replaceOffset] + defaultVal + src[replaceOffset+len(parsedErr.IncompleteColumnName):]
 	fixOffset := FixOffset{
 		Offset: errOffset,
@@ -507,12 +522,15 @@ func fixDeclarationError(src string, parsedErr Error, defaultVal string) (fixedS
 //
 //	SELECT 1 FROM table AS t
 func fixErrorToLiteral(src string, parsedErr Error) (fixedSrc string, fixOffsets []FixOffset) {
-	errOffset := positionToByteOffset(src, parsedErr.Position)
-	if errOffset == 0 || errOffset == len(src) {
+	errOffset, ok := errorByteOffset(src, parsedErr.Position)
+	if !ok || errOffset == 0 || errOffset == len(src) {
 		return src, nil
 	}
 
 	replaceOffset := errOffset + parsedErr.TermLength - len(parsedErr.IncompleteColumnName)
+	if replaceOffset < 0 || replaceOffset+len(parsedErr.IncompleteColumnName) > len(src) {
+		return src, nil
+	}
 	fixedSrc = src[:replaceOffset] + "1" + src[replaceOffset+len(parsedErr.IncompleteColumnName):]
 	fixOffset := FixOffset{
 		Offset: errOffset,
@@ -530,8 +548,8 @@ func fixErrorToLiteral(src string, parsedErr Error) (fixedSrc string, fixOffsets
 //
 //	SELECT * FROM table WHERE true
 func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, parsedErr Error) (fixedSrc string, fixOffsets []FixOffset) {
-	errOffset := positionToByteOffset(src, parsedErr.Position)
-	if errOffset == 0 || errOffset == len(src) {
+	errOffset, ok := errorByteOffset(src, parsedErr.Position)
+	if !ok || errOffset == 0 || errOffset == len(src) {
 		return src, nil
 	}
 
@@ -553,6 +571,9 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 		// e.x.) SELECT * FROM table WHERE unexist_column
 		incompleteOffset := errOffset + parsedErr.TermLength - len(parsedErr.IncompleteColumnName)
 		replacedLength := len(parsedErr.IncompleteColumnName)
+		if incompleteOffset < 0 || incompleteOffset+replacedLength > len(src) {
+			return src, nil
+		}
 		fixedSrc = src[:incompleteOffset] + "true" + src[incompleteOffset+replacedLength:]
 		fixOffset.Length = len("true") - replacedLength
 	}
@@ -568,8 +589,8 @@ func addInformationToNotExistInStructError(src string, parsedErr Error) Error {
 	notExistColumn := parsedErr.Msg[ind+len("Field name "):]
 	notExistColumn = notExistColumn[:strings.Index(notExistColumn, " ")]
 
-	errOffset := positionToByteOffset(src, parsedErr.Position)
-	if errOffset == 0 || errOffset == len(src) {
+	errOffset, ok := errorByteOffset(src, parsedErr.Position)
+	if !ok || errOffset == 0 || errOffset == len(src) || errOffset+len(notExistColumn) > len(src) {
 		return parsedErr
 	}
 
@@ -588,8 +609,8 @@ func addInformationToNotFoundInsideTableError(src string, parsedErr Error) Error
 	notExistColumn := parsedErr.Msg[ind+len("Name "):]
 	notExistColumn = notExistColumn[:strings.Index(notExistColumn, " ")]
 
-	errOffset := positionToByteOffset(src, parsedErr.Position)
-	if errOffset == 0 || errOffset == len(src) {
+	errOffset, ok := errorByteOffset(src, parsedErr.Position)
+	if !ok || errOffset == 0 || errOffset == len(src) || errOffset+len(notExistColumn) > len(src) {
 		return parsedErr
 	}
 
@@ -611,6 +632,20 @@ func positionToByteOffset(sql string, position lsp.Position) int {
 	}
 	offset += position.Character
 	return offset
+}
+
+// errorByteOffset is positionToByteOffset for positions that come from error
+// messages. Fix-up functions slice the source with the result, so a position
+// outside of src is reported as not ok instead of being trusted.
+func errorByteOffset(src string, position lsp.Position) (int, bool) {
+	lines := strings.Split(src, "\n")
+	if position.Line < 0 || position.Line >= len(lines) {
+		return 0, false
+	}
+	if position.Character < 0 || position.Character > len(lines[position.Line]) {
+		return 0, false
+	}
+	return positionToByteOffset(src, position), true
 }
 
 func byteOffsetToPosition(sql string, offset int) (lsp.Position, bool) {
