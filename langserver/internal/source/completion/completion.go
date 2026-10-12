@@ -88,6 +88,7 @@ func createCompletionItemFromResolvedColumn(column *googlesql.ResolvedColumn, in
 	return CompletionItem{
 		Kind:    lsp.CIKField,
 		NewText: name,
+		Detail:  typeName,
 		Documentation: lsp.MarkupContent{
 			Kind:  lsp.MKPlainText,
 			Value: typeName,
@@ -101,6 +102,7 @@ func createCompletionItemFromStructField(field *googlesql.StructField, incomplet
 	return CompletionItem{
 		Kind:    lsp.CIKField,
 		NewText: field.Name,
+		Detail:  typeName,
 		Documentation: lsp.MarkupContent{
 			Kind:  lsp.MKPlainText,
 			Value: typeName,
@@ -110,6 +112,20 @@ func createCompletionItemFromStructField(field *googlesql.StructField, incomplet
 }
 
 func createCompletionItemFromSchema(schema *bq.FieldSchema, incompleteColumnName string) CompletionItem {
+	typeName := string(schema.Type)
+	switch schema.Type {
+	case bq.IntegerFieldType:
+		typeName = "INT64"
+	case bq.FloatFieldType:
+		typeName = "FLOAT64"
+	case bq.BooleanFieldType:
+		typeName = "BOOL"
+	case bq.RecordFieldType:
+		typeName = "STRUCT"
+	}
+	if schema.Repeated {
+		typeName = "ARRAY<" + typeName + ">"
+	}
 	detail := string(schema.Type)
 	if schema.Description != "" {
 		detail += "\n" + schema.Description
@@ -117,6 +133,7 @@ func createCompletionItemFromSchema(schema *bq.FieldSchema, incompleteColumnName
 	return CompletionItem{
 		Kind:    lsp.CIKField,
 		NewText: schema.Name,
+		Detail:  typeName,
 		Documentation: lsp.MarkupContent{
 			Kind:  lsp.MKPlainText,
 			Value: detail,

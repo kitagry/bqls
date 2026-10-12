@@ -38,6 +38,14 @@ func TestProject_CompleteColumns(t *testing.T) {
 							Name: "name",
 							Type: bq.StringFieldType,
 						},
+						{
+							Name:     "packages",
+							Type:     bq.RecordFieldType,
+							Repeated: true,
+							Schema: bq.Schema{
+								{Name: "carrier", Type: bq.StringFieldType},
+							},
+						},
 					},
 				},
 			},
@@ -45,6 +53,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INTEGER\nid description",
@@ -53,9 +62,19 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "name",
+					Detail:  "STRING",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "STRING",
+					},
+				},
+				{
+					Kind:    lsp.CIKField,
+					NewText: "packages",
+					Detail:  "ARRAY<STRUCT>",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "RECORD",
 					},
 				},
 			},
@@ -79,6 +98,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INTEGER\nid description",
@@ -114,6 +134,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "name",
+					Detail:  "STRING",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "STRING",
@@ -141,14 +162,16 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INT64",
 					},
 				},
 				{ // TODO: Refactoring test
-					Kind:    lsp.CIKField,
+					Kind:    lsp.CIKModule,
 					NewText: "data",
+					Detail:  "CTE",
 				},
 			},
 		},
@@ -171,6 +194,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INTEGER\nid description",
@@ -198,6 +222,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INTEGER\nid description",
@@ -231,6 +256,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INTEGER\nid description",
@@ -269,6 +295,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INTEGER\nid description",
@@ -301,6 +328,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INTEGER\nid description",
@@ -334,6 +362,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INTEGER\nid description",
@@ -366,6 +395,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INT64",
@@ -392,6 +422,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INTEGER\nid description",
@@ -418,6 +449,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INTEGER\nid description",
@@ -444,6 +476,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INTEGER\nid description",
@@ -471,6 +504,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INT64",
@@ -495,14 +529,16 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:          lsp.CIKField,
+					Kind:          lsp.CIKModule,
 					NewText:       "data1",
+					Detail:        "CTE",
 					Documentation: lsp.MarkupContent{},
 					TypedPrefix:   "d",
 				},
 				{
-					Kind:          lsp.CIKField,
+					Kind:          lsp.CIKModule,
 					NewText:       "data2",
+					Detail:        "CTE",
 					Documentation: lsp.MarkupContent{},
 					TypedPrefix:   "d",
 				},
@@ -524,8 +560,9 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:    lsp.CIKField,
+					Kind:    lsp.CIKModule,
 					NewText: "table",
+					Detail:  "TABLE ALIAS",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "project.dataset.table",
@@ -550,8 +587,9 @@ func TestProject_CompleteColumns(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{
 				{
-					Kind:        lsp.CIKField,
+					Kind:        lsp.CIKModule,
 					NewText:     "data",
+					Detail:      "CTE",
 					TypedPrefix: "d",
 				},
 			},
@@ -575,6 +613,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INTEGER\nid description",
@@ -601,6 +640,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INTEGER\nid description",
@@ -627,6 +667,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INTEGER\nid description",
@@ -653,6 +694,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INTEGER\nid description",
@@ -679,6 +721,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INT64",
@@ -711,6 +754,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "name",
+					Detail:  "STRING",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "STRING\nname description",
@@ -738,6 +782,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INTEGER\nid description",
@@ -774,6 +819,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INTEGER\nid description",
@@ -783,6 +829,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INTEGER\nid description2",
@@ -790,8 +837,9 @@ func TestProject_CompleteColumns(t *testing.T) {
 					TypedPrefix: "",
 				},
 				{
-					Kind:    lsp.CIKField,
+					Kind:    lsp.CIKModule,
 					NewText: "t1",
+					Detail:  "TABLE ALIAS",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "project.dataset.table",
@@ -799,8 +847,9 @@ func TestProject_CompleteColumns(t *testing.T) {
 					TypedPrefix: "",
 				},
 				{
-					Kind:    lsp.CIKField,
+					Kind:    lsp.CIKModule,
 					NewText: "t2",
+					Detail:  "TABLE ALIAS",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "project.dataset.table2",
@@ -828,6 +877,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id",
+					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "INTEGER\nid description",

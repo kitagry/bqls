@@ -97,6 +97,7 @@ func (c *completor) completeProjectForTablePath(ctx context.Context, param table
 		result = append(result, CompletionItem{
 			Kind:    lsp.CIKModule,
 			NewText: p.ProjectId,
+			Detail:  "PROJECT",
 			Documentation: lsp.MarkupContent{
 				Kind:  lsp.MKPlainText,
 				Value: p.Name,
@@ -123,6 +124,7 @@ func (c *completor) completeDatasetForTablePath(ctx context.Context, param table
 		result = append(result, CompletionItem{
 			Kind:    lsp.CIKModule,
 			NewText: d.DatasetID,
+			Detail:  "DATASET",
 			Documentation: lsp.MarkupContent{
 				Kind:  lsp.MKPlainText,
 				Value: fmt.Sprintf("%s.%s", d.ProjectID, d.DatasetID),
@@ -149,6 +151,7 @@ func (c *completor) completeTableForTablePath(ctx context.Context, param tablePa
 		result = append(result, CompletionItem{
 			Kind:    lsp.CIKModule,
 			NewText: t.TableID,
+			Detail:  "TABLE",
 			Documentation: lsp.MarkupContent{
 				Kind:  lsp.MKPlainText,
 				Value: fmt.Sprintf("%s.%s.%s", t.ProjectID, t.DatasetID, t.TableID),

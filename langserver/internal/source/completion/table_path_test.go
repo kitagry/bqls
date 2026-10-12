@@ -54,6 +54,7 @@ func TestProject_CompleteTablePath(t *testing.T) {
 				{
 					Kind:    lsp.CIKModule,
 					NewText: "1table",
+					Detail:  "TABLE",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "project.dataset.1table",
@@ -62,6 +63,7 @@ func TestProject_CompleteTablePath(t *testing.T) {
 				{
 					Kind:    lsp.CIKModule,
 					NewText: "2table",
+					Detail:  "TABLE",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "project.dataset.2table",
@@ -93,6 +95,7 @@ func TestProject_CompleteTablePath(t *testing.T) {
 				{
 					Kind:    lsp.CIKModule,
 					NewText: "table20230622",
+					Detail:  "TABLE",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "project.dataset.table20230622",
@@ -127,6 +130,7 @@ func TestProject_CompleteTablePath(t *testing.T) {
 				{
 					Kind:    lsp.CIKModule,
 					NewText: "dataset1",
+					Detail:  "DATASET",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "project.dataset1",
@@ -135,6 +139,7 @@ func TestProject_CompleteTablePath(t *testing.T) {
 				{
 					Kind:    lsp.CIKModule,
 					NewText: "dataset2",
+					Detail:  "DATASET",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "project.dataset2",
@@ -169,6 +174,7 @@ func TestProject_CompleteTablePath(t *testing.T) {
 				{
 					Kind:    lsp.CIKModule,
 					NewText: "project1",
+					Detail:  "PROJECT",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "project name",
@@ -178,6 +184,7 @@ func TestProject_CompleteTablePath(t *testing.T) {
 				{
 					Kind:    lsp.CIKModule,
 					NewText: "project2",
+					Detail:  "PROJECT",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
 						Value: "project name",

@@ -23,6 +23,18 @@ func TestProject_ParseFile(t *testing.T) {
 
 		expectedErrs []file.Error
 	}{
+		"snapshot timestamp parameter": {
+			file: "SELECT @cut AS source_cut, t.id FROM `project.dataset.table` t FOR SYSTEM_TIME AS OF @cut " +
+				"JOIN `project.dataset.table` u FOR SYSTEM_TIME AS OF @CUT ON t.id = u.id " +
+				"JOIN `project.dataset.table` v FOR SYSTEM_TIME AS OF @`É` ON t.id = v.id " +
+				"JOIN `project.dataset.table` w FOR SYSTEM_TIME AS OF @`é` ON t.id = w.id",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{},
+		},
 		"parse dot file": {
 			file: "SELECT t. FROM `project.dataset.table` t",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -652,6 +664,30 @@ func TestProject_ParseFile(t *testing.T) {
 				t.Errorf("failed to parse")
 			}
 		})
+	}
+}
+
+func TestAnalyzer_SnapshotParameterPreservesTypeErrors(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+	bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+		Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
+		AnyTimes()
+	analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+	// A snapshot parameter is a timestamp everywhere in the same statement;
+	// using it as an integer must still fail.
+	parsed := analyzer.ParseFile("uri", "SELECT * FROM `project.dataset.table` FOR SYSTEM_TIME AS OF @cut WHERE id = @cut")
+	defer parsed.Close()
+	if len(parsed.Errors) != 1 || !strings.Contains(parsed.Errors[0].Msg, "No matching signature for operator =") {
+		t.Fatalf("expected incompatible parameter use to fail, got %v", parsed.Errors)
+	}
+
+	// A literal is not an unknown runtime parameter and must not be coerced.
+	literal := analyzer.ParseFile("uri", "SELECT * FROM `project.dataset.table` FOR SYSTEM_TIME AS OF 1")
+	defer literal.Close()
+	if len(literal.Errors) != 1 || literal.Errors[0].Msg != "FOR SYSTEM_TIME AS OF must be of type TIMESTAMP but was of type INT64" {
+		t.Fatalf("expected an invalid snapshot literal to fail, got %v", literal.Errors)
 	}
 }
 

@@ -17,6 +17,8 @@ var lastDotRegex = regexp.MustCompile(`[\w.]+\.\s`)
 type ParsedFile struct {
 	URI lsp.DocumentURI
 	Src string
+	// FixedSrc matches the byte offsets in Node, RNode, and ParseTree.
+	FixedSrc string
 
 	// googlesql AST node
 	Node *googlesql.ASTScript

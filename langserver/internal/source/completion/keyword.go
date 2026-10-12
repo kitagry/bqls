@@ -61,12 +61,12 @@ func completeFromCursorPosition(rootNode *bqparser.Node, parsedFile file.ParsedF
 	clausesAfter := getClausesAfterCursor(selectStmt, uint(offset))
 
 	// If cursor is after a set operator (UNION/EXCEPT/INTERSECT), suggest SELECT
-	if hasSetOperatorBeforeCursor(parsedFile.Src, uint(offset)) {
+	if hasSetOperatorBeforeCursor(parsedFile.FixedSrc, uint(offset)) {
 		return createSelectKeywordCompletionItem("")
 	}
 
 	// Check if there's a join_expression in the from_clause
-	hasJoinWithoutOn := hasJoinExpressionWithoutOn(selectStmt, parsedFile.Src)
+	hasJoinWithoutOn := hasJoinExpressionWithoutOn(selectStmt, parsedFile.FixedSrc)
 
 	// Determine what to suggest based on the last clause before cursor
 	result := []CompletionItem{}
@@ -183,7 +183,7 @@ func completeFromCursorPosition(rootNode *bqparser.Node, parsedFile file.ParsedF
 		selectClause := findClause(selectStmt, "select_clause")
 		// If cursor is immediately after SELECT with no column expressions yet, suggest DISTINCT.
 		// Otherwise suggest FROM (cursor is after the column list).
-		if selectClause != nil && isSelectKeywordOnly(parsedFile.Src, selectClause.StartByte(), uint(offset)) {
+		if selectClause != nil && isSelectKeywordOnly(parsedFile.FixedSrc, selectClause.StartByte(), uint(offset)) {
 			return createDistinctKeywordCompletionItem("")
 		}
 		return createFromKeywordCompletionItem("")

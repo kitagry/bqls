@@ -216,8 +216,9 @@ func (c *completor) completeTableScanField(ctx context.Context, tableScanNode *g
 		}
 		return []CompletionItem{
 			{
-				Kind:    lsp.CIKField,
+				Kind:    lsp.CIKModule,
 				NewText: alias,
+				Detail:  "TABLE ALIAS",
 				Documentation: lsp.MarkupContent{
 					Kind:  lsp.MKPlainText,
 					Value: fullName,
@@ -254,8 +255,9 @@ func (c *completor) completeWithScanField(ctx context.Context, withScanNode *goo
 	if strings.HasPrefix(withQueryName, incompleteColumnName) {
 		return []CompletionItem{
 			{
-				Kind:        lsp.CIKField,
+				Kind:        lsp.CIKModule,
 				NewText:     withQueryName,
+				Detail:      "CTE",
 				TypedPrefix: incompleteColumnName,
 			},
 		}

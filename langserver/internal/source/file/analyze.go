@@ -9,9 +9,9 @@ import (
 	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
+	"github.com/kitagry/bqls/langserver/internal/source/bqparser"
 	"github.com/kitagry/bqls/langserver/internal/source/helper"
 	"github.com/sirupsen/logrus"
-	"github.com/kitagry/bqls/langserver/internal/source/bqparser"
 )
 
 type Analyzer struct {
@@ -92,6 +92,55 @@ func (a *Analyzer) AnalyzeStatement(rawText string, stmt googlesql.ASTStatementN
 	langOpt := catalog.langOpts
 	opts, err := a.newAnalyzerOptions(langOpt)
 	if err != nil {
+		return nil, err
+	}
+	// GoogleSQL defaults unconstrained parameters to INT64 and checks the
+	// snapshot expression before inferring its required TIMESTAMP type.
+	// Supply that constraint for bare named parameters, without changing SQL
+	// or suppressing errors for literals and other expressions.
+	parameters := make(map[string]bool)
+	if err := Walk(stmt, func(node googlesql.ASTNode) error {
+		snapshot, ok := node.(*googlesql.ASTForSystemTime)
+		if !ok {
+			return nil
+		}
+		expr, err := snapshot.Expression()
+		if err != nil {
+			return err
+		}
+		parameter, ok := expr.(*googlesql.ASTParameterExpr)
+		if !ok {
+			return nil
+		}
+		identifier, err := parameter.Name()
+		if err != nil || identifier == nil {
+			return err
+		}
+		name, err := identifier.GetAsString()
+		if err != nil {
+			return err
+		}
+		// Match GoogleSQL's ASCII-only parameter name normalization. Quoted
+		// non-ASCII names differing in case remain distinct parameters.
+		name = strings.Map(func(r rune) rune {
+			if r >= 'A' && r <= 'Z' {
+				return r + ('a' - 'A')
+			}
+			return r
+		}, name)
+		if parameters[name] {
+			return nil
+		}
+		timestamp, err := catalog.TypeFactory().GetTimestamp()
+		if err != nil {
+			return err
+		}
+		if err := opts.AddQueryParameter(name, timestamp); err != nil {
+			return err
+		}
+		parameters[name] = true
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	return googlesql.AnalyzeStatementFromParserAST(stmt, opts, rawText, catalog.CatalogNode(), catalog.TypeFactory())
@@ -274,6 +323,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 	return ParsedFile{
 		URI:        uri,
 		Src:        src,
+		FixedSrc:   fixedSrc,
 		Node:       node,
 		RNode:      rnode,
 		ParseTree:  bqparser.Parse(fixedSrc),
