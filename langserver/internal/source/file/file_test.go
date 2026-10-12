@@ -1030,6 +1030,19 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 				},
 			},
 		},
+		// SET @@system_variable is supported by the resolver, so it must still
+		// be analyzed rather than skipped like other SET statements.
+		"SET system variable is still analyzed": {
+			file: "SET @@dataset_id = 'foo';",
+			expectedErrs: []file.Error{
+				{
+					Msg:                  "Unrecognized name: @@dataset_id",
+					Position:             lsp.Position{Line: 0, Character: 4},
+					TermLength:           12,
+					IncompleteColumnName: "@@dataset_id",
+				},
+			},
+		},
 		"SET with unknown function": {
 			file: "DECLARE x DATE;\nSET x = UNKNOWN_FUNC();",
 			expectedErrs: []file.Error{
