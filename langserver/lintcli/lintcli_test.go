@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/bigquery/mock_bigquery"
+	"google.golang.org/api/googleapi"
 )
 
 const (
@@ -93,6 +95,28 @@ func TestRun_TextOutput(t *testing.T) {
 			wantStdout: "q/a.sql:1:6: info: CTE `a` is defined but never used (unused-cte)\n" +
 				"q/sub/b.sql:1:6: info: CTE `a` is defined but never used (unused-cte)\n",
 		},
+		"directories starting with a dot are skipped below the root": {
+			files: map[string]string{
+				"a.sql":        unusedCTESQL,
+				".git/b.sql":   unusedCTESQL,
+				"q/.tmp/c.sql": unusedCTESQL,
+			},
+			args:       []string{"."},
+			wantCode:   1,
+			wantStdout: "a.sql:1:6: info: CTE `a` is defined but never used (unused-cte)\n",
+		},
+		"dot directory given as root is searched": {
+			files:      map[string]string{".sql/a.sql": unusedCTESQL},
+			args:       []string{".sql"},
+			wantCode:   1,
+			wantStdout: ".sql/a.sql:1:6: info: CTE `a` is defined but never used (unused-cte)\n",
+		},
+		"same file given twice is linted once": {
+			files:      map[string]string{"q/a.sql": unusedCTESQL},
+			args:       []string{"q/a.sql", "./q/a.sql", "q"},
+			wantCode:   1,
+			wantStdout: "q/a.sql:1:6: info: CTE `a` is defined but never used (unused-cte)\n",
+		},
 		"disabled rule is not reported": {
 			files:    map[string]string{"a.sql": unusedCTESQL},
 			args:     []string{"--disable", "unused-cte", "a.sql"},
@@ -127,6 +151,93 @@ func TestRun_Stdin(t *testing.T) {
 	want := "<stdin>:1:6: info: CTE `a` is defined but never used (unused-cte)\n"
 	if diff := cmp.Diff(want, got.stdout); diff != "" {
 		t.Errorf("stdout diff (-want +got):\n%s", diff)
+	}
+}
+
+func TestRun_StdinGivenTwiceIsLintedOnce(t *testing.T) {
+	got := runWith(t, mockFactory(t), unusedCTESQL, "-", "-")
+	want := "<stdin>:1:6: info: CTE `a` is defined but never used (unused-cte)\n"
+	if diff := cmp.Diff(want, got.stdout); diff != "" {
+		t.Errorf("stdout diff (-want +got):\n%s", diff)
+	}
+}
+
+func TestRun_UnreadableInputDoesNotStopOthers(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeFiles(t, map[string]string{"a.sql": unusedCTESQL})
+
+	got := runWith(t, mockFactory(t), "", "missing.sql", "a.sql")
+	if got.code != 2 {
+		t.Errorf("exit code = %d, want 2", got.code)
+	}
+	if want := "a.sql:1:6: info: CTE `a` is defined but never used (unused-cte)\n"; got.stdout != want {
+		t.Errorf("stdout = %q, want %q", got.stdout, want)
+	}
+	if !strings.Contains(got.stderr, "missing.sql") {
+		t.Errorf("stderr = %q, want it to mention missing.sql", got.stderr)
+	}
+}
+
+func TestWriteText_EscapesNewlines(t *testing.T) {
+	var buf bytes.Buffer
+	if err := writeText(&buf, []finding{{File: "a.sql", Line: 1, Column: 2, Severity: "error", Message: "a\r\nb"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := buf.String(), "a.sql:1:2: error: a\\r\\nb\n"; got != want {
+		t.Errorf("writeText() = %q, want %q", got, want)
+	}
+}
+
+func TestRun_TableMetadataErrors(t *testing.T) {
+	tests := map[string]struct {
+		err        error
+		wantCode   int
+		wantStdout string
+		wantStderr string
+	}{
+		"not found is a finding": {
+			err:        &googleapi.Error{Code: 404, Message: "Not found: Table p:d.t"},
+			wantCode:   1,
+			wantStdout: "a.sql:1:15: error: Table not found: `p.d.t`\n",
+		},
+		"permission denied is a runtime failure": {
+			err:        &googleapi.Error{Code: 403, Message: "Access Denied: Table p:d.t"},
+			wantCode:   2,
+			wantStderr: "Access Denied: Table p:d.t",
+		},
+		"transport failure is a runtime failure": {
+			err:        &url.Error{Op: "Get", URL: "https://bigquery.googleapis.com", Err: errors.New("connection refused")},
+			wantCode:   2,
+			wantStderr: "connection refused",
+		},
+	}
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			const src = "SELECT x FROM `p.d.t`\n"
+			writeFiles(t, map[string]string{"a.sql": src, "b.sql": src})
+
+			ctrl := gomock.NewController(t)
+			c := mock_bigquery.NewMockClient(ctrl)
+			c.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+			c.EXPECT().Close().Return(nil).AnyTimes()
+			c.EXPECT().GetTableMetadata(gomock.Any(), "p", "d", "t").Return(nil, tt.err).AnyTimes()
+			factory := func(context.Context, string, string) (bigquery.Client, error) { return c, nil }
+
+			got := runWith(t, factory, "", "a.sql")
+			if got.code != tt.wantCode {
+				t.Errorf("exit code = %d, want %d (stdout: %s, stderr: %s)", got.code, tt.wantCode, got.stdout, got.stderr)
+			}
+			if tt.wantStdout != "" && got.stdout != tt.wantStdout {
+				t.Errorf("stdout = %q, want %q", got.stdout, tt.wantStdout)
+			}
+			if tt.wantStderr == "" && got.stderr != "" {
+				t.Errorf("stderr = %q, want empty", got.stderr)
+			}
+			if tt.wantStderr != "" && strings.Count(got.stderr, tt.wantStderr) != 1 {
+				t.Errorf("stderr = %q, want it to contain %q exactly once", got.stderr, tt.wantStderr)
+			}
+		})
 	}
 }
 
@@ -189,6 +300,43 @@ func TestRun_GitHubOutput(t *testing.T) {
 	}
 }
 
+func TestRun_GitHubOutputPaths(t *testing.T) {
+	t.Run("relative to GITHUB_WORKSPACE", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv("GITHUB_WORKSPACE", root)
+		t.Chdir(root)
+		writeFiles(t, map[string]string{"sub/a.sql": unusedCTESQL})
+		t.Chdir(filepath.Join(root, "sub"))
+
+		got := runWith(t, mockFactory(t), "", "--format", "github", "a.sql")
+		want := "::notice file=sub/a.sql,line=1,col=6,endLine=1,endColumn=7,title=bqls(unused-cte)::CTE `a` is defined but never used\n"
+		if diff := cmp.Diff(want, got.stdout); diff != "" {
+			t.Errorf("stdout diff (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("relative to cwd without GITHUB_WORKSPACE", func(t *testing.T) {
+		t.Setenv("GITHUB_WORKSPACE", "")
+		root := t.TempDir()
+		t.Chdir(root)
+		writeFiles(t, map[string]string{"a.sql": unusedCTESQL})
+
+		got := runWith(t, mockFactory(t), "", "--format", "github", filepath.Join(root, "a.sql"))
+		want := "::notice file=a.sql,line=1,col=6,endLine=1,endColumn=7,title=bqls(unused-cte)::CTE `a` is defined but never used\n"
+		if diff := cmp.Diff(want, got.stdout); diff != "" {
+			t.Errorf("stdout diff (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("stdin has no file property", func(t *testing.T) {
+		got := runWith(t, mockFactory(t), unusedCTESQL, "--format", "github", "-")
+		want := "::notice line=1,col=6,endLine=1,endColumn=7,title=bqls(unused-cte)::CTE `a` is defined but never used\n"
+		if diff := cmp.Diff(want, got.stdout); diff != "" {
+			t.Errorf("stdout diff (-want +got):\n%s", diff)
+		}
+	})
+}
+
 func TestGitHubEscape(t *testing.T) {
 	if got, want := escapeGitHubData("100%\r\na:b,c"), "100%25%0D%0Aa:b,c"; got != want {
 		t.Errorf("escapeGitHubData() = %q, want %q", got, want)
@@ -203,11 +351,12 @@ func TestRun_UsageErrors(t *testing.T) {
 		args       []string
 		wantStderr string
 	}{
-		"no arguments":   {args: nil, wantStderr: "no input"},
-		"unknown rule":   {args: []string{"--disable", "no-such-rule", "a.sql"}, wantStderr: "null-comparison"},
-		"unknown format": {args: []string{"--format", "xml", "a.sql"}, wantStderr: "xml"},
-		"missing file":   {args: []string{"missing.sql"}, wantStderr: "missing.sql"},
-		"undefined flag": {args: []string{"--no-such-flag", "a.sql"}, wantStderr: "no-such-flag"},
+		"no arguments":    {args: nil, wantStderr: "no input"},
+		"unknown rule":    {args: []string{"--disable", "no-such-rule", "a.sql"}, wantStderr: "null-comparison"},
+		"unknown format":  {args: []string{"--format", "xml", "a.sql"}, wantStderr: "xml"},
+		"missing file":    {args: []string{"missing.sql"}, wantStderr: "missing.sql"},
+		"undefined flag":  {args: []string{"--no-such-flag", "a.sql"}, wantStderr: "no-such-flag"},
+		"flag after file": {args: []string{"a.sql", "--format", "json"}, wantStderr: "flags must come before files"},
 	}
 	for n, tt := range tests {
 		t.Run(n, func(t *testing.T) {
@@ -221,7 +370,17 @@ func TestRun_UsageErrors(t *testing.T) {
 			if !strings.Contains(got.stderr, tt.wantStderr) {
 				t.Errorf("stderr = %q, want it to contain %q", got.stderr, tt.wantStderr)
 			}
+			if got.stdout != "" {
+				t.Errorf("stdout = %q, want empty on usage errors", got.stdout)
+			}
 		})
+	}
+}
+
+func TestRun_UndefinedFlagPrintsUsageToStderr(t *testing.T) {
+	got := runWith(t, mockFactory(t), "", "--no-such-flag")
+	if !strings.Contains(got.stderr, "Usage: bqls lint") {
+		t.Errorf("stderr = %q, want usage", got.stderr)
 	}
 }
 

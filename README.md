@@ -101,7 +101,7 @@ queries/report.sql:3:6: info: CTE `tmp` is defined but never used (unused-cte)
 queries/report.sql:8:7: error: Unrecognized name: y
 ```
 
-Directories are searched recursively for `*.sql` files, and `-` reads from stdin. Run `bqls lint --help` for the full list of rules.
+Directories are searched recursively for `*.sql` files (skipping directories whose name starts with `.`, such as `.git`), and `-` reads from stdin. Flags must come before files. Run `bqls lint --help` for the full list of rules.
 
 | Flag | Description |
 | --- | --- |
@@ -110,11 +110,11 @@ Directories are searched recursively for `*.sql` files, and `-` reads from stdin
 | `--enable <rule>` / `--disable <rule>` | Turn a rule on or off. Repeatable; the last one wins. |
 | `--format text\|json\|github` | `text` (default) prints `path:line:col: severity: message (rule)`. `json` prints an array of `{file, line, column, endLine, endColumn, severity, rule, message}`. `github` prints [workflow commands](https://docs.github.com/en/actions/reference/workflow-commands-for-github-actions) that show up as annotations on pull requests. |
 
-Lines and columns are 1-based; columns count bytes and the end position is exclusive. Analysis errors are reported with severity `error` and no rule.
+Lines and columns are 1-based and the end position is exclusive. Columns are currently off on lines containing non-ASCII text ([#375](https://github.com/kitagry/bqls/issues/375)). Analysis errors are reported with severity `error` and no rule. With `--format github`, file paths are made relative to `$GITHUB_WORKSPACE` so annotations attach to the diff.
 
-Exit codes: `0` nothing found, `1` any lint finding or analysis error, `2` usage or runtime error (bad flags, unreadable file, authentication failure).
+Exit codes: `0` nothing found, `1` any lint finding or analysis error, `2` usage or runtime error (bad flags, unreadable file, authentication/permission/network failure while fetching table metadata). An unreadable file does not stop the others from being linted; their findings are still printed and the exit code is `2`.
 
-GitHub Actions example (the service account only needs to read table metadata, e.g. `roles/bigquery.metadataViewer`):
+GitHub Actions example. The service account only needs to read table metadata (e.g. `roles/bigquery.metadataViewer`). Pass `--project` explicitly, since the fallback to `gcloud config get project` only works where gcloud is installed and configured. Instead of `go install`, you can download a binary from [GitHub Releases](https://github.com/kitagry/bqls/releases) (the `lint` subcommand needs a release that includes it).
 
 ```yaml
 jobs:
@@ -124,11 +124,11 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
-      - uses: google-github-actions/auth@v2
+      - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.SERVICE_ACCOUNT }}
