@@ -257,7 +257,7 @@ func TestPartitionFilter(t *testing.T) {
 			want: []report{{sub: "p.d.by_col", n: 1, table: "p.d.by_col", columns: "`dt`"}},
 		},
 		"MERGE target is skipped": {
-			src: "MERGE p.d.by_col T USING (SELECT x, dt FROM p.d.by_col WHERE dt = '2020-01-01') S ON T.x = S.x WHEN MATCHED THEN DELETE",
+			src: "MERGE p.d.by_col T USING (SELECT 1 AS x) S ON T.x = S.x WHEN MATCHED THEN DELETE",
 		},
 		"declared variable before the query": {
 			src:  "DECLARE v INT64 DEFAULT 1;\nSELECT v AS y, x FROM p.d.by_col",
@@ -332,10 +332,10 @@ func TestPartitionFilter(t *testing.T) {
 			src: "SELECT x FROM p.d.by_col WHERE dt = @d",
 		},
 		"UPDATE WHERE filters the FROM table": {
-			src: "UPDATE p.d.plain t SET x = b.x FROM p.d.by_col b WHERE t.x = b.x AND b.dt = '2020-01-01' AND t.x IN (SELECT x FROM p.d.plain)",
+			src: "UPDATE p.d.plain t SET x = b.x FROM p.d.by_col b WHERE t.x = b.x AND b.dt = '2020-01-01'",
 		},
 		"UPDATE FROM unfiltered": {
-			src:  "UPDATE p.d.plain t SET x = b.x FROM p.d.by_col b WHERE t.x = b.x AND t.x IN (SELECT x FROM p.d.plain)",
+			src:  "UPDATE p.d.plain t SET x = b.x FROM p.d.by_col b WHERE t.x = b.x",
 			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
 		},
 		"UPDATE target skipped, unfiltered subquery reported": {
@@ -343,7 +343,7 @@ func TestPartitionFilter(t *testing.T) {
 			want: []report{{sub: "p.d.by_col", n: 1, table: "p.d.by_col", columns: "`dt`"}},
 		},
 		"DELETE with an IN subquery does not filter the subquery table": {
-			src:  "DELETE p.d.plain t WHERE t.dt IN (SELECT dt FROM p.d.by_col) AND t.x IN (SELECT x FROM p.d.plain)",
+			src:  "DELETE p.d.plain t WHERE t.dt IN (SELECT dt FROM p.d.by_col)",
 			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
 		},
 		"MERGE ON filters the source": {

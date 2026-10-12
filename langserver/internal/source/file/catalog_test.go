@@ -251,9 +251,13 @@ func TestCatalog_PartitionDatePseudoColumn(t *testing.T) {
 	})
 
 	t.Run("not writable", func(t *testing.T) {
-		parsed := parse(t, "INSERT p.d.daily (x, _PARTITIONDATE) SELECT x, _PARTITIONDATE FROM p.d.daily")
-		if len(parsed.Errors) == 0 {
-			t.Error("writing _PARTITIONDATE analyzed without errors")
+		parsed := parse(t, "INSERT p.d.daily (x, _PARTITIONDATE) VALUES (1, '2020-01-01')")
+		var msgs []string
+		for _, e := range parsed.Errors {
+			msgs = append(msgs, e.Msg)
+		}
+		if diff := cmp.Diff([]string{"Cannot INSERT value on non-writable column: _PARTITIONDATE"}, msgs); diff != "" {
+			t.Errorf("errors diff (-want +got):\n%s", diff)
 		}
 	})
 }
