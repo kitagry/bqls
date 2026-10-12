@@ -577,6 +577,10 @@ func fixDeclarationError(src string, parsedErr Error, defaultVal string) (fixedS
 //
 //	SELECT 1 FROM table AS t
 func fixErrorToLiteral(src string, parsedErr Error) (fixedSrc string, fixOffsets []FixOffset) {
+	return fixErrorToExpression(src, parsedErr, "1")
+}
+
+func fixErrorToExpression(src string, parsedErr Error, expr string) (fixedSrc string, fixOffsets []FixOffset) {
 	errOffset, ok := errorByteOffset(src, parsedErr.Position)
 	if !ok || errOffset == 0 || errOffset == len(src) {
 		return src, nil
@@ -586,10 +590,10 @@ func fixErrorToLiteral(src string, parsedErr Error) (fixedSrc string, fixOffsets
 	if replaceOffset < 0 || replaceOffset+len(parsedErr.IncompleteColumnName) > len(src) {
 		return src, nil
 	}
-	fixedSrc = src[:replaceOffset] + "1" + src[replaceOffset+len(parsedErr.IncompleteColumnName):]
+	fixedSrc = src[:replaceOffset] + expr + src[replaceOffset+len(parsedErr.IncompleteColumnName):]
 	fixOffset := FixOffset{
 		Offset: errOffset,
-		Length: -len(parsedErr.IncompleteColumnName) + len("1"),
+		Length: -len(parsedErr.IncompleteColumnName) + len(expr),
 	}
 
 	return fixedSrc, []FixOffset{fixOffset}
