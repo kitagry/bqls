@@ -5,9 +5,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang/mock/gomock"
 	"github.com/google/go-cmp/cmp"
+	"github.com/kitagry/bqls/langserver/internal/bigquery/mock_bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lint"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
+	"github.com/kitagry/bqls/langserver/internal/source"
+	"github.com/sirupsen/logrus"
 	"github.com/sourcegraph/jsonrpc2"
 )
 
@@ -40,4 +44,27 @@ func TestHandler_handleWorkspaceDidChangeConfiguration_LintOnly(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("diagnostics were not re-requested for the open document")
 	}
+}
+
+func TestHandler_rediagnoseOpenFiles_AfterClose(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+	bqClient.EXPECT().Close().Return(nil)
+	p := source.NewProjectWithBQClient("/", bqClient, logrus.New())
+	if err := p.UpdateFile("file:///a.sql", "SELECT 1", 1); err != nil {
+		t.Fatal(err)
+	}
+	// No scheduler consumes diagnosticRequest, so the re-diagnose sender
+	// stays blocked until Close runs.
+	h := newHandler(logrus.New(), "test")
+	h.project = p
+	h.diagnosticRequest = make(chan lsp.DocumentURI)
+
+	h.rediagnoseOpenFiles()
+	time.Sleep(20 * time.Millisecond)
+	if err := h.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// A send on the closed channel would panic the test binary here.
+	time.Sleep(50 * time.Millisecond)
 }

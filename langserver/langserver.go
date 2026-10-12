@@ -35,6 +35,12 @@ type Handler struct {
 	diagnosticRequest          chan lsp.DocumentURI
 	dryrunRequest              chan lsp.DocumentURI
 	virtualTextDocumentRequest chan lsp.DocumentURI
+	// closing is closed by Close so background senders can stop; closeMu and
+	// closed keep them from sending on request channels Close has closed.
+	closing chan struct{}
+	closeMu sync.RWMutex
+	closed  bool
+
 	// settingsMu guards initializeParams, which diagnostics goroutines read
 	// while workspace/didChangeConfiguration may replace it.
 	settingsMu       sync.RWMutex
@@ -58,17 +64,23 @@ func NewHandler(isDebug bool, version string) *Handler {
 		logger.SetLevel(logrus.InfoLevel)
 	}
 
-	handler := &Handler{
+	handler := newHandler(logger, version)
+	go handler.scheduleDiagnostics()
+	go handler.scheduleDryRun()
+	go handler.scheduleVirtualTextDocument()
+	return handler
+}
+
+// newHandler builds a Handler without starting its schedulers.
+func newHandler(logger *logrus.Logger, version string) *Handler {
+	return &Handler{
 		logger:                     logger,
 		version:                    version,
 		diagnosticRequest:          make(chan lsp.DocumentURI, 3),
 		dryrunRequest:              make(chan lsp.DocumentURI, 3),
 		virtualTextDocumentRequest: make(chan lsp.DocumentURI, 3),
+		closing:                    make(chan struct{}),
 	}
-	go handler.scheduleDiagnostics()
-	go handler.scheduleDryRun()
-	go handler.scheduleVirtualTextDocument()
-	return handler
 }
 
 func (h *Handler) setupByInitializeParams() error {
@@ -108,9 +120,15 @@ func (h *Handler) Close() error {
 	if h.project != nil {
 		errs = append(errs, h.project.Close())
 	}
+	// Unblock background senders first, then wait for them to leave before
+	// closing the channels they send on.
+	close(h.closing)
+	h.closeMu.Lock()
+	h.closed = true
 	close(h.diagnosticRequest)
 	close(h.dryrunRequest)
 	close(h.virtualTextDocumentRequest)
+	h.closeMu.Unlock()
 	return errors.Join(errs...)
 }
 
