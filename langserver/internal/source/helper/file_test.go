@@ -45,6 +45,25 @@ func TestGetLspPosition(t *testing.T) {
 			expectedPath: "b.sql",
 			expectedPos:  lsp.Position{Line: 0, Character: 7},
 		},
+		"pipe operator is not a position": {
+			files:         map[lsp.DocumentURI]string{"file.sql": "FROM table |> SELECT |"},
+			expectedFiles: map[lsp.DocumentURI]string{"file.sql": "FROM table |> SELECT "},
+			expectedPath:  "file.sql",
+			expectedPos:   lsp.Position{Line: 0, Character: 21},
+		},
+		"position right after pipe operator": {
+			files:         map[lsp.DocumentURI]string{"file.sql": "FROM table |>| WHERE x = 1"},
+			expectedFiles: map[lsp.DocumentURI]string{"file.sql": "FROM table |> WHERE x = 1"},
+			expectedPath:  "file.sql",
+			expectedPos:   lsp.Position{Line: 0, Character: 13},
+		},
+		"no position with pipe operator": {
+			files:         map[lsp.DocumentURI]string{"file.sql": "FROM table |> SELECT *"},
+			expectedFiles: nil,
+			expectedPath:  "",
+			expectedPos:   lsp.Position{},
+			expectedErr:   helper.ErrNoPosition,
+		},
 		"no position": {
 			files:         map[lsp.DocumentURI]string{"file.sql": "SELECT * FROM table"},
 			expectedFiles: nil,
