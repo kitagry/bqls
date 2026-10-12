@@ -803,6 +803,27 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 			},
 			expectedErrs: []file.Error{},
 		},
+		"Parse declared variable indented with tab": {
+			file: "DECLARE my_variable INT64;\n" +
+				"\tSELECT my_variable;",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Parse declared variable after multibyte characters": {
+			file: "DECLARE y STRING;\n" +
+				"/* あいう */ SELECT LENGTH(y),\n" +
+				"UNKNOWN_FUNC();",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{
+						Line:      2,
+						Character: 0,
+					},
+				},
+			},
+		},
 		"Parse create tmp function statement with returns": {
 			file: "CREATE TEMP FUNCTION target_func(x INT64) RETURNS INT64 AS (x * 10);\n" +
 				"SELECT target_func(10);",
