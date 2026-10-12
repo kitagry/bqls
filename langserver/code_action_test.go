@@ -187,6 +187,23 @@ func TestHandler_lintCodeActions_LiteralNullComparisonError(t *testing.T) {
 				}},
 			}},
 		},
+		"tab before the comparison": {
+			src:    "SELECT x FROM UNNEST([1]) AS x\nWHERE\tx = NULL",
+			cursor: lsp.Position{Line: 1, Character: 6},
+			want: []any{lsp.CodeAction{
+				Title: "Replace with IS NULL",
+				Kind:  lsp.CAKQuickFix,
+				Diagnostics: []lsp.Diagnostic{{
+					Range:    r(1, 10, 1, 10),
+					Severity: lsp.Error,
+					Message:  "Operands of = cannot be literal NULL",
+				}},
+				IsPreferred: true,
+				Edit: &lsp.WorkspaceEdit{Changes: map[string][]lsp.TextEdit{
+					string(uri): {{Range: r(1, 6, 1, 14), NewText: "x IS NULL"}},
+				}},
+			}},
+		},
 		"cursor away from the comparison": {
 			src:     "SELECT x FROM UNNEST([1]) AS x\nWHERE x <> NULL",
 			cursor:  lsp.Position{Line: 0, Character: 0},
