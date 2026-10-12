@@ -22,6 +22,29 @@ func TestProject_CompleteColumns(t *testing.T) {
 
 		expectCompletionItems []CompletionItem
 	}{
+		"Select columns after SET statement": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "DECLARE x INT64;\nSET x = 1;\nIF x = 1 THEN SELECT 1; END IF;\nSELECT id, | FROM `project.dataset.table`",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+				},
+			},
+		},
 		"Select columns with supportSunippet is true": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT id, | FROM `project.dataset.table`",

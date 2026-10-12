@@ -283,6 +283,25 @@ Storage info
 				lsp.RawMarkedString("name description"),
 			},
 		},
+		"hover column after SET statement": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "DECLARE x INT64;\nSET x = 1;\nIF x = 1 THEN SELECT 1; END IF;\nWITH data AS (SELECT id FROM `project.dataset.table`)\nSELECT id| FROM data",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{Language: "sql", Value: "id: INT64"},
+			},
+		},
 		"hover column with alias": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT |name AS alias_name FROM `project.dataset.table`",

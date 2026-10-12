@@ -134,11 +134,12 @@ func (p ParsedFile) FindTargetStatementNode(termOffset int) (googlesql.ASTStatem
 
 func (p ParsedFile) findTargetStatementNodeIndex(termOffset int) (int, bool) {
 	stmts := collectStatementsFromNode(p.Node)
-	// Filter out variable declarations (can't be analyzed)
+	// Filter out statements that never produce an analyzer output so that
+	// indices stay aligned with RNode.
 	filtered := make([]googlesql.ASTStatementNode, 0, len(stmts))
 	for _, s := range stmts {
 		kind, _ := s.NodeKind()
-		if kind == googlesql.ASTNodeKindAstVariableDeclaration {
+		if kind == googlesql.ASTNodeKindAstVariableDeclaration || isScriptControlStatement(kind) {
 			continue
 		}
 		filtered = append(filtered, s)
