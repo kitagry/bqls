@@ -169,24 +169,72 @@ func reportUnusedCTE(pass *Pass, clause *googlesql.ASTWithClause, entries []cteE
 }
 
 // unusedCTEDeletion returns the span to delete so that the remaining WITH
-// clause stays valid. It gives up when the deleted separator holds anything
-// but whitespace and the comma, since that is most likely a user comment.
+// clause stays valid. It gives up whenever a user comment would be deleted or
+// left describing a different entry.
 func unusedCTEDeletion(src string, clause offsets, entries []cteEntry, i int) (offsets, bool) {
-	var del offsets
+	e := entries[i]
+	if !inBounds(src, clause) || !inBounds(src, e.span) || hasTrailingComment(src, e.span.end) {
+		return offsets{}, false
+	}
+	if i == 0 && (!onlyWithKeywords(src[clause.start:e.span.start]) || hasCommentLineAbove(src, e.span.start)) {
+		return offsets{}, false
+	}
+
 	switch {
 	case len(entries) == 1:
-		del = offsets{clause.start, clause.end}
+		if strings.TrimSpace(src[e.span.end:clause.end]) != "" {
+			return offsets{}, false
+		}
+		del := offsets{clause.start, clause.end}
 		for del.end < len(src) && isSQLSpace(src[del.end]) {
 			del.end++
 		}
-		return del, clause.start >= 0 && clause.end <= len(src)
+		return del, true
 	case i == 0:
-		del = offsets{entries[0].span.start, entries[1].span.start}
-		return del, isSeparator(src, entries[0].span.end, del.end)
+		del := offsets{e.span.start, entries[1].span.start}
+		return del, isSeparator(src, e.span.end, del.end)
 	default:
-		del = offsets{entries[i-1].span.end, entries[i].span.end}
-		return del, isSeparator(src, del.start, entries[i].span.start)
+		del := offsets{entries[i-1].span.end, e.span.end}
+		return del, isSeparator(src, del.start, e.span.start)
 	}
+}
+
+func inBounds(src string, o offsets) bool {
+	return o.start >= 0 && o.start <= o.end && o.end <= len(src)
+}
+
+func onlyWithKeywords(s string) bool {
+	for _, f := range strings.Fields(s) {
+		if !strings.EqualFold(f, "WITH") && !strings.EqualFold(f, "RECURSIVE") {
+			return false
+		}
+	}
+	return true
+}
+
+// hasTrailingComment reports whether a comment follows pos (after an optional
+// comma) on the same line, where it most likely describes the entry ending at pos.
+func hasTrailingComment(src string, pos int) bool {
+	rest, _, _ := strings.Cut(src[pos:], "\n")
+	rest = strings.TrimSpace(rest)
+	rest = strings.TrimSpace(strings.TrimPrefix(rest, ","))
+	return startsWithComment(rest)
+}
+
+// hasCommentLineAbove reports whether pos starts its line and the previous
+// line is a comment, which most likely describes the entry starting at pos.
+func hasCommentLineAbove(src string, pos int) bool {
+	lineStart := strings.LastIndex(src[:pos], "\n") + 1
+	if lineStart == 0 || strings.TrimSpace(src[lineStart:pos]) != "" {
+		return false
+	}
+	prevStart := strings.LastIndex(src[:lineStart-1], "\n") + 1
+	prev := strings.TrimSpace(src[prevStart : lineStart-1])
+	return startsWithComment(prev) || strings.HasSuffix(prev, "*/")
+}
+
+func startsWithComment(s string) bool {
+	return strings.HasPrefix(s, "--") || strings.HasPrefix(s, "#") || strings.HasPrefix(s, "/*")
 }
 
 func isSeparator(src string, start, end int) bool {

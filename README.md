@@ -63,7 +63,7 @@ You can also use the community extension [bqls-vscode](https://github.com/yokomo
 
 ## Lint
 
-bqls reports lint warnings and hints (diagnostic source `bqls-lint`, code = rule name) for queries that analyze without errors.
+bqls reports lint warnings and information (diagnostic source `bqls-lint`, code = rule name) for queries that analyze without errors.
 
 | Rule | Default | Description |
 | --- | --- | --- |
