@@ -268,9 +268,15 @@ func TestCatalog_PartitionPseudoColumns(t *testing.T) {
 	})
 
 	t.Run("_PARTITIONTIME writable", func(t *testing.T) {
-		parsed := parse(t, "INSERT INTO p.d.daily (_PARTITIONTIME, x) SELECT CURRENT_TIMESTAMP(), x FROM p.d.daily")
-		if len(parsed.Errors) > 0 {
-			t.Errorf("unexpected errors: %v", parsed.Errors)
+		// The tables are also read so that the DML target is preloaded into the catalog.
+		for _, src := range []string{
+			"INSERT INTO p.d.daily (_PARTITIONTIME, x) SELECT CURRENT_TIMESTAMP(), x FROM p.d.daily",
+			"UPDATE p.d.daily SET _PARTITIONTIME = CURRENT_TIMESTAMP() WHERE x IN (SELECT x FROM p.d.daily)",
+		} {
+			parsed := parse(t, src)
+			if len(parsed.Errors) > 0 {
+				t.Errorf("%s: unexpected errors: %v", src, parsed.Errors)
+			}
 		}
 	})
 
