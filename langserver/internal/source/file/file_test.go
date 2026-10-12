@@ -992,6 +992,44 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 				},
 			},
 		},
+		"control flow statements": {
+			file: "IF TRUE THEN SELECT 1; ELSEIF FALSE THEN SELECT 2; ELSE SELECT 3; END IF;\n" +
+				"BEGIN SELECT 1; EXCEPTION WHEN ERROR THEN RAISE USING MESSAGE = 'x'; END;\n" +
+				"WHILE TRUE DO BREAK; CONTINUE; END WHILE;\n" +
+				"LOOP LEAVE; END LOOP;\n" +
+				"REPEAT SELECT 1; UNTIL TRUE END REPEAT;\n" +
+				"FOR r IN (SELECT 1 AS a) DO SELECT 1; END FOR;\n" +
+				"CASE WHEN TRUE THEN SELECT 1; END CASE;\n" +
+				"RETURN;",
+			expectedErrs: []file.Error{},
+		},
+		"broken SELECT inside IF": {
+			file: "IF TRUE THEN\n  SELECT UNKNOWN_FUNC();\nEND IF;",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 1, Character: 9},
+				},
+			},
+		},
+		"broken SELECT inside BEGIN END": {
+			file: "BEGIN\n  SELECT UNKNOWN_FUNC();\nEND;",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 1, Character: 9},
+				},
+			},
+		},
+		"broken SELECT inside WHILE": {
+			file: "WHILE TRUE DO\n  SELECT UNKNOWN_FUNC();\nEND WHILE;",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 1, Character: 9},
+				},
+			},
+		},
 		"SET with unknown function": {
 			file: "DECLARE x DATE;\nSET x = UNKNOWN_FUNC();",
 			expectedErrs: []file.Error{

@@ -415,15 +415,28 @@ func collectStatements(node *googlesql.ASTScript) []googlesql.ASTStatementNode {
 // script statement. The GoogleSQL resolver rejects these with "Statement not
 // supported", although BigQuery accepts them.
 func isScriptControlStatement(kind googlesql.ASTNodeKind) bool {
+	if isAssignmentStatement(kind) {
+		return true
+	}
 	switch kind {
-	case googlesql.ASTNodeKindAstSingleAssignment,
-		googlesql.ASTNodeKindAstAssignmentFromStruct,
-		googlesql.ASTNodeKindAstParameterAssignment:
+	case googlesql.ASTNodeKindAstIfStatement,
+		googlesql.ASTNodeKindAstCaseStatement,
+		googlesql.ASTNodeKindAstBeginEndBlock,
+		googlesql.ASTNodeKindAstWhileStatement,
+		googlesql.ASTNodeKindAstRepeatStatement,
+		googlesql.ASTNodeKindAstForInStatement,
+		googlesql.ASTNodeKindAstBreakStatement,
+		googlesql.ASTNodeKindAstContinueStatement,
+		googlesql.ASTNodeKindAstReturnStatement,
+		googlesql.ASTNodeKindAstRaiseStatement:
 		return true
 	}
 	return false
 }
 
+// isAssignmentStatement reports whether the statement is a SET of script
+// variables or query parameters. SET @@system_variable is excluded because
+// the resolver supports it.
 func isAssignmentStatement(kind googlesql.ASTNodeKind) bool {
 	switch kind {
 	case googlesql.ASTNodeKindAstSingleAssignment,
