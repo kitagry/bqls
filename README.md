@@ -63,11 +63,12 @@ You can also use the community extension [bqls-vscode](https://github.com/yokomo
 
 ## Lint
 
-bqls reports lint warnings (diagnostic source `bqls-lint`, code = rule name) for queries that analyze without errors.
+bqls reports lint warnings and hints (diagnostic source `bqls-lint`, code = rule name) for queries that analyze without errors.
 
 | Rule | Default | Description |
 | --- | --- | --- |
 | `null-comparison` | on | `x = CAST(NULL AS T)` / `!=` always yields NULL; quick fix rewrites it to `IS [NOT] NULL`. |
+| `unused-cte` | on | A `WITH` entry that is never referenced (a recursive CTE's self reference does not count). Reported as information; quick fix removes the entry. |
 
 Bare `x = NULL` / `x != NULL` is rejected by BigQuery itself ("Operands of = cannot be literal NULL"); bqls offers an `IS [NOT] NULL` quick fix on that error.
 
