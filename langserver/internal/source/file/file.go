@@ -137,12 +137,24 @@ func (p ParsedFile) findTargetStatementNodeIndex(termOffset int) (int, bool) {
 	// Filter out statements that never produce an analyzer output so that
 	// indices stay aligned with RNode.
 	filtered := make([]googlesql.ASTStatementNode, 0, len(stmts))
+	insideScriptControl := false
 	for _, s := range stmts {
 		kind, _ := s.NodeKind()
+		// stmts is in pre-order, so the last statement containing the cursor
+		// is the innermost one.
+		if containsOffset(s, termOffset) {
+			insideScriptControl = isScriptControlStatement(kind)
+		}
 		if kind == googlesql.ASTNodeKindAstVariableDeclaration || isScriptControlStatement(kind) {
 			continue
 		}
 		filtered = append(filtered, s)
+	}
+
+	// A script statement such as SET has no analyzer output of its own, and
+	// returning another statement's output would resolve names in the wrong scope.
+	if insideScriptControl {
+		return -1, false
 	}
 
 	if len(filtered) == 1 {
@@ -150,21 +162,25 @@ func (p ParsedFile) findTargetStatementNodeIndex(termOffset int) (int, bool) {
 	}
 
 	for i, stmt := range filtered {
-		loc, _ := stmt.GetParseLocationRange()
-		if loc == nil {
-			continue
-		}
-		startOffset := parseLocStart(loc)
-		endOffset := parseLocEnd(loc)
-		if startOffset < 0 || endOffset < 0 {
-			continue
-		}
-		if startOffset <= termOffset && termOffset <= endOffset {
+		if containsOffset(stmt, termOffset) {
 			return i, true
 		}
 	}
 
 	return -1, false
+}
+
+func containsOffset(stmt googlesql.ASTStatementNode, offset int) bool {
+	loc, _ := stmt.GetParseLocationRange()
+	if loc == nil {
+		return false
+	}
+	startOffset := parseLocStart(loc)
+	endOffset := parseLocEnd(loc)
+	if startOffset < 0 || endOffset < 0 {
+		return false
+	}
+	return startOffset <= offset && offset <= endOffset
 }
 
 func (p *ParsedFile) FindTargetAnalyzeOutput(termOffset int) (*googlesql.AnalyzerOutput, bool) {

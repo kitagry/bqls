@@ -302,6 +302,57 @@ Storage info
 				{Language: "sql", Value: "id: INT64"},
 			},
 		},
+		"hover column in SET subquery": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "DECLARE x INT64;\nSET x = (SELECT MAX(|id) FROM `project.dataset.table`);\nSELECT name FROM `project.dataset.table2`",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType, Description: "id description"},
+					},
+				}, nil).MinTimes(0)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table2").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table2",
+					Schema: bq.Schema{
+						{Name: "name", Type: bq.StringFieldType},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{Language: "sql", Value: "id: INTEGER (nullable)"},
+				lsp.RawMarkedString("id description"),
+			},
+		},
+		"hover column in SELECT nested in IF": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "IF TRUE THEN\n  WITH data AS (SELECT id FROM `project.dataset.table`)\n  SELECT id| FROM data;\nEND IF;\nSELECT name FROM `project.dataset.table2`",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				}, nil).MinTimes(0)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table2").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table2",
+					Schema: bq.Schema{
+						{Name: "name", Type: bq.StringFieldType},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{Language: "sql", Value: "id: INT64"},
+			},
+		},
 		"hover column with alias": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT |name AS alias_name FROM `project.dataset.table`",
