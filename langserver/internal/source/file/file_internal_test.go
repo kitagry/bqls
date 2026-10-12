@@ -93,6 +93,10 @@ func TestFixFunctions_KeepSourceWhenErrorIsOutOfRange(t *testing.T) {
 			return fixDeclarationError(src, parsedErr, "0")
 		},
 		"fixErrorToLiteral": fixErrorToLiteral,
+		"fixIncompletePipeOperator": func(src string, parsedErr Error) (string, []FixOffset) {
+			fixed, fo := fixIncompletePipeOperator(src+" |>", parsedErr)
+			return strings.TrimSuffix(fixed, " |>"), fo
+		},
 		"fixErrorForWhereStatement": func(src string, parsedErr Error) (string, []FixOffset) {
 			return fixErrorForWhereStatement(src, nil, parsedErr)
 		},
@@ -135,6 +139,10 @@ func TestFixFunctions_KeepSourceWhenTermOverflowsSource(t *testing.T) {
 			return fixDeclarationError(src, parsedErr, "0")
 		},
 		"fixErrorToLiteral": fixErrorToLiteral,
+		"fixIncompletePipeOperator": func(src string, parsedErr Error) (string, []FixOffset) {
+			fixed, fo := fixIncompletePipeOperator(src+" |>", parsedErr)
+			return strings.TrimSuffix(fixed, " |>"), fo
+		},
 		"fixErrorForWhereStatement": func(src string, parsedErr Error) (string, []FixOffset) {
 			return fixErrorForWhereStatement(src, nil, parsedErr)
 		},

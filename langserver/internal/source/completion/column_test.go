@@ -45,6 +45,121 @@ func TestProject_CompleteColumns(t *testing.T) {
 				},
 			},
 		},
+		"Select columns in pipe WHERE": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "FROM `project.dataset.table` |> WHERE |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+				},
+			},
+		},
+		"Select columns in pipe SELECT": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "FROM `project.dataset.table` |> SELECT |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+				},
+			},
+		},
+		"Select columns in pipe ORDER BY": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "FROM `project.dataset.table` |> WHERE id = 1 |> ORDER BY |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+				},
+			},
+		},
+		"Select columns in pipe AGGREGATE": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "FROM `project.dataset.table` |> AGGREGATE |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+				},
+			},
+		},
+		"Select columns in pipe EXTEND": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "FROM `project.dataset.table` |> EXTEND |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+				},
+			},
+		},
 		"Select columns with supportSunippet is true": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT id, | FROM `project.dataset.table`",

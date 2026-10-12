@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
@@ -419,6 +420,35 @@ func fixOnlyWithClauseSyntaxError(src string, parsedErr Error) (fixedSrc string,
 	}
 }
 
+var incompletePipeOperatorRegex = regexp.MustCompile(`^\|>(\s*[A-Za-z_]+)*\s*$`)
+
+// fix the last pipe operator that has no complete operation by deleting it
+//
+//	FROM table |> SELECT
+//
+// becomes
+//
+//	FROM table
+func fixIncompletePipeOperator(src string, parsedErr Error) (fixedSrc string, fixOffsets []FixOffset) {
+	errOffset, ok := errorByteOffset(src, parsedErr.Position)
+	if !ok {
+		return src, nil
+	}
+
+	pipeOffset := strings.LastIndex(src[:errOffset], "|>")
+	if pipeOffset == -1 || !incompletePipeOperatorRegex.MatchString(src[pipeOffset:]) {
+		return src, nil
+	}
+
+	fixedSrc = src[:pipeOffset]
+	return fixedSrc, []FixOffset{
+		{
+			Offset: len(src),
+			Length: len(fixedSrc) - len(src),
+		},
+	}
+}
+
 // fix Unexpected end of script with deletion
 //
 //	SELECT * FROM table GROUP BY
@@ -452,6 +482,11 @@ func fixUnexpectedEndOfScriptWithDeletion(src string, parsedErr Error, targetUne
 	}
 
 	fixedSrc = strings.TrimSpace(src[:targetOffset])
+	// A pipe operator left without its operation is another syntax error, so
+	// it is removed together with the keyword.
+	if trimmed := strings.TrimSuffix(fixedSrc, "|>"); trimmed != fixedSrc {
+		fixedSrc = strings.TrimRightFunc(trimmed, unicode.IsSpace)
+	}
 	return fixedSrc, parsedErr, []FixOffset{
 		{
 			Offset: errOffset,

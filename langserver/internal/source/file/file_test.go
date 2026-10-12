@@ -615,6 +615,132 @@ func TestProject_ParseFile(t *testing.T) {
 			},
 			expectedErrs: []file.Error{},
 		},
+		"pipe operator without operation": {
+			file: "FROM `project.dataset.table` |> ",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Syntax error: Expected keyword JOIN but got end of script",
+					Position: lsp.Position{Line: 0, Character: 31},
+				},
+			},
+		},
+		"pipe operator without operation on a new line": {
+			file: "FROM `project.dataset.table`\n|> ",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Syntax error: Expected keyword JOIN but got end of script",
+					Position: lsp.Position{Line: 1, Character: 2},
+				},
+			},
+		},
+		"pipe operator after another pipe operator": {
+			file: "FROM `project.dataset.table` |> SELECT x |> ",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Syntax error: Expected keyword JOIN but got end of script",
+					Position: lsp.Position{Line: 0, Character: 43},
+				},
+			},
+		},
+		"pipe SELECT without columns": {
+			file: "FROM `project.dataset.table` |> SELECT ",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Syntax error: Unexpected end of script",
+					Position: lsp.Position{Line: 0, Character: 38},
+				},
+			},
+		},
+		"pipe EXTEND without columns": {
+			file: "FROM `project.dataset.table` |> EXTEND ",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Syntax error: Unexpected end of script",
+					Position: lsp.Position{Line: 0, Character: 38},
+				},
+			},
+		},
+		"pipe JOIN without table": {
+			file: "FROM `project.dataset.table` |> JOIN ",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Syntax error: Unexpected end of script",
+					Position: lsp.Position{Line: 0, Character: 36},
+				},
+			},
+		},
+		"pipe ORDER BY without columns": {
+			file: "FROM `project.dataset.table` |> WHERE x = 1 |> ORDER BY ",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Syntax error: Unexpected end of script",
+					Position: lsp.Position{Line: 0, Character: 55},
+				},
+			},
+		},
+		"pipe GROUP BY without AGGREGATE": {
+			file: "FROM `project.dataset.table` |> GROUP BY ",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Syntax error: GROUP BY should be part of a pipe AGGREGATE operator, without a leading pipe symbol",
+					Position: lsp.Position{Line: 0, Character: 32},
+				},
+			},
+		},
+		"pipe AGGREGATE without aggregations": {
+			file: "FROM `project.dataset.table` |> AGGREGATE ",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Pipe AGGREGATE cannot have both an empty aggregate list and an empty GROUP BY",
+					Position: lsp.Position{Line: 0, Character: 32},
+				},
+			},
+		},
 		"parse with clause only": {
 			file: "WITH t1 AS (SELECT * FROM `project.dataset.table` t1)\n",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
