@@ -136,3 +136,43 @@ func TestConvertErrorsToDiagnostics_ReturnsRangeInUTF16CodeUnits(t *testing.T) {
 		})
 	}
 }
+
+func TestHandler_scheduleDiagnostics_publishesEmptyDiagnosticsOnPanic(t *testing.T) {
+	const uri lsp.DocumentURI = "file:///a.sql"
+	tests := map[string]struct {
+		schedule func(h *Handler)
+		request  func(h *Handler) chan lsp.DocumentURI
+	}{
+		"diagnostics": {
+			schedule: (*Handler).scheduleDiagnostics,
+			request:  func(h *Handler) chan lsp.DocumentURI { return h.diagnosticRequest },
+		},
+		"dryrun": {
+			schedule: (*Handler).scheduleDryRun,
+			request:  func(h *Handler) chan lsp.DocumentURI { return h.dryrunRequest },
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			conn := newFakeConn()
+			// A nil project makes diagnosing panic without depending on any
+			// particular parser bug.
+			h := newHandler(logrus.New(), "")
+			h.conn = conn
+			go tt.schedule(h)
+			t.Cleanup(func() { _ = h.Close() })
+
+			tt.request(h) <- uri
+
+			got := conn.waitForNotify(t)
+			want := fakeNotify{
+				method: "textDocument/publishDiagnostics",
+				params: lsp.PublishDiagnosticsParams{URI: uri, Diagnostics: []lsp.Diagnostic{}},
+			}
+			if diff := cmp.Diff(want, got, cmp.AllowUnexported(fakeNotify{})); diff != "" {
+				t.Errorf("notify mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

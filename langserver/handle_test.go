@@ -1,9 +1,13 @@
 package langserver
 
 import (
+	"context"
 	"errors"
+	"net"
 	"testing"
+	"time"
 
+	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/sirupsen/logrus"
 	"github.com/sourcegraph/jsonrpc2"
 )
@@ -161,5 +165,32 @@ func TestHandler_handle_exit(t *testing.T) {
 				t.Fatal("ExitNotify() did not receive an exit code")
 			}
 		})
+	}
+}
+
+func TestHandler_Handle_recoversPanicAsInternalError(t *testing.T) {
+	// A nil project makes the definition handler panic without depending on
+	// any particular parser bug.
+	h := &Handler{logger: logrus.New()}
+
+	serverStream, clientStream := net.Pipe()
+	serverConn := jsonrpc2.NewConn(t.Context(), jsonrpc2.NewBufferedStream(serverStream, jsonrpc2.VSCodeObjectCodec{}), h)
+	defer serverConn.Close()
+	clientConn := jsonrpc2.NewConn(t.Context(), jsonrpc2.NewBufferedStream(clientStream, jsonrpc2.VSCodeObjectCodec{}), jsonrpc2.HandlerWithError(func(context.Context, *jsonrpc2.Conn, *jsonrpc2.Request) (any, error) {
+		return nil, nil
+	}))
+	defer clientConn.Close()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	params := lsp.TextDocumentPositionParams{TextDocument: lsp.TextDocumentIdentifier{URI: "file:///a.sql"}}
+	err := clientConn.Call(ctx, "textDocument/definition", params, nil)
+
+	var rpcErr *jsonrpc2.Error
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("Call() error = %v, want *jsonrpc2.Error", err)
+	}
+	if rpcErr.Code != jsonrpc2.CodeInternalError {
+		t.Errorf("error code = %d, want %d", rpcErr.Code, jsonrpc2.CodeInternalError)
 	}
 }
