@@ -7,8 +7,10 @@ import (
 	"os"
 	"runtime/debug"
 	"strings"
+	"sync"
 
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
+	"github.com/kitagry/bqls/langserver/internal/lint"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source"
 	"github.com/sirupsen/logrus"
@@ -33,7 +35,16 @@ type Handler struct {
 	diagnosticRequest          chan lsp.DocumentURI
 	dryrunRequest              chan lsp.DocumentURI
 	virtualTextDocumentRequest chan lsp.DocumentURI
-	initializeParams           lsp.InitializeParams[InitializeOption]
+	// settingsMu guards initializeParams, which diagnostics goroutines read
+	// while workspace/didChangeConfiguration may replace it.
+	settingsMu       sync.RWMutex
+	initializeParams lsp.InitializeParams[InitializeOption]
+}
+
+func (h *Handler) lintConfig() lint.Config {
+	h.settingsMu.RLock()
+	defer h.settingsMu.RUnlock()
+	return h.initializeParams.InitializationOptions.Lint
 }
 
 var _ jsonrpc2.Handler = (*Handler)(nil)

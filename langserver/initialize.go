@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/kitagry/bqls/langserver/internal/lint"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/sourcegraph/jsonrpc2"
 )
@@ -15,7 +16,8 @@ type InitializeOption struct {
 	// the bqls/publishVirtualTextDocument notification and can render a
 	// pending state. Clients that omit this (zero value: false) keep
 	// getting the fully-synchronous bqls/virtualTextDocument response.
-	SupportsAsyncVirtualTextDocument bool `json:"supports_async_virtual_text_document"`
+	SupportsAsyncVirtualTextDocument bool        `json:"supports_async_virtual_text_document"`
+	Lint                             lint.Config `json:"lint"`
 }
 
 func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
@@ -29,7 +31,9 @@ func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req
 	if err := json.Unmarshal(*req.Params, &params); err != nil {
 		return nil, err
 	}
+	h.settingsMu.Lock()
 	h.initializeParams = params
+	h.settingsMu.Unlock()
 
 	err = h.setupByInitializeParams()
 	if err != nil {

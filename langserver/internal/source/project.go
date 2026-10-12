@@ -75,21 +75,6 @@ func (p *Project) DeleteFile(uri lsp.DocumentURI) {
 	p.cache.Delete(uri)
 }
 
-func (p *Project) GetErrors(uri lsp.DocumentURI) map[lsp.DocumentURI][]file.Error {
-	sql := p.cache.Get(uri)
-	if sql == nil {
-		return nil
-	}
-
-	parsedFile := p.analyzer.ParseFile(uri, sql.RawText)
-	defer parsedFile.Close()
-	if len(parsedFile.Errors) > 0 {
-		return map[lsp.DocumentURI][]file.Error{uri: parsedFile.Errors}
-	}
-
-	return map[lsp.DocumentURI][]file.Error{uri: nil}
-}
-
 func (p *Project) Dryrun(ctx context.Context, uri lsp.DocumentURI) (*bq.JobStatus, error) {
 	sql := p.cache.Get(uri)
 	if sql == nil {
