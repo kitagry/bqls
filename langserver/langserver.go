@@ -8,6 +8,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lint"
@@ -40,6 +41,11 @@ type Handler struct {
 	closing chan struct{}
 	closeMu sync.RWMutex
 	closed  bool
+
+	shutdown atomic.Bool
+	// exit is buffered so the exit notification never blocks the handler,
+	// even if nobody is waiting on ExitNotify.
+	exit chan int
 
 	// settingsMu guards initializeParams, which diagnostics goroutines read
 	// while workspace/didChangeConfiguration may replace it.
@@ -80,6 +86,7 @@ func newHandler(logger *logrus.Logger, version string) *Handler {
 		dryrunRequest:              make(chan lsp.DocumentURI, 3),
 		virtualTextDocumentRequest: make(chan lsp.DocumentURI, 3),
 		closing:                    make(chan struct{}),
+		exit:                       make(chan int, 1),
 	}
 }
 
@@ -132,12 +139,38 @@ func (h *Handler) Close() error {
 	return errors.Join(errs...)
 }
 
+// ExitNotify delivers the process exit code once the client sends the exit
+// notification: 0 if shutdown was received first, otherwise 1.
+func (h *Handler) ExitNotify() <-chan int {
+	return h.exit
+}
+
 func (h *Handler) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
+	if h.shutdown.Load() && req.Method != "exit" {
+		if req.Notif {
+			return nil, nil
+		}
+		return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidRequest, Message: fmt.Sprintf("server is shutting down: %s", req.Method)}
+	}
+
 	switch req.Method {
 	case "initialize":
 		return h.handleInitialize(ctx, conn, req)
 	case "initialized":
 		return
+	case "shutdown":
+		h.shutdown.Store(true)
+		return nil, nil
+	case "exit":
+		code := 1
+		if h.shutdown.Load() {
+			code = 0
+		}
+		select {
+		case h.exit <- code:
+		default:
+		}
+		return nil, nil
 	case "textDocument/didOpen":
 		return h.handleTextDocumentDidOpen(ctx, conn, req)
 	case "textDocument/didChange":

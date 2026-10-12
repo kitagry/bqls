@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"testing"
 	"time"
@@ -44,5 +46,72 @@ func TestRun_StdioFlag(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("run did not return within timeout")
+	}
+}
+
+func TestRun_Exit(t *testing.T) {
+	shutdown := `{"jsonrpc":"2.0","id":1,"method":"shutdown"}`
+	exit := `{"jsonrpc":"2.0","method":"exit"}`
+
+	tests := map[string]struct {
+		messages []string
+		want     exitCode
+	}{
+		"exit after shutdown returns OK": {
+			messages: []string{shutdown, exit},
+			want:     exitCodeOK,
+		},
+		"exit without shutdown returns Err": {
+			messages: []string{exit},
+			want:     exitCodeErr,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			origStdin := os.Stdin
+			origStdout := os.Stdout
+			t.Cleanup(func() {
+				os.Stdin = origStdin
+				os.Stdout = origStdout
+			})
+
+			inR, inW, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			// stdin stays open so that run can only return via the exit notification.
+			t.Cleanup(func() { inW.Close() })
+
+			outR, outW, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { outR.Close() })
+			go func() { _, _ = io.Copy(io.Discard, outR) }()
+
+			os.Stdin = inR
+			os.Stdout = outW
+
+			done := make(chan exitCode, 1)
+			go func() {
+				done <- run(nil)
+			}()
+
+			for _, m := range tt.messages {
+				if _, err := fmt.Fprintf(inW, "Content-Length: %d\r\n\r\n%s", len(m), m); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			select {
+			case got := <-done:
+				if got != tt.want {
+					t.Errorf("run() = %v, want %v", got, tt.want)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("run did not return within timeout")
+			}
+		})
 	}
 }
