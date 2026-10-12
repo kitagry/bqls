@@ -933,3 +933,94 @@ func TestAnalyzer_ParseFileDoesNotPanicOnLoneCarriageReturn(t *testing.T) {
 		t.Errorf("ParseFile result diff (-expect, +got)\n%s", diff)
 	}
 }
+
+func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
+	tests := map[string]struct {
+		file               string
+		bqTableMetadataMap map[string]*bq.TableMetadata
+
+		expectedErrs []file.Error
+	}{
+		"SET with function call": {
+			file:         "DECLARE x DATE;\nSET x = CURRENT_DATE();",
+			expectedErrs: []file.Error{},
+		},
+		"SET with subquery": {
+			file: "DECLARE x INT64;\nSET x = (SELECT MAX(id) FROM `project.dataset.table`);",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{},
+		},
+		"SET with unknown column in subquery": {
+			file: "DECLARE x INT64;\nSET x = (SELECT MAX(unknown_column) FROM `project.dataset.table`);",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg:                  "Unrecognized name: unknown_column",
+					Position:             lsp.Position{Line: 1, Character: 20},
+					TermLength:           14,
+					IncompleteColumnName: "unknown_column",
+				},
+			},
+		},
+		"SET referencing declared variable": {
+			file:         "DECLARE y INT64 DEFAULT 1;\nDECLARE x INT64;\nSET x = y + 1;",
+			expectedErrs: []file.Error{},
+		},
+		"SET struct assignment with unknown function": {
+			file: "DECLARE a INT64;\nDECLARE b INT64;\nSET (a, b) = (1, UNKNOWN_FUNC());",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 2, Character: 17},
+				},
+			},
+		},
+		"SET parameter with unknown function": {
+			file: "SET @p = UNKNOWN_FUNC();",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 0, Character: 9},
+				},
+			},
+		},
+		"SET with unknown function": {
+			file: "DECLARE x DATE;\nSET x = UNKNOWN_FUNC();",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 1, Character: 8},
+				},
+			},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			for tablePath, schema := range tt.bqTableMetadataMap {
+				tablePathSplitted := strings.Split(tablePath, ".")
+				if len(tablePathSplitted) != 3 {
+					t.Fatalf("table path length should be 3, got %s", tablePath)
+				}
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), tablePathSplitted[0], tablePathSplitted[1], tablePathSplitted[2]).Return(schema, nil).MinTimes(0)
+			}
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
+			if diff := cmp.Diff(tt.expectedErrs, got.Errors, cmpopts.IgnoreUnexported()); diff != "" {
+				t.Errorf("ParseFile result diff (-expect, +got)\n%s", diff)
+			}
+		})
+	}
+}
