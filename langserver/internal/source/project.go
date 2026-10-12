@@ -71,6 +71,10 @@ func (p *Project) GetFile(uri lsp.DocumentURI) (string, bool) {
 	return sql.RawText, true
 }
 
+func (p *Project) OpenFiles() []lsp.DocumentURI {
+	return p.cache.URIs()
+}
+
 func (p *Project) DeleteFile(uri lsp.DocumentURI) {
 	p.cache.Delete(uri)
 }

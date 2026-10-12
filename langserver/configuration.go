@@ -18,7 +18,17 @@ func (h *Handler) handleWorkspaceDidChangeConfiguration(ctx context.Context, con
 		return nil, err
 	}
 
+	h.settingsMu.Lock()
+	prev := h.initializeParams.InitializationOptions
 	h.initializeParams.InitializationOptions = params.Settings
+	h.settingsMu.Unlock()
+
+	// Rebuilding the project recreates the BigQuery client and drops its
+	// caches, which is needless when only lint settings changed.
+	if h.project != nil && !requiresProjectRebuild(prev, params.Settings) {
+		h.rediagnoseOpenFiles()
+		return nil, nil
+	}
 
 	err = h.setupByInitializeParams()
 	if err != nil {
@@ -26,4 +36,19 @@ func (h *Handler) handleWorkspaceDidChangeConfiguration(ctx context.Context, con
 	}
 
 	return nil, nil
+}
+
+func requiresProjectRebuild(prev, next InitializeOption) bool {
+	return prev.ProjectID != next.ProjectID || prev.Location != next.Location
+}
+
+func (h *Handler) rediagnoseOpenFiles() {
+	uris := h.project.OpenFiles()
+	// Sent asynchronously because diagnosticRequest is a small buffered
+	// channel and blocking here would stall the JSON-RPC handler.
+	go func() {
+		for _, uri := range uris {
+			h.diagnosticRequest <- uri
+		}
+	}()
 }
