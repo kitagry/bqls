@@ -124,6 +124,14 @@
 					"default": "",
 					"description": "BigQuery location (e.g. US, asia-northeast1). If empty, bqls uses \"US\"."
 				},
+				"bqls.lint.rules": {
+					"type": "object",
+					"additionalProperties": {
+						"type": "boolean"
+					},
+					"default": {},
+					"markdownDescription": "Enable or disable lint rules by name, e.g. `{\"null-comparison\": false}`. Rules not listed use their default."
+				},
 				"bqls.trace.server": {
 					"type": "string",
 					"enum": [

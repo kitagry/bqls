@@ -357,12 +357,16 @@ function buildSettings(): {
 	project_id: string;
 	location: string;
 	supports_async_virtual_text_document: boolean;
+	lint: { rules: Record<string, boolean> };
 } {
 	const config = vscode.workspace.getConfiguration("bqls");
 	return {
 		project_id: config.get<string>("projectId") ?? "",
 		location: config.get<string>("location") ?? "",
 		supports_async_virtual_text_document: true,
+		lint: {
+			rules: config.get<Record<string, boolean>>("lint.rules") ?? {},
+		},
 	};
 }
 
@@ -671,7 +675,8 @@ export async function activate(
 			}
 			if (
 				event.affectsConfiguration("bqls.projectId") ||
-				event.affectsConfiguration("bqls.location")
+				event.affectsConfiguration("bqls.location") ||
+				event.affectsConfiguration("bqls.lint.rules")
 			) {
 				client.sendNotification("workspace/didChangeConfiguration", {
 					settings: buildSettings(),
