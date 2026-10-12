@@ -70,8 +70,19 @@ You can use your favorite lsp client.
 
 	handler := langserver.NewHandler(*isDebug, version)
 	defer handler.Close()
-	<-jsonrpc2.NewConn(context.Background(), jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}), handler).DisconnectNotify()
-	return exitCodeOK
+	conn := jsonrpc2.NewConn(context.Background(), jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}), handler)
+	select {
+	case <-conn.DisconnectNotify():
+		return exitCodeOK
+	case code := <-handler.ExitNotify():
+		// Stop the reader goroutine before returning so it no longer touches stdin.
+		conn.Close()
+		<-conn.DisconnectNotify()
+		if code != 0 {
+			return exitCodeErr
+		}
+		return exitCodeOK
+	}
 }
 
 func getRevision() string {
