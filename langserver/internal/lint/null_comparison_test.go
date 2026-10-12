@@ -63,7 +63,7 @@ func TestNullComparison(t *testing.T) {
 			want: []lint.Diagnostic{{
 				Rule:     "null-comparison",
 				Range:    rng(1, 6, 1, 36),
-				Message:  "Comparison with NULL using != always yields NULL; use IS NOT NULL",
+				Message:  "Comparison with NULL using <> always yields NULL; use IS NOT NULL",
 				Severity: lint.SeverityWarning,
 				SuggestedFixes: []lint.SuggestedFix{{
 					Title: "Replace with IS NOT NULL",
@@ -89,6 +89,43 @@ func TestNullComparison(t *testing.T) {
 		"comparison with declared variable is fine": {
 			src:  "DECLARE v INT64;\nSELECT x FROM UNNEST([1]) AS x WHERE x = v",
 			want: nil,
+		},
+		"parenthesized typed NULL": {
+			src: "SELECT x FROM UNNEST([1]) AS x WHERE x = (CAST(NULL AS INT64))",
+			want: []lint.Diagnostic{{
+				Rule:     "null-comparison",
+				Range:    rng(0, 37, 0, 62),
+				Message:  "Comparison with NULL using = always yields NULL; use IS NULL",
+				Severity: lint.SeverityWarning,
+				SuggestedFixes: []lint.SuggestedFix{{
+					Title: "Replace with IS NULL",
+					Edits: []lsp.TextEdit{{Range: rng(0, 37, 0, 62), NewText: "x IS NULL"}},
+				}},
+			}},
+		},
+		// Ranges are byte based while clients count UTF-16 units, so an edit
+		// after non-ASCII text on its line would overwrite the wrong text.
+		"no fix after non-ASCII text on the same line": {
+			src: "SELECT 'あいう' AS s, x FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64)",
+			want: []lint.Diagnostic{{
+				Rule:     "null-comparison",
+				Range:    rng(0, 55, 0, 78),
+				Message:  "Comparison with NULL using = always yields NULL; use IS NULL",
+				Severity: lint.SeverityWarning,
+			}},
+		},
+		"fix kept when non-ASCII text follows the edit": {
+			src: "SELECT x FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64) AND 'あ' = 'あ'",
+			want: []lint.Diagnostic{{
+				Rule:     "null-comparison",
+				Range:    rng(0, 37, 0, 60),
+				Message:  "Comparison with NULL using = always yields NULL; use IS NULL",
+				Severity: lint.SeverityWarning,
+				SuggestedFixes: []lint.SuggestedFix{{
+					Title: "Replace with IS NULL",
+					Edits: []lsp.TextEdit{{Range: rng(0, 37, 0, 60), NewText: "x IS NULL"}},
+				}},
+			}},
 		},
 		"IS NULL is fine": {
 			src:  "SELECT x FROM UNNEST([1]) AS x WHERE x IS NULL",

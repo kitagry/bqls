@@ -5,6 +5,8 @@ package lint
 
 import (
 	"context"
+	"slices"
+	"strings"
 
 	bq "cloud.google.com/go/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
@@ -51,10 +53,14 @@ type Pass struct {
 	report func(Diagnostic)
 }
 
-// Report records a diagnostic. Rule defaults to the analyzer's name.
+// Report records a diagnostic. Rule defaults to the analyzer's name, and any
+// severity other than Information is reported as Warning.
 func (p *Pass) Report(d Diagnostic) {
 	if d.Rule == "" {
 		d.Rule = p.Analyzer.Name
+	}
+	if d.Severity != SeverityInformation {
+		d.Severity = SeverityWarning
 	}
 	p.report(d)
 }
@@ -114,10 +120,48 @@ func Run(ctx context.Context, f file.ParsedFile, cfg Config, env Env, analyzers 
 				if suppressions.Suppressed(d.Rule, d.Range.Start.Line) {
 					return
 				}
+				d.SuggestedFixes = slices.DeleteFunc(d.SuggestedFixes, func(fix SuggestedFix) bool {
+					return !EditsASCIISafe(f.Src, fix.Edits)
+				})
+				if len(d.SuggestedFixes) == 0 {
+					d.SuggestedFixes = nil
+				}
 				result = append(result, d)
 			},
 		}
 		a.Run(pass)
 	}
 	return result
+}
+
+// EditsASCIISafe reports whether every edit only spans ASCII text from the
+// start of its first line. Positions are byte offsets while LSP clients count
+// UTF-16 units, so an edit preceded by non-ASCII text would land on the wrong
+// characters.
+func EditsASCIISafe(src string, edits []lsp.TextEdit) bool {
+	lines := strings.Split(src, "\n")
+	for _, e := range edits {
+		for l := e.Range.Start.Line; l <= e.Range.End.Line; l++ {
+			if l >= len(lines) {
+				return false
+			}
+			text := lines[l]
+			if l == e.Range.End.Line && e.Range.End.Character < len(text) {
+				text = text[:e.Range.End.Character]
+			}
+			if !isASCII(text) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }

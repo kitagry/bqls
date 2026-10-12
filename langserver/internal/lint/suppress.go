@@ -76,7 +76,12 @@ func ParseSuppressions(src string) Suppressions {
 				next = i + 2 + end + 2
 			}
 			endLine := line + strings.Count(src[i:next], "\n")
-			addDirective(result, body, line, lineHasCode, endLine)
+			if !lineHasCode && codeFollowsOnLine(src[next:]) {
+				// `/* bqls:ignore */ SELECT ...` targets the code on its own line.
+				addDirective(result, body, endLine, true, endLine)
+			} else {
+				addDirective(result, body, line, lineHasCode, endLine)
+			}
 			line = endLine
 			i = next
 		case c == '\'' || c == '"' || c == '`':
@@ -92,6 +97,14 @@ func ParseSuppressions(src string) Suppressions {
 		}
 	}
 	return result
+}
+
+func codeFollowsOnLine(rest string) bool {
+	if i := strings.IndexByte(rest, '\n'); i >= 0 {
+		rest = rest[:i]
+	}
+	rest = strings.TrimSpace(rest)
+	return rest != "" && !strings.HasPrefix(rest, "--") && !strings.HasPrefix(rest, "#") && !strings.HasPrefix(rest, "/*")
 }
 
 func addDirective(s Suppressions, body string, startLine int, trailing bool, endLine int) {

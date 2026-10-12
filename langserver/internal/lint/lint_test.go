@@ -106,3 +106,28 @@ func TestConfig_JSON(t *testing.T) {
 		t.Errorf("Config diff (-want +got):\n%s", diff)
 	}
 }
+
+func TestPass_Report_ClampsSeverity(t *testing.T) {
+	tests := map[string]struct {
+		severity lint.Severity
+		want     lint.Severity
+	}{
+		"zero value becomes warning": {severity: 0, want: lint.SeverityWarning},
+		"error becomes warning":      {severity: lsp.Error, want: lint.SeverityWarning},
+		"hint becomes warning":       {severity: lsp.Hint, want: lint.SeverityWarning},
+		"information is kept":        {severity: lint.SeverityInformation, want: lint.SeverityInformation},
+		"warning is kept":            {severity: lint.SeverityWarning, want: lint.SeverityWarning},
+	}
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			a := &lint.Analyzer{Name: "a", DefaultEnabled: true, Run: func(pass *lint.Pass) {
+				pass.Report(lint.Diagnostic{Severity: tt.severity})
+			}}
+			f := file.ParsedFile{Src: "SELECT 1", Node: &googlesql.ASTScript{}}
+			got := lint.Run(t.Context(), f, lint.Config{}, lint.Env{}, a)
+			if len(got) != 1 || got[0].Severity != tt.want {
+				t.Errorf("Run() = %+v, want one diagnostic with severity %v", got, tt.want)
+			}
+		})
+	}
+}

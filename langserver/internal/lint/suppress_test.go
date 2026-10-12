@@ -43,6 +43,13 @@ func TestSuppressions_Suppressed(t *testing.T) {
 				{rule: "null-comparison", line: 0, want: true},
 			},
 		},
+		"block comment followed by code applies to the same line": {
+			src: "SELECT 1\n/* bqls:ignore null-comparison */ SELECT x = NULL\nSELECT 2",
+			checks: []check{
+				{rule: "null-comparison", line: 1, want: true},
+				{rule: "null-comparison", line: 2, want: false},
+			},
+		},
 		"standalone multi-line block comment suppresses the line after it ends": {
 			src: "/*\n bqls:ignore null-comparison\n*/\nSELECT x = NULL",
 			checks: []check{

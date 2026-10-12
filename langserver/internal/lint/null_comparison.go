@@ -2,6 +2,7 @@ package lint
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	googlesql "github.com/goccy/go-googlesql"
@@ -77,7 +78,7 @@ func checkNullComparison(pass *Pass, call *googlesql.ResolvedFunctionCall) {
 	nullSrc, ok := pass.File.ExtractSQL(nullLoc)
 	// Declared variables are analyzed as substituted literals; only flag NULLs
 	// the user actually wrote.
-	if !ok || !strings.Contains(strings.ToUpper(nullSrc), "NULL") {
+	if !ok || !nullSourcePattern.MatchString(strings.TrimSpace(nullSrc)) {
 		return
 	}
 
@@ -86,35 +87,62 @@ func checkNullComparison(pass *Pass, call *googlesql.ResolvedFunctionCall) {
 		Message:  fmt.Sprintf("Comparison with NULL using %s always yields NULL; use %s", op, replacement),
 		Severity: SeverityWarning,
 	}
-	if otherSrc, ok := otherOperandSource(callSrc, nullSrc, nullOnRight); ok {
+	if cmp, ok := SplitNullComparison(callSrc, nullSrc, nullOnRight); ok {
+		d.Message = fmt.Sprintf("Comparison with NULL using %s always yields NULL; use %s", cmp.Op, replacement)
 		d.SuggestedFixes = []SuggestedFix{{
 			Title: "Replace with " + replacement,
-			Edits: []lsp.TextEdit{{Range: callRange, NewText: otherSrc + " " + replacement}},
+			Edits: []lsp.TextEdit{{Range: callRange, NewText: cmp.Other + " " + replacement}},
 		}}
 	}
 	pass.Report(d)
 }
 
-// otherOperandSource slices the non-NULL operand out of the comparison's own
-// source text rather than using the operand's resolved location, because
-// resolved locations exclude redundant parentheses the user wrote.
-func otherOperandSource(callSrc, nullSrc string, nullOnRight bool) (string, bool) {
-	var rest string
-	var ok bool
+var nullSourcePattern = regexp.MustCompile(`(?i)^\(*\s*(NULL\b|CAST\s*\(\s*NULL\s+AS\b)`)
+
+// NullComparisonParts is a `<other> <op> <null>` comparison split from its source text.
+type NullComparisonParts struct {
+	Other string
+	Op    string
+}
+
+// SplitNullComparison slices the non-NULL operand and the operator out of the
+// comparison's own source text rather than using the operand's location,
+// because locations exclude parentheses the user wrote around either side.
+func SplitNullComparison(cmpSrc, nullSrc string, nullOnRight bool) (NullComparisonParts, bool) {
+	var rest, between string
 	if nullOnRight {
-		rest, ok = strings.CutSuffix(callSrc, nullSrc)
-		rest = strings.TrimRight(rest, " \t\r\n")
-		rest = strings.TrimRight(rest, "=!<>")
+		i := strings.LastIndex(cmpSrc, nullSrc)
+		if i < 0 || strings.Trim(cmpSrc[i+len(nullSrc):], " \t\r\n)") != "" {
+			return NullComparisonParts{}, false
+		}
+		rest = strings.TrimRight(cmpSrc[:i], " \t\r\n(")
+		other := strings.TrimRight(rest, "=!<>")
+		between, rest = rest[len(other):], other
 	} else {
-		rest, ok = strings.CutPrefix(callSrc, nullSrc)
-		rest = strings.TrimLeft(rest, " \t\r\n")
-		rest = strings.TrimLeft(rest, "=!<>")
+		i := strings.Index(cmpSrc, nullSrc)
+		if i < 0 || strings.Trim(cmpSrc[:i], " \t\r\n(") != "" {
+			return NullComparisonParts{}, false
+		}
+		rest = strings.TrimLeft(cmpSrc[i+len(nullSrc):], " \t\r\n)")
+		other := strings.TrimLeft(rest, "=!<>")
+		between, rest = rest[:len(rest)-len(other)], other
 	}
 	rest = strings.TrimSpace(rest)
-	if !ok || rest == "" {
-		return "", false
+	if rest == "" || between == "" {
+		return NullComparisonParts{}, false
 	}
-	return rest, true
+	return NullComparisonParts{Other: rest, Op: between}, true
+}
+
+// NullReplacement returns the IS [NOT] NULL form for a written comparison operator.
+func NullReplacement(op string) (string, bool) {
+	switch op {
+	case "=":
+		return "IS NULL", true
+	case "!=", "<>":
+		return "IS NOT NULL", true
+	}
+	return "", false
 }
 
 func isNullLiteral(expr googlesql.ResolvedExprNode) bool {
