@@ -211,3 +211,38 @@ func TestHandler_lintCodeActions_LiteralNullComparisonError(t *testing.T) {
 		})
 	}
 }
+
+func TestHandler_lintCodeActions_IgnoreAfterNonASCIIText(t *testing.T) {
+	const uri lsp.DocumentURI = "file:///a.sql"
+	// The comparison starts at byte 55 but at UTF-16 character 49, which is
+	// what the client sends.
+	const src = "SELECT 'あいう' AS s, x FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64)"
+	h := newTestHandlerWithFile(t, uri, src)
+	h.initializeParams.Capabilities.TextDocument.CodeAction.CodeActionLiteralSupport.CodeActionKind.ValueSet = []lsp.CodeActionKind{lsp.CAKQuickFix}
+
+	cursor := lsp.Position{Line: 0, Character: 50}
+	got := h.lintCodeActions(t.Context(), uri, lsp.Range{Start: cursor, End: cursor})
+
+	lintDiag := lsp.Diagnostic{
+		Range:    lsp.Range{Start: lsp.Position{Line: 0, Character: 49}, End: lsp.Position{Line: 0, Character: 72}},
+		Severity: lsp.Warning,
+		Code:     "null-comparison",
+		Source:   "bqls-lint",
+		Message:  "Comparison with NULL using = always yields NULL; use IS NULL",
+	}
+	// The rewrite itself is dropped because it follows non-ASCII text.
+	want := []any{lsp.CodeAction{
+		Title:       "Ignore null-comparison on this line",
+		Kind:        lsp.CAKQuickFix,
+		Diagnostics: []lsp.Diagnostic{lintDiag},
+		Edit: &lsp.WorkspaceEdit{Changes: map[string][]lsp.TextEdit{
+			string(uri): {{
+				Range:   lsp.Range{Start: lsp.Position{Line: 0}, End: lsp.Position{Line: 0}},
+				NewText: "-- bqls:ignore null-comparison\n",
+			}},
+		}},
+	}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("lintCodeActions() diff (-want +got):\n%s", diff)
+	}
+}

@@ -40,6 +40,16 @@ func TestHandler_diagnose(t *testing.T) {
 				Message:  "Comparison with NULL using = always yields NULL; use IS NULL",
 			}},
 		},
+		"lint diagnostic range in UTF-16 after non-ASCII text": {
+			src: "SELECT 'あいう' AS s, x FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64)",
+			want: []lsp.Diagnostic{{
+				Range:    lsp.Range{Start: lsp.Position{Line: 0, Character: 49}, End: lsp.Position{Line: 0, Character: 72}},
+				Severity: lsp.Warning,
+				Code:     "null-comparison",
+				Source:   "bqls-lint",
+				Message:  "Comparison with NULL using = always yields NULL; use IS NULL",
+			}},
+		},
 		"lint rule disabled by settings": {
 			src:  "SELECT x FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64)",
 			cfg:  lint.Config{Rules: map[string]bool{"null-comparison": false}},

@@ -38,10 +38,11 @@ func (h *Handler) lintCodeActions(ctx context.Context, uri lsp.DocumentURI, rng 
 	}
 	ignored := make(map[ruleLine]bool)
 	for _, d := range diags.Lint {
-		if !rangesOverlap(d.Range, rng) {
+		// Compare in UTF-16 units, the unit of the client-supplied rng.
+		lspDiag := convertLintDiagnostics(src, []lint.Diagnostic{d})[0]
+		if !rangesOverlap(lspDiag.Range, rng) {
 			continue
 		}
-		lspDiag := convertLintDiagnostics([]lint.Diagnostic{d})[0]
 		result = append(result, fixCodeActions(uri, lspDiag, d.SuggestedFixes, rng)...)
 
 		key := ruleLine{rule: d.Rule, line: d.Range.Start.Line}

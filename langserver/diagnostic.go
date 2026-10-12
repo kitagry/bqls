@@ -133,18 +133,22 @@ func (h *Handler) diagnose(ctx context.Context, uri lsp.DocumentURI) (map[lsp.Do
 		return result, nil
 	}
 	src, _ := h.project.GetFile(uri)
-	result[uri] = append(convertErrorsToDiagnostics(src, diags.Errors), convertLintDiagnostics(diags.Lint)...)
+	result[uri] = append(convertErrorsToDiagnostics(src, diags.Errors), convertLintDiagnostics(src, diags.Lint)...)
 
 	return result, nil
 }
 
 const lintDiagnosticSource = "bqls-lint"
 
-func convertLintDiagnostics(diags []lint.Diagnostic) []lsp.Diagnostic {
+func convertLintDiagnostics(src string, diags []lint.Diagnostic) []lsp.Diagnostic {
 	result := make([]lsp.Diagnostic, len(diags))
+	lines := strings.Split(src, "\n")
 	for i, d := range diags {
 		result[i] = lsp.Diagnostic{
-			Range:    d.Range,
+			Range: lsp.Range{
+				Start: byteToUTF16Position(lines, d.Range.Start),
+				End:   byteToUTF16Position(lines, d.Range.End),
+			},
 			Severity: d.Severity,
 			Code:     d.Rule,
 			Source:   lintDiagnosticSource,
