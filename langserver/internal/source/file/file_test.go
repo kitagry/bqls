@@ -809,6 +809,33 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 			bqTableMetadataMap: map[string]*bq.TableMetadata{},
 			expectedErrs:       []file.Error{},
 		},
+		"Parse error position after declared variable and multibyte characters": {
+			file:               "DECLARE y INT64; SELECT 'あいう', y + 1, UNKNOWN_FUNC()",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 44,
+					},
+				},
+			},
+		},
+		"Parse error position after declared variable and tabs": {
+			// GoogleSQL expands both tabs to the next tab stop (columns 25 and 41).
+			file:               "DECLARE y INT64;\tSELECT y,\tUNKNOWN_FUNC()",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 27,
+					},
+				},
+			},
+		},
 		"Parse declared variable with crlf line endings": {
 			file: "DECLARE my_variable INT64;\r\n" +
 				"\r\n" +
@@ -883,5 +910,26 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 				t.Errorf("ParseFile result diff (-expect, +got)\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestAnalyzer_ParseFileDoesNotPanicOnLoneCarriageReturn(t *testing.T) {
+	// GoogleSQL treats a lone "\r" as a line break but bqls does not, so the
+	// reported line can be outside of the source.
+	ctrl := gomock.NewController(t)
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+	analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+	got := analyzer.ParseFile("uri", "SELECT 1;\rSELECT FROM t")
+	defer got.Close()
+
+	expectedErrs := []file.Error{
+		{
+			Msg:      "Syntax error: SELECT list must not be empty",
+			Position: lsp.Position{Line: 1, Character: 7},
+		},
+	}
+	if diff := cmp.Diff(expectedErrs, got.Errors); diff != "" {
+		t.Errorf("ParseFile result diff (-expect, +got)\n%s", diff)
 	}
 }
