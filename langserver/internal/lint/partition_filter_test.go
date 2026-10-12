@@ -34,6 +34,21 @@ var partitionedTables = map[string]*bq.TableMetadata{
 		TimePartitioning: &bq.TimePartitioning{Type: bq.DayPartitioningType},
 		Schema:           bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
 	},
+	"p.d.required_nested": {
+		Type:             bq.RegularTable,
+		TimePartitioning: &bq.TimePartitioning{Type: bq.DayPartitioningType, Field: "dt", RequirePartitionFilter: true},
+		Schema:           bq.Schema{{Name: "x", Type: bq.IntegerFieldType}, {Name: "dt", Type: bq.DateFieldType}},
+	},
+	"p.d.ingest_hourly": {
+		Type:             bq.RegularTable,
+		TimePartitioning: &bq.TimePartitioning{Type: bq.HourPartitioningType},
+		Schema:           bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+	},
+	"p.d.ts_col": {
+		Type:             bq.RegularTable,
+		TimePartitioning: &bq.TimePartitioning{Type: bq.DayPartitioningType, Field: "ts"},
+		Schema:           bq.Schema{{Name: "x", Type: bq.IntegerFieldType}, {Name: "ts", Type: bq.TimestampFieldType}},
+	},
 	"p.d.ranged": {
 		Type:              bq.RegularTable,
 		RangePartitioning: &bq.RangePartitioning{Field: "id", Range: &bq.RangePartitioningRange{Start: 0, End: 100, Interval: 10}},
@@ -109,6 +124,7 @@ func partitionFilter(r lsp.Range, table, columns, consequence string) lint.Diagn
 
 func TestPartitionFilter(t *testing.T) {
 	const mayScanAll = "it may scan all partitions"
+	const reject = "BigQuery will reject the query because the table requires a partition filter"
 	type report struct {
 		// sub is the reported source text and n its occurrence index.
 		sub     string
@@ -134,7 +150,7 @@ func TestPartitionFilter(t *testing.T) {
 			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
 		},
 		"CROSS JOIN without a condition": {
-			src:  "SELECT a.x FROM p.d.plain a CROSS JOIN p.d.by_col b",
+			src:  "SELECT a.x, b.x AS bx FROM p.d.plain a CROSS JOIN p.d.by_col b",
 			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
 		},
 		"filtered by JOIN ON": {
@@ -158,6 +174,10 @@ func TestPartitionFilter(t *testing.T) {
 		},
 		"unfiltered scalar subquery": {
 			src:  "SELECT (SELECT MAX(x) FROM p.d.by_col) AS m",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"unfiltered scalar subquery without aggregation": {
+			src:  "SELECT (SELECT x FROM p.d.by_col LIMIT 1) AS m",
 			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
 		},
 		"correlated filter in EXISTS": {
@@ -245,6 +265,90 @@ func TestPartitionFilter(t *testing.T) {
 		},
 		"each statement of a script": {
 			src:  "SELECT x FROM p.d.by_col WHERE dt = '2020-01-01';\nSELECT x FROM p.d.ranged",
+			want: []report{{sub: "p.d.ranged", table: "p.d.ranged", columns: "`id`"}},
+		},
+		"hourly ingestion time has no _PARTITIONDATE": {
+			src:  "SELECT x FROM p.d.ingest_hourly",
+			want: []report{{sub: "p.d.ingest_hourly", table: "p.d.ingest_hourly", columns: "`_PARTITIONTIME`"}},
+		},
+		"deprecated nested require partition filter": {
+			src:  "SELECT x FROM p.d.required_nested",
+			want: []report{{sub: "p.d.required_nested", table: "p.d.required_nested", columns: "`dt`", consequence: reject}},
+		},
+		// BigQuery answers these from metadata without reading any partition.
+		"COUNT(*) reads no column": {
+			src: "SELECT COUNT(*) FROM p.d.by_col",
+		},
+		"SELECT 1 reads no column": {
+			src: "SELECT 1 AS one FROM p.d.by_col",
+		},
+		"COUNT(*) over a subquery reads no column": {
+			src: "SELECT COUNT(*) FROM (SELECT x FROM p.d.by_col)",
+		},
+		"COUNT(*) is still rejected when a partition filter is required": {
+			src:  "SELECT COUNT(*) FROM p.d.required",
+			want: []report{{sub: "p.d.required", table: "p.d.required", columns: "`dt`", consequence: reject}},
+		},
+		"COUNT(*) is still rejected when the nested flag requires a filter": {
+			src:  "SELECT COUNT(*) FROM p.d.required_nested",
+			want: []report{{sub: "p.d.required_nested", table: "p.d.required_nested", columns: "`dt`", consequence: reject}},
+		},
+		"COUNT of a column": {
+			src:  "SELECT COUNT(x) FROM p.d.by_col",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"filtered after GROUP BY": {
+			src: "SELECT * FROM (SELECT dt, COUNT(*) AS c FROM p.d.by_col GROUP BY dt) WHERE dt = '2020-01-01'",
+		},
+		"filtered after a window function": {
+			src: "SELECT * FROM (SELECT dt, ROW_NUMBER() OVER (PARTITION BY dt) AS rn FROM p.d.by_col) WHERE dt = '2020-01-01'",
+		},
+		"filtered by IN subquery": {
+			src: "SELECT x FROM p.d.by_col WHERE dt IN (SELECT dt FROM p.d.plain)",
+		},
+		"filtered by DATE of the column": {
+			src: "SELECT x FROM p.d.ts_col WHERE DATE(ts) = '2020-01-01'",
+		},
+		"filtered by TIMESTAMP_TRUNC of the column": {
+			src: "SELECT x FROM p.d.ts_col WHERE TIMESTAMP_TRUNC(ts, DAY) = '2020-01-01'",
+		},
+		"filtered by a query parameter": {
+			src: "SELECT x FROM p.d.by_col WHERE dt = @d",
+		},
+		"UPDATE WHERE filters the FROM table": {
+			src: "UPDATE p.d.plain t SET x = b.x FROM p.d.by_col b WHERE t.x = b.x AND b.dt = '2020-01-01' AND t.x IN (SELECT x FROM p.d.plain)",
+		},
+		"UPDATE FROM unfiltered": {
+			src:  "UPDATE p.d.plain t SET x = b.x FROM p.d.by_col b WHERE t.x = b.x AND t.x IN (SELECT x FROM p.d.plain)",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"UPDATE target skipped, unfiltered subquery reported": {
+			src:  "UPDATE p.d.by_col SET x = 1 WHERE x IN (SELECT x FROM p.d.by_col)",
+			want: []report{{sub: "p.d.by_col", n: 1, table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"DELETE with an IN subquery does not filter the subquery table": {
+			src:  "DELETE p.d.plain t WHERE t.dt IN (SELECT dt FROM p.d.by_col) AND t.x IN (SELECT x FROM p.d.plain)",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"MERGE ON filters the source": {
+			src: "MERGE p.d.by_col T USING p.d.by_col S ON T.x = S.x AND S.dt = '2020-01-01' WHEN MATCHED THEN DELETE",
+		},
+		"MERGE WHEN condition filters the source": {
+			src: "MERGE p.d.by_col T USING p.d.by_col S ON T.x = S.x WHEN MATCHED AND S.dt = '2020-01-01' THEN DELETE",
+		},
+		"MERGE source unfiltered": {
+			src:  "MERGE p.d.by_col T USING p.d.by_col S ON T.x = S.x WHEN MATCHED THEN DELETE",
+			want: []report{{sub: "p.d.by_col", n: 1, table: "p.d.by_col", columns: "`dt`"}},
+		},
+		// BigQuery does not evaluate CTEs that are never referenced.
+		"unused CTE": {
+			src: "WITH c AS (SELECT * FROM p.d.by_col) SELECT 1 AS y",
+		},
+		"CTE used only by an unused CTE": {
+			src: "WITH a AS (SELECT * FROM p.d.by_col), b AS (SELECT * FROM a) SELECT 1 AS y",
+		},
+		"unused nested CTE": {
+			src:  "WITH a AS (SELECT x FROM p.d.ranged) SELECT * FROM (WITH b AS (SELECT * FROM p.d.by_col) SELECT * FROM a)",
 			want: []report{{sub: "p.d.ranged", table: "p.d.ranged", columns: "`id`"}},
 		},
 		"suppressed by comment": {

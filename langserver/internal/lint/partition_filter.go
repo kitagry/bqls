@@ -2,6 +2,8 @@ package lint
 
 import (
 	"fmt"
+	"reflect"
+	"slices"
 	"strings"
 
 	bq "cloud.google.com/go/bigquery"
@@ -45,6 +47,8 @@ type columnFlow struct {
 	derived map[int32][]int32
 	// filtered is every column id referenced by a filtering predicate.
 	filtered map[int32]bool
+	// used is every column id whose value the statement consumes.
+	used map[int32]bool
 }
 
 func analyzeColumnFlow(stmt googlesql.ResolvedStatementNode) (*columnFlow, bool) {
@@ -62,6 +66,7 @@ func analyzeColumnFlow(stmt googlesql.ResolvedStatementNode) (*columnFlow, bool)
 		dmlTargets: make(map[offsets]bool),
 		derived:    make(map[int32][]int32),
 		filtered:   make(map[int32]bool),
+		used:       make(map[int32]bool),
 	}
 	withSubqueries := make(map[string]googlesql.ResolvedScanNode)
 	var withRefs []*googlesql.ResolvedWithRefScan
@@ -104,8 +109,39 @@ func analyzeColumnFlow(stmt googlesql.ResolvedStatementNode) (*columnFlow, bool)
 		derive(col, referencedColumnIDs(expr))
 	}
 
-	_ = file.WalkResolved(stmt, func(n googlesql.ResolvedNode) error {
+	walkLive(stmt, func(n googlesql.ResolvedNode) {
 		switch n := n.(type) {
+		case *googlesql.ResolvedColumnRef:
+			for _, id := range referencedColumnIDs(n) {
+				flow.used[id] = true
+			}
+		case *googlesql.ResolvedSubqueryExpr:
+			// Every subquery kind but EXISTS consumes the subquery's columns.
+			typ, err := n.SubqueryType()
+			sub, err2 := n.Subquery()
+			if err != nil || err2 != nil || sub == nil {
+				ok = false
+				break
+			}
+			if typ == googlesql.ResolvedSubqueryExprEnums_SubqueryTypeExists {
+				break
+			}
+			cols, err := sub.MutableColumnList()
+			if err != nil {
+				ok = false
+				break
+			}
+			for _, id := range columnIDs(cols) {
+				flow.used[id] = true
+			}
+		case *googlesql.ResolvedOutputColumn:
+			if c, err := n.Column(); err == nil && c != nil {
+				for _, id := range columnIDs([]*googlesql.ResolvedColumn{c}) {
+					flow.used[id] = true
+				}
+			} else {
+				ok = false
+			}
 		case *googlesql.ResolvedTableScan:
 			flow.scans = append(flow.scans, n)
 		case *googlesql.ResolvedFilterScan:
@@ -176,12 +212,18 @@ func analyzeColumnFlow(stmt googlesql.ResolvedStatementNode) (*columnFlow, bool)
 			addFilter(n.MatchExpr())
 		case *googlesql.ResolvedInsertStmt:
 			addTarget(n.TableScan())
+			if cols, err := n.QueryOutputColumnList(); err == nil {
+				for _, id := range columnIDs(cols) {
+					flow.used[id] = true
+				}
+			} else {
+				ok = false
+			}
 		case googlesql.ResolvedScanNode:
 			if !columnPreservingScan(n) {
 				ok = false
 			}
 		}
-		return nil
 	})
 
 	for _, ref := range withRefs {
@@ -200,6 +242,47 @@ func analyzeColumnFlow(stmt googlesql.ResolvedStatementNode) (*columnFlow, bool)
 		}
 	}
 	return flow, ok
+}
+
+// walkLive is file.WalkResolved except that it skips WITH entries that are
+// never referenced, because BigQuery does not evaluate them. Entries can only
+// reference earlier ones, so visiting them last-to-first after the main query
+// sees every reference to an entry before deciding on it.
+func walkLive(node googlesql.ResolvedNode, fn func(googlesql.ResolvedNode)) {
+	referenced := make(map[string]bool)
+	var walk func(googlesql.ResolvedNode)
+	walk = func(n googlesql.ResolvedNode) {
+		if n == nil || reflect.ValueOf(n).IsNil() {
+			return
+		}
+		fn(n)
+		switch n := n.(type) {
+		case *googlesql.ResolvedWithRefScan:
+			if name, err := n.WithQueryName(); err == nil {
+				referenced[name] = true
+			}
+		case *googlesql.ResolvedWithScan:
+			entries, err := n.WithEntryList()
+			query, err2 := n.Query()
+			if err == nil && err2 == nil {
+				walk(query)
+				for _, e := range slices.Backward(entries) {
+					if name, err := e.WithQueryName(); err != nil || referenced[name] {
+						walk(e)
+					}
+				}
+				return
+			}
+		}
+		children, err := n.GetChildNodes()
+		if err != nil {
+			return
+		}
+		for _, c := range children {
+			walk(c)
+		}
+	}
+	walk(node)
 }
 
 // columnPreservingScan reports whether a scan only passes through input
@@ -246,14 +329,14 @@ func columnIDs(cols []*googlesql.ResolvedColumn) []int32 {
 	return ids
 }
 
-// reachesFilter reports whether id, or any column computed from it, is filtered.
-func (f *columnFlow) reachesFilter(id int32) bool {
+// reaches reports whether id, or any column computed from it, is in targets.
+func (f *columnFlow) reaches(id int32, targets map[int32]bool) bool {
 	seen := map[int32]bool{id: true}
 	queue := []int32{id}
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
-		if f.filtered[cur] {
+		if targets[cur] {
 			return true
 		}
 		for _, next := range f.derived[cur] {
@@ -295,6 +378,12 @@ func checkPartitionFilter(pass *Pass, flow *columnFlow, scan *googlesql.Resolved
 	if err != nil {
 		return
 	}
+	required := meta.RequirePartitionFilter || meta.TimePartitioning != nil && meta.TimePartitioning.RequirePartitionFilter
+	// BigQuery reads no partition, e.g. for COUNT(*), when no column is
+	// consumed, yet still rejects such a query on a table requiring a filter.
+	if !required && !slices.ContainsFunc(columnIDs(cols), func(id int32) bool { return flow.reaches(id, flow.used) }) {
+		return
+	}
 	for _, c := range cols {
 		colName, err := c.Name()
 		if err != nil {
@@ -305,7 +394,7 @@ func checkPartitionFilter(pass *Pass, flow *columnFlow, scan *googlesql.Resolved
 				continue
 			}
 			id, err := c.ColumnId()
-			if err != nil || flow.reachesFilter(id) {
+			if err != nil || flow.reaches(id, flow.filtered) {
 				return
 			}
 		}
@@ -320,7 +409,7 @@ func checkPartitionFilter(pass *Pass, flow *columnFlow, scan *googlesql.Resolved
 		quoted[i] = "`" + p + "`"
 	}
 	consequence := "it may scan all partitions"
-	if meta.RequirePartitionFilter {
+	if required {
 		consequence = "BigQuery will reject the query because the table requires a partition filter"
 	}
 	pass.Report(Diagnostic{
@@ -334,8 +423,10 @@ func partitionColumnNames(meta *bq.TableMetadata) []string {
 	switch {
 	case meta.TimePartitioning != nil && meta.TimePartitioning.Field != "":
 		return []string{meta.TimePartitioning.Field}
-	case meta.TimePartitioning != nil:
+	case file.HasPartitionDate(meta):
 		return []string{"_PARTITIONTIME", "_PARTITIONDATE"}
+	case meta.TimePartitioning != nil:
+		return []string{"_PARTITIONTIME"}
 	case meta.RangePartitioning != nil && meta.RangePartitioning.Field != "":
 		return []string{meta.RangePartitioning.Field}
 	}
