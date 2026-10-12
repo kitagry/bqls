@@ -10,6 +10,7 @@ import (
 
 	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver"
+	"github.com/kitagry/bqls/langserver/lintcli"
 	"github.com/sourcegraph/jsonrpc2"
 )
 
@@ -34,6 +35,10 @@ func main() {
 }
 
 func run(args []string) exitCode {
+	if len(args) > 0 && args[0] == "lint" {
+		return exitCode(lintcli.Run(context.Background(), args[1:], os.Stdin, os.Stdout, os.Stderr))
+	}
+
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.Usage = func() {
@@ -43,6 +48,7 @@ func run(args []string) exitCode {
 Version: %s (rev: %s/%s)
 
 You can use your favorite lsp client.
+Run "%[1]s lint --help" to lint SQL files from the command line.
 `, name, version, getRevision(), runtime.Version())
 		fs.PrintDefaults()
 	}

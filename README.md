@@ -90,6 +90,52 @@ SELECT * FROM t WHERE x = CAST(NULL AS INT64)
 SELECT * FROM t WHERE y = CAST(NULL AS INT64) -- bqls:ignore
 ```
 
+### CLI
+
+`bqls lint` runs the same analysis and lint rules as the language server, without an editor. Table schemas are fetched with Application Default Credentials; no query is run.
+
+```console
+$ bqls lint [flags] <file|dir|->...
+$ bqls lint --project my-project queries/
+queries/report.sql:3:6: info: CTE `tmp` is defined but never used (unused-cte)
+queries/report.sql:8:7: error: Unrecognized name: y
+```
+
+Directories are searched recursively for `*.sql` files, and `-` reads from stdin. Run `bqls lint --help` for the full list of rules.
+
+| Flag | Description |
+| --- | --- |
+| `--project` | BigQuery project ID. Defaults to `gcloud config get project`. |
+| `--location` | BigQuery location. Defaults to `US`. |
+| `--enable <rule>` / `--disable <rule>` | Turn a rule on or off. Repeatable; the last one wins. |
+| `--format text\|json\|github` | `text` (default) prints `path:line:col: severity: message (rule)`. `json` prints an array of `{file, line, column, endLine, endColumn, severity, rule, message}`. `github` prints [workflow commands](https://docs.github.com/en/actions/reference/workflow-commands-for-github-actions) that show up as annotations on pull requests. |
+
+Lines and columns are 1-based; columns count bytes and the end position is exclusive. Analysis errors are reported with severity `error` and no rule.
+
+Exit codes: `0` nothing found, `1` any lint finding or analysis error, `2` usage or runtime error (bad flags, unreadable file, authentication failure).
+
+GitHub Actions example (the service account only needs to read table metadata, e.g. `roles/bigquery.metadataViewer`):
+
+```yaml
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.SERVICE_ACCOUNT }}
+      - run: go install github.com/kitagry/bqls@latest
+      - run: bqls lint --project my-project --format github .
+```
+
 ## Save Result
 
 In order to save for spreadsheet, you should enable Google Drive API.
