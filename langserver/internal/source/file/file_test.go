@@ -809,6 +809,13 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 			bqTableMetadataMap: map[string]*bq.TableMetadata{},
 			expectedErrs:       []file.Error{},
 		},
+		"Parse declared variable with crlf line endings": {
+			file: "DECLARE my_variable INT64;\r\n" +
+				"\r\n" +
+				"SELECT my_variable;",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
 		"Parse declared variable after multibyte characters": {
 			file: "DECLARE y STRING;\n" +
 				"/* あいう */ SELECT LENGTH(y),\n" +

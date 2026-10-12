@@ -1,7 +1,6 @@
 package file
 
 import (
-	"bufio"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -622,13 +621,13 @@ func addInformationToNotFoundInsideTableError(src string, parsedErr Error) Error
 }
 
 func positionToByteOffset(sql string, position lsp.Position) int {
-	buf := bufio.NewScanner(strings.NewReader(sql))
-	buf.Split(bufio.ScanLines)
+	// Split on "\n" only so that "\r" in CRLF line endings is counted as part
+	// of the line it terminates.
+	lines := strings.Split(sql, "\n")
 
 	var offset int
-	for i := 0; i < position.Line; i++ {
-		buf.Scan()
-		offset += len([]byte(buf.Text())) + 1
+	for i := 0; i < position.Line && i < len(lines); i++ {
+		offset += len(lines[i]) + 1
 	}
 	offset += position.Character
 	return offset
