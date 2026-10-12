@@ -1147,6 +1147,16 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 			},
 			expectedRNodeLen: 0,
 		},
+		"SET indented with tab referencing declared variable": {
+			file:             "DECLARE my_variable INT64;\nDECLARE x INT64;\n\tSET x = my_variable;",
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 0,
+		},
+		"SET in WHILE indented with tab referencing loop variable": {
+			file:             "DECLARE i INT64 DEFAULT 0;\nWHILE i < 3 DO\n\tSET i = i + 1;\nEND WHILE;",
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 0,
+		},
 		"SET with unknown function": {
 			file: "DECLARE x DATE;\nSET x = UNKNOWN_FUNC();",
 			expectedErrs: []file.Error{
