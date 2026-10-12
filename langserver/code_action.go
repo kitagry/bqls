@@ -21,15 +21,15 @@ func (h *Handler) lintCodeActions(ctx context.Context, uri lsp.DocumentURI, rng 
 		return nil
 	}
 
+	src, _ := h.project.GetFile(uri)
 	var result []any
 	for i, fixes := range diags.ErrorFixes {
-		diag := convertErrorsToDiagnostics(diags.Errors[i : i+1])[0]
+		diag := convertErrorsToDiagnostics(src, diags.Errors[i:i+1])[0]
 		result = append(result, fixCodeActions(uri, diag, fixes, rng)...)
 	}
 	if len(diags.Lint) == 0 {
 		return result
 	}
-	src, _ := h.project.GetFile(uri)
 	lines := strings.Split(src, "\n")
 
 	type ruleLine struct {

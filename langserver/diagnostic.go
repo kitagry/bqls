@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/kitagry/bqls/langserver/internal/lint"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
@@ -131,7 +132,8 @@ func (h *Handler) diagnose(ctx context.Context, uri lsp.DocumentURI) (map[lsp.Do
 	if !ok {
 		return result, nil
 	}
-	result[uri] = append(convertErrorsToDiagnostics(diags.Errors), convertLintDiagnostics(diags.Lint)...)
+	src, _ := h.project.GetFile(uri)
+	result[uri] = append(convertErrorsToDiagnostics(src, diags.Errors), convertLintDiagnostics(diags.Lint)...)
 
 	return result, nil
 }
@@ -188,19 +190,36 @@ func bytesConvert(bytes int64) string {
 	)
 }
 
-func convertErrorsToDiagnostics(errs []file.Error) []lsp.Diagnostic {
+func convertErrorsToDiagnostics(src string, errs []file.Error) []lsp.Diagnostic {
 	result := make([]lsp.Diagnostic, len(errs))
+	lines := strings.Split(src, "\n")
 	for i, err := range errs {
 		endPosition := err.Position
 		endPosition.Character += err.TermLength
 		result[i] = lsp.Diagnostic{
 			Range: lsp.Range{
-				Start: err.Position,
-				End:   endPosition,
+				Start: byteToUTF16Position(lines, err.Position),
+				End:   byteToUTF16Position(lines, endPosition),
 			},
 			Message:  err.Msg,
 			Severity: cmp.Or(err.Severity, lsp.Error),
 		}
 	}
 	return result
+}
+
+// byteToUTF16Position converts a position whose Character is a byte offset
+// into one counted in UTF-16 code units, which is the LSP default encoding.
+func byteToUTF16Position(lines []string, pos lsp.Position) lsp.Position {
+	if pos.Line < 0 || pos.Line >= len(lines) {
+		return pos
+	}
+	line := lines[pos.Line]
+	if pos.Character < len(line) {
+		line = line[:pos.Character]
+	}
+	return lsp.Position{
+		Line:      pos.Line,
+		Character: len(utf16.Encode([]rune(line))),
+	}
 }
