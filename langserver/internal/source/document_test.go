@@ -518,6 +518,42 @@ Storage info
 			},
 			expectMarkedStrings: nil,
 		},
+		"no hover for column whose select list does not match the output columns": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT AS STRUCT id, s.|a FROM `project.dataset.table` GROUP BY id, s.a",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType, Description: "id description"},
+						{Name: "s", Type: bq.RecordFieldType, Schema: bq.Schema{{Name: "a", Type: bq.StringFieldType}}},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: nil,
+		},
+		"no hover for column of SELECT AS STRUCT with one column": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT AS STRUCT s.|a FROM `project.dataset.table` GROUP BY s.a",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType, Description: "id description"},
+						{Name: "s", Type: bq.RecordFieldType, Schema: bq.Schema{{Name: "a", Type: bq.StringFieldType}}},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: nil,
+		},
 		"hover column with alias": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT |name AS alias_name FROM `project.dataset.table`",
