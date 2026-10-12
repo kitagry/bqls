@@ -440,6 +440,16 @@ func getSelectColumnByPosition(scanNode googlesql.ResolvedScanNode, column *goog
 	if !ok {
 		return nil, false
 	}
+	// SELECT AS STRUCT/VALUE packs the select list into a single column.
+	selectParent, err := selectList.Parent()
+	if err != nil {
+		return nil, false
+	}
+	if selectNode, ok := selectParent.(*googlesql.ASTSelect); ok {
+		if selectAs, err := selectNode.SelectAs(); err != nil || selectAs != nil {
+			return nil, false
+		}
+	}
 	columnLoc, err := column.GetParseLocationRange()
 	if err != nil || columnLoc == nil {
 		return nil, false
@@ -485,6 +495,11 @@ func getSelectColumnByPosition(scanNode googlesql.ResolvedScanNode, column *goog
 	// counted from the side that has no star.
 	columns, _ := projectScan.MutableColumnList()
 	switch {
+	case starsBefore == 0 && starsAfter == 0:
+		if len(columns) != int(n) {
+			return nil, false
+		}
+		return columns[index], true
 	case starsBefore == 0 && index < len(columns):
 		return columns[index], true
 	case starsAfter == 0 && len(columns)-(int(n)-index) >= 0:
