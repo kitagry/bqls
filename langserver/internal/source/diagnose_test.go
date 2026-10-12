@@ -32,6 +32,17 @@ func TestProject_Diagnose(t *testing.T) {
 			src:      "SELECT x FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64) AND y = 1",
 			wantErrs: []string{"Unrecognized name: y"},
 		},
+		"valid pipe query": {
+			src: "FROM UNNEST([1, 2]) AS x |> WHERE x > 1 |> AGGREGATE COUNT(*) AS c GROUP BY x",
+		},
+		"lint diagnostics for a pipe query": {
+			src:       "FROM UNNEST([1]) AS x |> WHERE x = CAST(NULL AS INT64)",
+			wantRules: []string{"null-comparison"},
+		},
+		"unknown name in a pipe query": {
+			src:      "FROM UNNEST([1]) AS x |> WHERE y = 1",
+			wantErrs: []string{"Unrecognized name: y"},
+		},
 	}
 
 	for n, tt := range tests {
