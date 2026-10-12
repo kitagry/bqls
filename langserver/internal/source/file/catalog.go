@@ -300,18 +300,13 @@ func isWildCardTable(path []string) bool {
 func (c *Catalog) PreloadTablesFromAST(node *googlesql.ASTScript) {
 	Walk(node, func(n googlesql.ASTNode) error { //nolint
 		var name string
-		if tpe, ok := n.(*googlesql.ASTTablePathExpression); ok {
+		var ok bool
+		if tpe, isTPE := n.(*googlesql.ASTTablePathExpression); isTPE {
 			name, ok = CreateTableNameFromTablePathExpressionNode(tpe)
-			if !ok {
-				return nil
-			}
 		} else if pe := dmlTargetPath(n); pe != nil {
-			names, err := pe.ToIdentifierVector()
-			if err != nil || len(names) == 0 {
-				return nil
-			}
-			name = strings.Join(names, ".")
-		} else {
+			name, ok = joinPathExpression(pe)
+		}
+		if !ok {
 			return nil
 		}
 		// Split after joining so that a backticked `p.d.t` becomes three parts.
@@ -323,13 +318,6 @@ func (c *Catalog) PreloadTablesFromAST(node *googlesql.ASTScript) {
 
 // dmlTargetPath returns the target table of a top-level DML statement, or nil.
 func dmlTargetPath(n googlesql.ASTNode) *googlesql.ASTPathExpression {
-	// Nested DML inside UPDATE ... SET (...) targets an array column, not a table.
-	if parent, err := n.Parent(); err == nil {
-		if _, ok := parent.(*googlesql.ASTUpdateItem); ok {
-			return nil
-		}
-	}
-
 	var target googlesql.ASTNode
 	var err error
 	switch stmt := n.(type) {
@@ -346,6 +334,13 @@ func dmlTargetPath(n googlesql.ASTNode) *googlesql.ASTPathExpression {
 	}
 	if err != nil {
 		return nil
+	}
+	// Nested DML inside UPDATE ... SET (...) targets an array column, not a
+	// table. Checked after the switch because Walk visits every node.
+	if parent, err := n.Parent(); err == nil {
+		if _, ok := parent.(*googlesql.ASTUpdateItem); ok {
+			return nil
+		}
 	}
 	pe, _ := target.(*googlesql.ASTPathExpression)
 	return pe

@@ -3,6 +3,7 @@ package file_test
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -267,8 +268,9 @@ func TestCatalog_PreloadDMLTargets(t *testing.T) {
 		src string
 		// tables in p.d that must be fetched; any other GetTableMetadata call fails the test.
 		tables []string
-		// errors to tolerate because they come from bugs outside DML target preloading.
-		tolerate func(file.Error) bool
+		// exact error messages to tolerate because they come from bugs outside
+		// DML target preloading.
+		tolerate []string
 	}{
 		"INSERT INTO ... SELECT": {
 			src:    "INSERT INTO p.d.t (x) SELECT 1",
@@ -286,8 +288,8 @@ func TestCatalog_PreloadDMLTargets(t *testing.T) {
 			src:    "INSERT d.t (x) VALUES (1)",
 			tables: []string{"t"},
 			// The table is fetched with the default project, but the analyzer
-			// cannot resolve 2-part names yet, even in FROM.
-			tolerate: func(e file.Error) bool { return e.Msg == "Table not found: d.t" },
+			// cannot resolve 2-part names yet, even in FROM (#405).
+			tolerate: []string{"Table not found: d.t"},
 		},
 		"UPDATE with alias": {
 			src:    "UPDATE p.d.t AS u SET x = 1 WHERE true",
@@ -316,14 +318,15 @@ func TestCatalog_PreloadDMLTargets(t *testing.T) {
 		"DML inside BEGIN END": {
 			src:    "BEGIN\n  DELETE FROM p.d.t WHERE true;\nEND;",
 			tables: []string{"t"},
-			// BEGIN...END itself is reported as unsupported.
-			tolerate: func(e file.Error) bool { return !strings.Contains(e.Msg, "Table not found") },
+			// BEGIN...END itself is reported as unsupported (#403).
+			tolerate: []string{"Statement not supported: BeginEndBlock"},
 		},
 		"nested DML targets are array columns": {
 			src:    "UPDATE p.d.t SET (DELETE FROM arr WHERE true), (INSERT d.arr VALUES (1)) WHERE true",
 			tables: []string{"t"},
-			// Nested DML is analyzed standalone and fails to resolve the array column.
-			tolerate: func(file.Error) bool { return true },
+			// Nested DML is analyzed standalone and fails to resolve the array
+			// column (#402).
+			tolerate: []string{"Table not found: arr", "Table not found: d.arr", "Unrecognized name: d"},
 		},
 	}
 	for name, tt := range tests {
@@ -341,7 +344,7 @@ func TestCatalog_PreloadDMLTargets(t *testing.T) {
 
 			parsed := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("file:///a.sql", tt.src)
 			for _, e := range parsed.Errors {
-				if tt.tolerate == nil || !tt.tolerate(e) {
+				if !slices.Contains(tt.tolerate, e.Msg) {
 					t.Errorf("unexpected error: %s", e.Msg)
 				}
 			}
