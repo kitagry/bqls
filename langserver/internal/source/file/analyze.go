@@ -182,7 +182,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 		var fo []FixOffset
 		node, err = a.parseScript(fixedSrc)
 		if err != nil {
-			pErr := parseZetaSQLError(err)
+			pErr := parseZetaSQLError(fixedSrc, err)
 			if strings.Contains(pErr.Msg, "SELECT list must not be empty") {
 				fixedSrc, pErr, fo = fixSelectListMustNotBeEmptyStatement(fixedSrc, pErr)
 			}
@@ -264,7 +264,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				continue
 			}
 
-			pErr := parseZetaSQLError(err)
+			pErr := parseZetaSQLError(fixedSrc, err)
 
 			isUnrecognizedNameError := strings.Contains(pErr.Msg, "Unrecognized name: ")
 			isNotExistInStructError := strings.Contains(pErr.Msg, "does not exist in STRUCT")

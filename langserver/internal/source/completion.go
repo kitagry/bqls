@@ -7,12 +7,17 @@ import (
 
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/completion"
+	"github.com/kitagry/bqls/langserver/internal/source/helper"
 )
 
 func (p *Project) Complete(ctx context.Context, uri lsp.DocumentURI, position lsp.Position) ([]completion.CompletionItem, error) {
 	sql := p.cache.Get(uri)
 	parsedFile := p.analyzer.ParseFile(uri, sql.RawText)
 	defer parsedFile.Close()
+
+	// Error positions are byte offsets, so the cursor has to be in bytes too
+	// for completion to match it against the incomplete identifier.
+	position = helper.UTF16PositionToBytePosition(sql.RawText, position)
 
 	completor := completion.New(p.logger, p.analyzer, p.bqClient)
 	return completor.Complete(ctx, parsedFile, position)

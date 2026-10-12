@@ -803,6 +803,61 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 			},
 			expectedErrs: []file.Error{},
 		},
+		"Parse declared variable indented with tab": {
+			file: "DECLARE my_variable INT64;\n" +
+				"\tSELECT my_variable;",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Parse error position after declared variable and multibyte characters": {
+			file:               "DECLARE y INT64; SELECT 'あいう', y + 1, UNKNOWN_FUNC()",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 44,
+					},
+				},
+			},
+		},
+		"Parse error position after declared variable and tabs": {
+			// GoogleSQL expands both tabs to the next tab stop (columns 25 and 41).
+			file:               "DECLARE y INT64;\tSELECT y,\tUNKNOWN_FUNC()",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 27,
+					},
+				},
+			},
+		},
+		"Parse declared variable with crlf line endings": {
+			file: "DECLARE my_variable INT64;\r\n" +
+				"\r\n" +
+				"SELECT my_variable;",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Parse declared variable after multibyte characters": {
+			file: "DECLARE y STRING;\n" +
+				"/* あいう */ SELECT LENGTH(y),\n" +
+				"UNKNOWN_FUNC();",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{
+						Line:      2,
+						Character: 0,
+					},
+				},
+			},
+		},
 		"Parse create tmp function statement with returns": {
 			file: "CREATE TEMP FUNCTION target_func(x INT64) RETURNS INT64 AS (x * 10);\n" +
 				"SELECT target_func(10);",
@@ -855,5 +910,26 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 				t.Errorf("ParseFile result diff (-expect, +got)\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestAnalyzer_ParseFileDoesNotPanicOnLoneCarriageReturn(t *testing.T) {
+	// GoogleSQL treats a lone "\r" as a line break but bqls does not, so the
+	// reported line can be outside of the source.
+	ctrl := gomock.NewController(t)
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+	analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+	got := analyzer.ParseFile("uri", "SELECT 1;\rSELECT FROM t")
+	defer got.Close()
+
+	expectedErrs := []file.Error{
+		{
+			Msg:      "Syntax error: SELECT list must not be empty",
+			Position: lsp.Position{Line: 1, Character: 7},
+		},
+	}
+	if diff := cmp.Diff(expectedErrs, got.Errors); diff != "" {
+		t.Errorf("ParseFile result diff (-expect, +got)\n%s", diff)
 	}
 }
