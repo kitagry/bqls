@@ -69,6 +69,8 @@ bqls reports lint warnings (diagnostic source `bqls-lint`, code = rule name) for
 | --- | --- | --- |
 | `null-comparison` | on | `x = CAST(NULL AS T)` / `!=` always yields NULL; quick fix rewrites it to `IS [NOT] NULL`. |
 
+Bare `x = NULL` / `x != NULL` is rejected by BigQuery itself ("Operands of = cannot be literal NULL"); bqls offers an `IS [NOT] NULL` quick fix on that error.
+
 Rules can be toggled with the `lint` setting (also via `workspace/didChangeConfiguration`):
 
 ```lua

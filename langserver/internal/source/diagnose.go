@@ -13,7 +13,9 @@ import (
 
 type Diagnostics struct {
 	Errors []file.Error
-	Lint   []lint.Diagnostic
+	// ErrorFixes holds quick fixes for Errors, keyed by index into Errors.
+	ErrorFixes map[int][]lint.SuggestedFix
+	Lint       []lint.Diagnostic
 }
 
 // Diagnose analyzes uri once and derives both analysis errors and lint
@@ -29,8 +31,9 @@ func (p *Project) Diagnose(ctx context.Context, uri lsp.DocumentURI, cfg lint.Co
 
 	env := lint.Env{LookupTable: p.lookupTable}
 	return Diagnostics{
-		Errors: parsedFile.Errors,
-		Lint:   lint.Run(ctx, parsedFile, cfg, env, lint.Analyzers...),
+		Errors:     parsedFile.Errors,
+		ErrorFixes: errorFixes(parsedFile),
+		Lint:       lint.Run(ctx, parsedFile, cfg, env, lint.Analyzers...),
 	}, true
 }
 
@@ -40,4 +43,19 @@ func (p *Project) lookupTable(ctx context.Context, path string) (*bq.TableMetada
 		return nil, fmt.Errorf("table path must be project.dataset.table: %s", path)
 	}
 	return p.bqClient.GetTableMetadata(ctx, parts[0], parts[1], parts[2])
+}
+
+func errorFixes(f file.ParsedFile) map[int][]lint.SuggestedFix {
+	var result map[int][]lint.SuggestedFix
+	for i, e := range f.Errors {
+		fix, ok := lint.LiteralNullComparisonFix(f, e)
+		if !ok {
+			continue
+		}
+		if result == nil {
+			result = make(map[int][]lint.SuggestedFix)
+		}
+		result[i] = append(result[i], fix)
+	}
+	return result
 }

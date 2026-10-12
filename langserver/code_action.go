@@ -17,13 +17,21 @@ func (h *Handler) lintCodeActions(ctx context.Context, uri lsp.DocumentURI, rng 
 		return nil
 	}
 	diags, ok := h.project.Diagnose(ctx, uri, h.lintConfig())
-	if !ok || len(diags.Lint) == 0 {
+	if !ok {
 		return nil
+	}
+
+	var result []any
+	for i, fixes := range diags.ErrorFixes {
+		diag := convertErrorsToDiagnostics(diags.Errors[i : i+1])[0]
+		result = append(result, fixCodeActions(uri, diag, fixes, rng)...)
+	}
+	if len(diags.Lint) == 0 {
+		return result
 	}
 	src, _ := h.project.GetFile(uri)
 	lines := strings.Split(src, "\n")
 
-	var result []any
 	type ruleLine struct {
 		rule string
 		line int
@@ -34,15 +42,7 @@ func (h *Handler) lintCodeActions(ctx context.Context, uri lsp.DocumentURI, rng 
 			continue
 		}
 		lspDiag := convertLintDiagnostics([]lint.Diagnostic{d})[0]
-		for i, fix := range d.SuggestedFixes {
-			result = append(result, lsp.CodeAction{
-				Title:       fix.Title,
-				Kind:        lsp.CAKQuickFix,
-				Diagnostics: []lsp.Diagnostic{lspDiag},
-				IsPreferred: i == 0,
-				Edit:        &lsp.WorkspaceEdit{Changes: map[string][]lsp.TextEdit{string(uri): fix.Edits}},
-			})
-		}
+		result = append(result, fixCodeActions(uri, lspDiag, d.SuggestedFixes, rng)...)
 
 		key := ruleLine{rule: d.Rule, line: d.Range.Start.Line}
 		if ignored[key] {
@@ -52,6 +52,30 @@ func (h *Handler) lintCodeActions(ctx context.Context, uri lsp.DocumentURI, rng 
 		if action, ok := ignoreCodeAction(uri, src, lines, d.Rule, d.Range.Start.Line, lspDiag); ok {
 			result = append(result, action)
 		}
+	}
+	return result
+}
+
+// fixCodeActions turns fixes into quick fixes when rng touches either the
+// diagnostic or the text a fix rewrites; error diagnostics can be zero-width
+// while the fix covers the whole expression.
+func fixCodeActions(uri lsp.DocumentURI, diag lsp.Diagnostic, fixes []lint.SuggestedFix, rng lsp.Range) []any {
+	var result []any
+	for i, fix := range fixes {
+		touched := rangesOverlap(diag.Range, rng)
+		for _, e := range fix.Edits {
+			touched = touched || rangesOverlap(e.Range, rng)
+		}
+		if !touched {
+			continue
+		}
+		result = append(result, lsp.CodeAction{
+			Title:       fix.Title,
+			Kind:        lsp.CAKQuickFix,
+			Diagnostics: []lsp.Diagnostic{diag},
+			IsPreferred: i == 0,
+			Edit:        &lsp.WorkspaceEdit{Changes: map[string][]lsp.TextEdit{string(uri): fix.Edits}},
+		})
 	}
 	return result
 }
