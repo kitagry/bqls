@@ -228,7 +228,7 @@ func (e Error) Error() string {
 	return fmt.Sprintf("%d:%d: %s", e.Position.Line, e.Position.Character, e.Msg)
 }
 
-func parseZetaSQLError(err error) Error {
+func parseZetaSQLError(src string, err error) Error {
 	errStr := err.Error()
 	if !strings.Contains(errStr, "[at ") {
 		return Error{Msg: errStr}
@@ -240,11 +240,35 @@ func parseZetaSQLError(err error) Error {
 	locationSep := strings.Split(location, ":")
 	line, _ := strconv.Atoi(locationSep[0])
 	col, _ := strconv.Atoi(locationSep[1])
-	pos := lsp.Position{Line: line - 1, Character: col - 1}
+	pos := lsp.Position{Line: line - 1, Character: zetaSQLColumnToByteOffset(src, line-1, col)}
 
 	// Trim position information
 	errStr = strings.TrimSpace(errStr[:positionInd])
 	return Error{Msg: errStr, Position: pos}
+}
+
+// zetaSQLColumnToByteOffset converts a 1-based GoogleSQL column into a byte
+// offset within the line. GoogleSQL counts columns in code points and expands
+// tabs to the next multiple of 8, so the column cannot be used as a byte offset
+// directly.
+func zetaSQLColumnToByteOffset(src string, line, col int) int {
+	lines := strings.Split(src, "\n")
+	if line < 0 || line >= len(lines) {
+		return col - 1
+	}
+
+	current := 1
+	for i, r := range lines[line] {
+		next := current + 1
+		if r == '\t' {
+			next = ((current-1)/8+1)*8 + 1
+		}
+		if col < next {
+			return i
+		}
+		current = next
+	}
+	return len(lines[line])
 }
 
 // fixDot replaces the last dot of a word with a comma. and change word to same length of 1.
