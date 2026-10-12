@@ -101,6 +101,15 @@ type Command struct {
 	Arguments []any `json:"arguments"`
 }
 
+type CodeAction struct {
+	Title       string         `json:"title"`
+	Kind        CodeActionKind `json:"kind,omitempty"`
+	Diagnostics []Diagnostic   `json:"diagnostics,omitempty"`
+	IsPreferred bool           `json:"isPreferred,omitempty"`
+	Edit        *WorkspaceEdit `json:"edit,omitempty"`
+	Command     *Command       `json:"command,omitempty"`
+}
+
 type TextEdit struct {
 	/**
 	 * The range of the text document to be manipulated. To insert

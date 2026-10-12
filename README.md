@@ -61,6 +61,35 @@ The official VSCode extension lives in [editors/vscode](./editors/vscode) in thi
 
 You can also use the community extension [bqls-vscode](https://github.com/yokomotod/bqls-vscode).
 
+## Lint
+
+bqls reports lint warnings and information (diagnostic source `bqls-lint`, code = rule name) for queries that analyze without errors.
+
+| Rule | Default | Description |
+| --- | --- | --- |
+| `null-comparison` | on | `x = CAST(NULL AS T)` / `!=` always yields NULL; quick fix rewrites it to `IS [NOT] NULL`. |
+| `unused-cte` | on | A `WITH` entry that is never referenced (a recursive CTE's self reference does not count). Reported as information; quick fix removes the entry. |
+| `partition-filter` | on | A time- or range-partitioned table that is read without any filter on its partition column (`_PARTITIONTIME` / `_PARTITIONDATE` for ingestion-time partitioning), so the query may scan every partition. A filter anywhere in the statement on the column or a value derived from it (through CTEs, subqueries, and `UNION`) counts. Statements bqls cannot trace (e.g. recursive CTEs, table functions), view definitions, DML targets, wildcard tables, unreferenced CTEs, and reads that consume no column (e.g. `SELECT COUNT(*)`, unless the table requires a partition filter) are skipped. |
+
+Bare `x = NULL` / `x != NULL` is rejected by BigQuery itself ("Operands of = cannot be literal NULL"); bqls offers an `IS [NOT] NULL` quick fix on that error.
+
+Rules can be toggled with the `lint` setting (also via `workspace/didChangeConfiguration`):
+
+```lua
+settings = {
+  project_id = "YOUR_PROJECT_ID",
+  lint = { rules = { ["null-comparison"] = false } },
+}
+```
+
+To silence a single occurrence, add a `bqls:ignore` comment. A comment on its own line applies to the next line; a trailing comment applies to its own line. Omitting rule names ignores every rule.
+
+```sql
+-- bqls:ignore null-comparison
+SELECT * FROM t WHERE x = CAST(NULL AS INT64)
+SELECT * FROM t WHERE y = CAST(NULL AS INT64) -- bqls:ignore
+```
+
 ## Save Result
 
 In order to save for spreadsheet, you should enable Google Drive API.

@@ -1,6 +1,8 @@
 package cache
 
 import (
+	"maps"
+	"slices"
 	"sync"
 
 	"github.com/kitagry/bqls/langserver/internal/lsp"
@@ -35,4 +37,10 @@ func (g *GlobalCache) Delete(uri lsp.DocumentURI) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	delete(g.pathToSQL, uri)
+}
+
+func (g *GlobalCache) URIs() []lsp.DocumentURI {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return slices.Collect(maps.Keys(g.pathToSQL))
 }

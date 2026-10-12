@@ -7,10 +7,13 @@ import (
 	"testing"
 
 	bq "cloud.google.com/go/bigquery"
+	googlesql "github.com/goccy/go-googlesql"
 	"github.com/golang/mock/gomock"
+	"github.com/google/go-cmp/cmp"
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/bigquery/mock_bigquery"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
+	"github.com/sirupsen/logrus"
 )
 
 func TestCatalog_AddTable(t *testing.T) {
@@ -163,4 +166,94 @@ func TestCatalog_shouldNotGetSchemaTwice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestCatalog_PartitionDatePseudoColumn(t *testing.T) {
+	tables := map[string]*bq.TableMetadata{
+		"daily": {
+			TimePartitioning: &bq.TimePartitioning{Type: bq.DayPartitioningType},
+			Schema:           bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+		},
+		"untyped": {
+			TimePartitioning: &bq.TimePartitioning{},
+			Schema:           bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+		},
+		"hourly": {
+			TimePartitioning: &bq.TimePartitioning{Type: bq.HourPartitioningType},
+			Schema:           bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+		},
+		"by_col": {
+			TimePartitioning: &bq.TimePartitioning{Type: bq.DayPartitioningType, Field: "dt"},
+			Schema:           bq.Schema{{Name: "x", Type: bq.IntegerFieldType}, {Name: "dt", Type: bq.DateFieldType}},
+		},
+		"plain": {
+			Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+		},
+	}
+	parse := func(t *testing.T, src string) file.ParsedFile {
+		t.Helper()
+		ctrl := gomock.NewController(t)
+		bqClient := mock_bigquery.NewMockClient(ctrl)
+		bqClient.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+		bqClient.EXPECT().GetTableMetadata(gomock.Any(), "p", "d", gomock.Any()).
+			DoAndReturn(func(_ any, _, _, table string) (*bq.TableMetadata, error) {
+				if m, ok := tables[table]; ok {
+					return m, nil
+				}
+				return nil, fmt.Errorf("table %s not found", table)
+			}).AnyTimes()
+		return file.NewAnalyzer(logrus.New(), bqClient).ParseFile("file:///a.sql", src)
+	}
+
+	t.Run("referenced by name on daily ingestion-time tables", func(t *testing.T) {
+		for _, table := range []string{"daily", "untyped"} {
+			parsed := parse(t, "SELECT _PARTITIONDATE FROM p.d."+table+" WHERE _PARTITIONDATE = '2020-01-01'")
+			if len(parsed.Errors) > 0 {
+				t.Errorf("%s: unexpected errors: %v", table, parsed.Errors)
+			}
+		}
+	})
+
+	t.Run("absent elsewhere", func(t *testing.T) {
+		for _, table := range []string{"hourly", "by_col", "plain"} {
+			parsed := parse(t, "SELECT _PARTITIONDATE FROM p.d."+table)
+			if len(parsed.Errors) == 0 {
+				t.Errorf("%s: _PARTITIONDATE resolved, want an error", table)
+			}
+		}
+	})
+
+	t.Run("excluded from SELECT *", func(t *testing.T) {
+		parsed := parse(t, "SELECT * FROM p.d.daily")
+		if len(parsed.Errors) > 0 {
+			t.Fatalf("unexpected errors: %v", parsed.Errors)
+		}
+		stmt, err := parsed.RNode[0].ResolvedStatement()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cols, err := stmt.(*googlesql.ResolvedQueryStmt).OutputColumnList()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, c := range cols {
+			name, err := c.Name()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got = append(got, name)
+		}
+		// _PARTITIONTIME is still a regular column; see #387.
+		if diff := cmp.Diff([]string{"x", "_PARTITIONTIME"}, got); diff != "" {
+			t.Errorf("SELECT * columns diff (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("not writable", func(t *testing.T) {
+		parsed := parse(t, "INSERT p.d.daily (x, _PARTITIONDATE) SELECT x, _PARTITIONDATE FROM p.d.daily")
+		if len(parsed.Errors) == 0 {
+			t.Error("writing _PARTITIONDATE analyzed without errors")
+		}
+	})
 }

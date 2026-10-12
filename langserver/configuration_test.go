@@ -1,0 +1,70 @@
+package langserver
+
+import (
+	"encoding/json"
+	"testing"
+	"time"
+
+	"github.com/golang/mock/gomock"
+	"github.com/google/go-cmp/cmp"
+	"github.com/kitagry/bqls/langserver/internal/bigquery/mock_bigquery"
+	"github.com/kitagry/bqls/langserver/internal/lint"
+	"github.com/kitagry/bqls/langserver/internal/lsp"
+	"github.com/kitagry/bqls/langserver/internal/source"
+	"github.com/sirupsen/logrus"
+	"github.com/sourcegraph/jsonrpc2"
+)
+
+func TestHandler_handleWorkspaceDidChangeConfiguration_LintOnly(t *testing.T) {
+	const uri lsp.DocumentURI = "file:///a.sql"
+	h := newTestHandlerWithFile(t, uri, "SELECT 1")
+	h.diagnosticRequest = make(chan lsp.DocumentURI, 3)
+	h.initializeParams.InitializationOptions = InitializeOption{ProjectID: "p", Location: "US"}
+	project := h.project
+
+	params := json.RawMessage(`{"settings": {"project_id": "p", "location": "US", "lint": {"rules": {"null-comparison": false}}}}`)
+	_, err := h.handleWorkspaceDidChangeConfiguration(t.Context(), nil, &jsonrpc2.Request{Params: &params})
+	if err != nil {
+		t.Fatalf("handleWorkspaceDidChangeConfiguration() error = %v", err)
+	}
+
+	if h.project != project {
+		t.Error("project was rebuilt, want it kept when only lint settings change")
+	}
+	want := lint.Config{Rules: map[string]bool{"null-comparison": false}}
+	if diff := cmp.Diff(want, h.lintConfig()); diff != "" {
+		t.Errorf("lintConfig() diff (-want +got):\n%s", diff)
+	}
+
+	select {
+	case got := <-h.diagnosticRequest:
+		if got != uri {
+			t.Errorf("diagnostics requested for %s, want %s", got, uri)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("diagnostics were not re-requested for the open document")
+	}
+}
+
+func TestHandler_rediagnoseOpenFiles_AfterClose(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+	bqClient.EXPECT().Close().Return(nil)
+	p := source.NewProjectWithBQClient("/", bqClient, logrus.New())
+	if err := p.UpdateFile("file:///a.sql", "SELECT 1", 1); err != nil {
+		t.Fatal(err)
+	}
+	// No scheduler consumes diagnosticRequest, so the re-diagnose sender
+	// stays blocked until Close runs.
+	h := newHandler(logrus.New(), "test")
+	h.project = p
+	h.diagnosticRequest = make(chan lsp.DocumentURI)
+
+	h.rediagnoseOpenFiles()
+	time.Sleep(20 * time.Millisecond)
+	if err := h.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// A send on the closed channel would panic the test binary here.
+	time.Sleep(50 * time.Millisecond)
+}

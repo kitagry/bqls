@@ -150,6 +150,17 @@ func (c *Catalog) addTable(path []string) error {
 				_ = table.AddColumn2(col, false)
 			}
 		}
+		// A pseudo column, as in BigQuery, so that it stays out of SELECT * and
+		// cannot be written.
+		if HasPartitionDate(metadata) {
+			dateType, err := c.typeFactory.GetDate()
+			if err == nil {
+				col, err := googlesql.NewSimpleColumn(tableName, "_PARTITIONDATE", dateType, true, false)
+				if err == nil {
+					_ = table.AddColumn2(col, false)
+				}
+			}
+		}
 	}
 
 	if isWildCardTable(path) {
@@ -268,6 +279,13 @@ func literalBigqueryTypeToGooglesqlType(tf *googlesql.TypeFactory, typ bq.FieldT
 	default:
 		return nil, fmt.Errorf("unsupported type: %v", typ)
 	}
+}
+
+// HasPartitionDate reports whether BigQuery exposes the _PARTITIONDATE pseudo
+// column, which exists only on daily ingestion-time partitioned tables.
+func HasPartitionDate(metadata *bq.TableMetadata) bool {
+	tp := metadata.TimePartitioning
+	return tp != nil && tp.Field == "" && (tp.Type == "" || tp.Type == bq.DayPartitioningType)
 }
 
 func isWildCardTable(path []string) bool {

@@ -8,6 +8,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/kitagry/bqls/langserver/internal/lint"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
@@ -126,12 +127,29 @@ func (h *Handler) showMessage(ctx context.Context, level lsp.MessageType, messag
 func (h *Handler) diagnose(ctx context.Context, uri lsp.DocumentURI) (map[lsp.DocumentURI][]lsp.Diagnostic, error) {
 	result := make(map[lsp.DocumentURI][]lsp.Diagnostic)
 
-	pathToErrs := h.project.GetErrors(uri)
-	for uri, errs := range pathToErrs {
-		result[uri] = convertErrorsToDiagnostics(errs)
+	diags, ok := h.project.Diagnose(ctx, uri, h.lintConfig())
+	if !ok {
+		return result, nil
 	}
+	result[uri] = append(convertErrorsToDiagnostics(diags.Errors), convertLintDiagnostics(diags.Lint)...)
 
 	return result, nil
+}
+
+const lintDiagnosticSource = "bqls-lint"
+
+func convertLintDiagnostics(diags []lint.Diagnostic) []lsp.Diagnostic {
+	result := make([]lsp.Diagnostic, len(diags))
+	for i, d := range diags {
+		result[i] = lsp.Diagnostic{
+			Range:    d.Range,
+			Severity: d.Severity,
+			Code:     d.Rule,
+			Source:   lintDiagnosticSource,
+			Message:  d.Message,
+		}
+	}
+	return result
 }
 
 func (h *Handler) dryrun(ctx context.Context, uri lsp.DocumentURI) (errs map[lsp.DocumentURI][]lsp.Diagnostic, totalProcessed string, err error) {

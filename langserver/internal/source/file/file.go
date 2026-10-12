@@ -66,9 +66,12 @@ func (p ParsedFile) ToLspRange(r *googlesql.ParseLocationRange) (lsp.Range, bool
 		return lsp.Range{}, false
 	}
 
-	startOff := parseLocStart(r)
-	endOff := parseLocEnd(r)
-	if startOff < 0 || endOff < 0 {
+	return p.OffsetsToLspRange(parseLocStart(r), parseLocEnd(r))
+}
+
+// OffsetsToLspRange converts byte offsets in FixedSrc to an LSP range in Src.
+func (p ParsedFile) OffsetsToLspRange(startOff, endOff int) (lsp.Range, bool) {
+	if startOff < 0 || endOff < 0 || startOff > endOff || endOff > len(p.FixedSrc) {
 		return lsp.Range{}, false
 	}
 
