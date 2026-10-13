@@ -424,6 +424,154 @@ func fixOnlyWithClauseSyntaxError(src string, parsedErr Error) (fixedSrc string,
 	}
 }
 
+// pipeOperatorKeywords are the words that can follow "|>" before the operator
+// takes its arguments.
+var pipeOperatorKeywords = map[string]bool{
+	"AGGREGATE": true, "ALL": true, "AS": true, "ASSERT": true, "BY": true,
+	"CALL": true, "CROSS": true, "DISTINCT": true, "DROP": true, "EXCEPT": true,
+	"EXTEND": true, "FULL": true, "GROUP": true, "INNER": true, "INTERSECT": true,
+	"JOIN": true, "LEFT": true, "LIMIT": true, "ORDER": true, "OUTER": true,
+	"PIVOT": true, "RENAME": true, "RIGHT": true, "SELECT": true, "SET": true,
+	"TABLESAMPLE": true, "UNION": true, "UNPIVOT": true, "WHERE": true, "WINDOW": true,
+}
+
+// fix the pipe operator that has no complete operation by deleting it
+//
+//	FROM table |> SELECT
+//
+// becomes
+//
+//	FROM table
+func fixIncompletePipeOperator(src string, parsedErr Error) (fixedSrc string, fixOffsets []FixOffset) {
+	errOffset, ok := errorByteOffset(src, parsedErr.Position)
+	if !ok {
+		return src, nil
+	}
+
+	pipeOffset := -1
+	for _, offset := range pipeOperatorOffsets(src) {
+		if offset < errOffset {
+			pipeOffset = offset
+		}
+	}
+	if pipeOffset == -1 {
+		return src, nil
+	}
+
+	// Keywords are only taken from the line of the pipe operator, because a
+	// keyword on a following line may start the next statement.
+	deleteEnd := pipeOffset + len("|>")
+	for {
+		wordStart := deleteEnd
+		for wordStart < len(src) && (src[wordStart] == ' ' || src[wordStart] == '\t') {
+			wordStart++
+		}
+		wordEnd := wordStart
+		for wordEnd < len(src) && isIdentifierByte(src[wordEnd]) {
+			wordEnd++
+		}
+		if wordEnd == wordStart || !pipeOperatorKeywords[strings.ToUpper(src[wordStart:wordEnd])] {
+			break
+		}
+		deleteEnd = wordEnd
+	}
+
+	// Only delete the operator when what follows can end the query, so that
+	// the rest of the file is kept as it is.
+	next := skipSpacesAndComments(src, deleteEnd)
+	endsQuery := next == len(src) || src[next] == ';' || src[next] == ')' || strings.HasPrefix(src[next:], "|>")
+	if !endsQuery || errOffset > next {
+		return src, nil
+	}
+
+	fixedSrc = src[:pipeOffset] + src[deleteEnd:]
+	return fixedSrc, []FixOffset{
+		{
+			Offset: deleteEnd,
+			Length: pipeOffset - deleteEnd,
+		},
+	}
+}
+
+func isIdentifierByte(b byte) bool {
+	return b == '_' || ('a' <= b && b <= 'z') || ('A' <= b && b <= 'Z') || ('0' <= b && b <= '9')
+}
+
+// pipeOperatorOffsets returns the offsets of "|>" outside of comments and
+// quoted strings or identifiers.
+func pipeOperatorOffsets(src string) []int {
+	var offsets []int
+	for i := 0; i < len(src); {
+		switch {
+		case strings.HasPrefix(src[i:], "|>"):
+			offsets = append(offsets, i)
+			i += len("|>")
+		case src[i] == '\'' || src[i] == '"' || src[i] == '`':
+			i = skipQuoted(src, i)
+		default:
+			if next := skipComment(src, i); next != i {
+				i = next
+			} else {
+				i++
+			}
+		}
+	}
+	return offsets
+}
+
+// skipQuoted returns the offset after the quoted string or identifier
+// starting at src[start].
+func skipQuoted(src string, start int) int {
+	quote := src[start : start+1]
+	if strings.HasPrefix(src[start:], strings.Repeat(quote, 3)) {
+		quote = strings.Repeat(quote, 3)
+	}
+	for i := start + len(quote); i < len(src); i++ {
+		if src[i] == '\\' {
+			i++
+			continue
+		}
+		if strings.HasPrefix(src[i:], quote) {
+			return i + len(quote)
+		}
+	}
+	return len(src)
+}
+
+// skipComment returns the offset after the comment starting at src[start],
+// or start when no comment starts there.
+func skipComment(src string, start int) int {
+	switch {
+	case strings.HasPrefix(src[start:], "--"), strings.HasPrefix(src[start:], "#"):
+		if end := strings.IndexByte(src[start:], '\n'); end != -1 {
+			return start + end + 1
+		}
+		return len(src)
+	case strings.HasPrefix(src[start:], "/*"):
+		if end := strings.Index(src[start+len("/*"):], "*/"); end != -1 {
+			return start + len("/*") + end + len("*/")
+		}
+		return len(src)
+	}
+	return start
+}
+
+func skipSpacesAndComments(src string, start int) int {
+	i := start
+	for i < len(src) {
+		if unicode.IsSpace(rune(src[i])) {
+			i++
+			continue
+		}
+		next := skipComment(src, i)
+		if next == i {
+			break
+		}
+		i = next
+	}
+	return i
+}
+
 // fix Unexpected end of script with deletion
 //
 //	SELECT * FROM table GROUP BY
@@ -457,6 +605,11 @@ func fixUnexpectedEndOfScriptWithDeletion(src string, parsedErr Error, targetUne
 	}
 
 	fixedSrc = strings.TrimSpace(src[:targetOffset])
+	// A pipe operator left without its operation is another syntax error, so
+	// it is removed together with the keyword.
+	if trimmed := strings.TrimSuffix(fixedSrc, "|>"); trimmed != fixedSrc {
+		fixedSrc = strings.TrimRightFunc(trimmed, unicode.IsSpace)
+	}
 	return fixedSrc, parsedErr, []FixOffset{
 		{
 			Offset: errOffset,
@@ -543,6 +696,10 @@ func fixDeclarationError(src string, parsedErr Error, defaultVal string) (fixedS
 //
 //	SELECT 1 FROM table AS t
 func fixErrorToLiteral(src string, parsedErr Error) (fixedSrc string, fixOffsets []FixOffset) {
+	return fixErrorToExpression(src, parsedErr, "1")
+}
+
+func fixErrorToExpression(src string, parsedErr Error, expr string) (fixedSrc string, fixOffsets []FixOffset) {
 	errOffset, ok := errorByteOffset(src, parsedErr.Position)
 	if !ok || errOffset == 0 || errOffset == len(src) {
 		return src, nil
@@ -552,10 +709,10 @@ func fixErrorToLiteral(src string, parsedErr Error) (fixedSrc string, fixOffsets
 	if replaceOffset < 0 || replaceOffset+len(parsedErr.IncompleteColumnName) > len(src) {
 		return src, nil
 	}
-	fixedSrc = src[:replaceOffset] + "1" + src[replaceOffset+len(parsedErr.IncompleteColumnName):]
+	fixedSrc = src[:replaceOffset] + expr + src[replaceOffset+len(parsedErr.IncompleteColumnName):]
 	fixOffset := FixOffset{
 		Offset: errOffset,
-		Length: -len(parsedErr.IncompleteColumnName) + len("1"),
+		Length: -len(parsedErr.IncompleteColumnName) + len(expr),
 	}
 
 	return fixedSrc, []FixOffset{fixOffset}

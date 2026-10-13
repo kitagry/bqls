@@ -241,12 +241,18 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			if strings.Contains(pErr.Msg, "Unexpected end of script") {
 				fixedSrc, pErr, fo = fixUnexpectedEndOfScript(fixedSrc, pErr)
 				if len(fo) == 0 {
+					fixedSrc, fo = fixIncompletePipeOperator(fixedSrc, pErr)
+				}
+				if len(fo) == 0 {
 					// No keyword-based fix worked; try inserting SELECT 1 (handles WITH-clause-only SQL).
 					fixedSrc, pErr, fo = fixOnlyWithClauseSyntaxError(fixedSrc, pErr)
 				}
 			}
 			if strings.Contains(pErr.Msg, `Syntax error: Expected "(" or "," or keyword SELECT but got end of script`) {
 				fixedSrc, pErr, fo = fixOnlyWithClauseSyntaxError(fixedSrc, pErr)
+			}
+			if len(fo) == 0 {
+				fixedSrc, fo = fixIncompletePipeOperator(fixedSrc, pErr)
 			}
 			errs = append(errs, pErr)
 			if len(fo) > 0 {
@@ -335,6 +341,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			isNotExistInStructError := strings.Contains(pErr.Msg, "does not exist in STRUCT")
 			isNotFoundInsideError := strings.Contains(pErr.Msg, "not found inside")
 			isTableNotFoundError := strings.Contains(pErr.Msg, "Table not found: ")
+			isEmptyPipeAggregateError := strings.Contains(pErr.Msg, "Pipe AGGREGATE cannot have both an empty aggregate list and an empty GROUP BY")
 
 			// add information to Error
 			switch {
@@ -365,12 +372,21 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				} else if _, ok := SearchAstNode[*googlesql.ASTWhereClause](node, errTermOffset); ok {
 					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
 				} else if _, ok := SearchAstNode[*googlesql.ASTGroupBy](node, errTermOffset); ok {
-					fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
+					if _, ok := SearchAstNode[*googlesql.ASTPipeAggregate](node, errTermOffset); ok {
+						// Pipe AGGREGATE rejects both GROUP BY ordinals and literals.
+						fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "1+1")
+					} else {
+						fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
+					}
 				} else if _, ok := SearchAstNode[*googlesql.ASTOrderBy](node, errTermOffset); ok {
 					fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
 				} else if _, ok := SearchAstNode[*googlesql.ASTOnClause](node, errTermOffset); ok {
 					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
 				}
+			}
+
+			if isEmptyPipeAggregateError {
+				fixedSrc, fo = fixIncompletePipeOperator(fixedSrc, pErr)
 			}
 
 			if !skipError {
