@@ -168,7 +168,9 @@ func (c *Catalog) addTable(path []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to get STRING type: %w", err)
 		}
-		if err := addColumn(table, tableName, "_TABLE_SUFFIX", strType, false, true); err != nil {
+		// A pseudo column, as in BigQuery, so that it stays out of SELECT * and
+		// cannot be written.
+		if err := addColumn(table, tableName, "_TABLE_SUFFIX", strType, true, false); err != nil {
 			return err
 		}
 	}
