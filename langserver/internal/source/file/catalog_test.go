@@ -386,9 +386,6 @@ func TestCatalog_PreloadDMLTargets(t *testing.T) {
 		"INSERT with dataset-qualified path": {
 			src:    "INSERT d.t (x) VALUES (1)",
 			tables: []string{"t"},
-			// The table is fetched with the default project, but the analyzer
-			// cannot resolve 2-part names yet, even in FROM (#405).
-			tolerate: []string{"Table not found: d.t"},
 		},
 		"UPDATE with alias": {
 			src:    "UPDATE p.d.t AS u SET x = 1 WHERE true",
@@ -444,6 +441,43 @@ func TestCatalog_PreloadDMLTargets(t *testing.T) {
 				if !slices.Contains(tt.tolerate, e.Msg) {
 					t.Errorf("unexpected error: %s", e.Msg)
 				}
+			}
+		})
+	}
+}
+
+func TestCatalog_TwoPartTableNames(t *testing.T) {
+	schema := bq.Schema{{Name: "x", Type: bq.IntegerFieldType}}
+	parse := func(t *testing.T, src string) file.ParsedFile {
+		t.Helper()
+		ctrl := gomock.NewController(t)
+		bqClient := mock_bigquery.NewMockClient(ctrl)
+		bqClient.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+		bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ any, project, dataset, table string) (*bq.TableMetadata, error) {
+				switch project + "." + dataset + "." + table {
+				case "p.d.t", "p.d.t_*", "p.other.t", "other.x.t":
+					return &bq.TableMetadata{Schema: schema}, nil
+				}
+				return nil, fmt.Errorf("table %s.%s.%s not found", project, dataset, table)
+			}).AnyTimes()
+		return file.NewAnalyzer(logrus.New(), bqClient).ParseFile("file:///a.sql", src)
+	}
+
+	tests := map[string]string{
+		"unquoted":                           "SELECT x FROM d.t",
+		"backticked":                         "SELECT x FROM `d.t`",
+		"wildcard":                           "SELECT x FROM `d.t_*` WHERE _TABLE_SUFFIX = '1'",
+		"both 3-part and 2-part":             "SELECT a.x FROM p.d.t a JOIN d.t b ON a.x = b.x",
+		"2-part before 3-part":               "SELECT a.x FROM d.t a JOIN p.d.t b ON a.x = b.x",
+		"dataset named like another project": "SELECT a.x FROM other.x.t a JOIN other.t b ON a.x = b.x",
+		"dataset named like a project, 2-part first": "SELECT a.x FROM other.t a JOIN other.x.t b ON a.x = b.x",
+	}
+	for name, src := range tests {
+		t.Run(name, func(t *testing.T) {
+			parsed := parse(t, src)
+			if len(parsed.Errors) > 0 {
+				t.Errorf("unexpected errors: %v", parsed.Errors)
 			}
 		})
 	}

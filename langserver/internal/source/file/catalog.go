@@ -22,6 +22,7 @@ type Catalog struct {
 	langOpts     *googlesql.LanguageOptions
 	bqClient     bigquery.Client
 	tableMetaMap map[string]*bq.TableMetadata
+	tables       map[string]*googlesql.SimpleTable // key: "project.dataset.table"
 	mu           *sync.Mutex
 	// subCatalogs tracks nested sub-catalogs for non-backtick 3-part path resolution.
 	subCatalogs map[string]*googlesql.SimpleCatalog // key: "project" or "project.dataset"
@@ -46,6 +47,7 @@ func NewCatalog(bqClient bigquery.Client) *Catalog {
 		langOpts:     langOpts,
 		bqClient:     bqClient,
 		tableMetaMap: make(map[string]*bq.TableMetadata),
+		tables:       make(map[string]*googlesql.SimpleTable),
 		mu:           &sync.Mutex{},
 		subCatalogs:  make(map[string]*googlesql.SimpleCatalog),
 	}
@@ -74,6 +76,7 @@ func (c *Catalog) Clone() *Catalog {
 		langOpts:     c.langOpts,
 		bqClient:     c.bqClient,
 		tableMetaMap: make(map[string]*bq.TableMetadata),
+		tables:       make(map[string]*googlesql.SimpleTable),
 		mu:           &sync.Mutex{},
 		subCatalogs:  make(map[string]*googlesql.SimpleCatalog),
 	}
@@ -103,38 +106,67 @@ func (c *Catalog) EnsureTable(path []string) error {
 		return err
 	}
 	tableName := fmt.Sprintf("%s.%s.%s", projectID, datasetID, tableID)
-	if _, ok := c.tableMetaMap[tableName]; ok {
-		return nil // already loaded
+	table, ok := c.tables[tableName]
+	if !ok {
+		table, err = c.addTable(path)
+		if err != nil {
+			return err
+		}
 	}
-	return c.addTable(path)
+	// Checked even when the table is already loaded, because it may have been
+	// loaded through its 3-part name first.
+	if isDatasetQualified(path) && projectID != "" {
+		c.addDatasetQualifiedAlias(table, datasetID, tableID)
+	}
+	return nil
 }
 
-func (c *Catalog) addTable(path []string) error {
+func isDatasetQualified(path []string) bool {
+	return len(strings.Split(strings.Join(path, "."), ".")) == 2
+}
+
+// addDatasetQualifiedAlias makes the table resolvable as "dataset.table" for
+// the default project. The same table object is registered so that its name
+// stays "project.dataset.table", which hover, completion and lint rely on.
+func (c *Catalog) addDatasetQualifiedAlias(table *googlesql.SimpleTable, datasetID, tableID string) {
+	// Backticked `dataset.table` is looked up as a single name.
+	_ = c.catalog.AddTable2(datasetID+"."+tableID, table)
+
+	// Unquoted dataset.table → root["dataset"]["table"]. The cache key is shared
+	// with a project of the same name, because the root cannot hold two
+	// sub-catalogs with one name.
+	datasetCat, err := c.getOrCreateSubCatalog(c.catalog, datasetID)
+	if err == nil {
+		_ = datasetCat.AddTable2(tableID, table)
+	}
+}
+
+func (c *Catalog) addTable(path []string) (*googlesql.SimpleTable, error) {
 	projectID, datasetID, tableID, err := c.pathToProjectTable(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	metadata, err := c.bqClient.GetTableMetadata(context.Background(), projectID, datasetID, tableID)
 	if err != nil {
-		return fmt.Errorf("failed to get schema: %w", err)
+		return nil, fmt.Errorf("failed to get schema: %w", err)
 	}
 
 	tableName := fmt.Sprintf("%s.%s.%s", projectID, datasetID, tableID)
 
 	table, err := googlesql.NewSimpleTable(tableName, 0)
 	if err != nil {
-		return fmt.Errorf("failed to create table: %w", err)
+		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
 
 	schema := metadata.Schema
 	for _, field := range schema {
 		typ, err := bigqueryTypeToGooglesqlType(c.typeFactory, field.Type, field.Repeated, field.Schema)
 		if err != nil {
-			return fmt.Errorf("failed to convert type(%s): %w", field.Name, err)
+			return nil, fmt.Errorf("failed to convert type(%s): %w", field.Name, err)
 		}
 		if err := addColumn(table, tableName, field.Name, typ, false, true); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
@@ -145,20 +177,20 @@ func (c *Catalog) addTable(path []string) error {
 		// accepts INSERT INTO t (_PARTITIONTIME, ...) on ingestion-time tables.
 		tsType, err := c.typeFactory.GetTimestamp()
 		if err != nil {
-			return fmt.Errorf("failed to get TIMESTAMP type: %w", err)
+			return nil, fmt.Errorf("failed to get TIMESTAMP type: %w", err)
 		}
 		if err := addColumn(table, tableName, "_PARTITIONTIME", tsType, true, true); err != nil {
-			return err
+			return nil, err
 		}
 		// A pseudo column, as in BigQuery, so that it stays out of SELECT * and
 		// cannot be written.
 		if HasPartitionDate(metadata) {
 			dateType, err := c.typeFactory.GetDate()
 			if err != nil {
-				return fmt.Errorf("failed to get DATE type: %w", err)
+				return nil, fmt.Errorf("failed to get DATE type: %w", err)
 			}
 			if err := addColumn(table, tableName, "_PARTITIONDATE", dateType, true, false); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
@@ -166,17 +198,17 @@ func (c *Catalog) addTable(path []string) error {
 	if isWildCardTable(path) {
 		strType, err := c.typeFactory.GetString()
 		if err != nil {
-			return fmt.Errorf("failed to get STRING type: %w", err)
+			return nil, fmt.Errorf("failed to get STRING type: %w", err)
 		}
 		// A pseudo column, as in BigQuery, so that it stays out of SELECT * and
 		// cannot be written.
 		if err := addColumn(table, tableName, "_TABLE_SUFFIX", strType, true, false); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	if err := c.catalog.AddTable(table); err != nil {
-		return fmt.Errorf("failed to add table to catalog: %w", err)
+		return nil, fmt.Errorf("failed to add table to catalog: %w", err)
 	}
 
 	// Also register in nested sub-catalogs for non-backtick 3-part path resolution.
@@ -191,7 +223,8 @@ func (c *Catalog) addTable(path []string) error {
 	}
 
 	c.tableMetaMap[tableName] = metadata
-	return nil
+	c.tables[tableName] = table
+	return table, nil
 }
 
 func addColumn(table *googlesql.SimpleTable, tableName, name string, typ googlesql.Googlesql_TypeNode, isPseudoColumn, isWritableColumn bool) error {
