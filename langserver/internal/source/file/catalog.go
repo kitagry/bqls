@@ -24,8 +24,8 @@ type Catalog struct {
 	tableMetaMap map[string]*bq.TableMetadata
 	tables       map[string]*googlesql.SimpleTable // key: "project.dataset.table"
 	mu           *sync.Mutex
-	// subCatalogs tracks nested sub-catalogs for non-backtick 3-part path resolution.
-	subCatalogs map[string]*googlesql.SimpleCatalog // key: "project" or "project.dataset"
+	// subCatalogs tracks nested sub-catalogs for non-backtick path resolution.
+	subCatalogs map[string]*googlesql.SimpleCatalog // key: "project", "project.dataset" or a default-project "dataset"
 }
 
 func NewCatalog(bqClient bigquery.Client) *Catalog {
