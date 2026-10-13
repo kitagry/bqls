@@ -23,7 +23,11 @@ type Catalog struct {
 	bqClient     bigquery.Client
 	tableMetaMap map[string]*bq.TableMetadata
 	tables       map[string]*googlesql.SimpleTable // key: "project.dataset.table"
-	mu           *sync.Mutex
+	// aliases holds lowercased "dataset.table" names already registered, because
+	// registering one twice traps in SimpleCatalog, which matches names
+	// case-insensitively.
+	aliases map[string]bool
+	mu      *sync.Mutex
 	// subCatalogs tracks nested sub-catalogs for non-backtick path resolution.
 	subCatalogs map[string]*googlesql.SimpleCatalog // key: "project", "project.dataset" or a default-project "dataset"
 }
@@ -48,6 +52,7 @@ func NewCatalog(bqClient bigquery.Client) *Catalog {
 		bqClient:     bqClient,
 		tableMetaMap: make(map[string]*bq.TableMetadata),
 		tables:       make(map[string]*googlesql.SimpleTable),
+		aliases:      make(map[string]bool),
 		mu:           &sync.Mutex{},
 		subCatalogs:  make(map[string]*googlesql.SimpleCatalog),
 	}
@@ -77,6 +82,7 @@ func (c *Catalog) Clone() *Catalog {
 		bqClient:     c.bqClient,
 		tableMetaMap: make(map[string]*bq.TableMetadata),
 		tables:       make(map[string]*googlesql.SimpleTable),
+		aliases:      make(map[string]bool),
 		mu:           &sync.Mutex{},
 		subCatalogs:  make(map[string]*googlesql.SimpleCatalog),
 	}
@@ -101,7 +107,7 @@ func (c *Catalog) EnsureTable(path []string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	projectID, datasetID, tableID, err := c.pathToProjectTable(path)
+	projectID, datasetID, tableID, defaulted, err := c.pathToProjectTable(path)
 	if err != nil {
 		return err
 	}
@@ -115,20 +121,22 @@ func (c *Catalog) EnsureTable(path []string) error {
 	}
 	// Checked even when the table is already loaded, because it may have been
 	// loaded through its 3-part name first.
-	if isDatasetQualified(path) && projectID != "" {
+	if defaulted && projectID != "" {
 		c.addDatasetQualifiedAlias(table, datasetID, tableID)
 	}
 	return nil
-}
-
-func isDatasetQualified(path []string) bool {
-	return len(strings.Split(strings.Join(path, "."), ".")) == 2
 }
 
 // addDatasetQualifiedAlias makes the table resolvable as "dataset.table" for
 // the default project. The same table object is registered so that its name
 // stays "project.dataset.table", which hover, completion and lint rely on.
 func (c *Catalog) addDatasetQualifiedAlias(table *googlesql.SimpleTable, datasetID, tableID string) {
+	key := strings.ToLower(datasetID + "." + tableID)
+	if c.aliases[key] {
+		return
+	}
+	c.aliases[key] = true
+
 	// Backticked `dataset.table` is looked up as a single name.
 	_ = c.catalog.AddTable2(datasetID+"."+tableID, table)
 
@@ -142,7 +150,7 @@ func (c *Catalog) addDatasetQualifiedAlias(table *googlesql.SimpleTable, dataset
 }
 
 func (c *Catalog) addTable(path []string) (*googlesql.SimpleTable, error) {
-	projectID, datasetID, tableID, err := c.pathToProjectTable(path)
+	projectID, datasetID, tableID, _, err := c.pathToProjectTable(path)
 	if err != nil {
 		return nil, err
 	}
@@ -255,14 +263,16 @@ func (c *Catalog) getOrCreateSubCatalog(parent *googlesql.SimpleCatalog, key str
 	return sub, nil
 }
 
-func (c *Catalog) pathToProjectTable(path []string) (projectID, datasetID, tableID string, err error) {
+// pathToProjectTable also reports whether the project was filled in from the
+// default project.
+func (c *Catalog) pathToProjectTable(path []string) (projectID, datasetID, tableID string, defaulted bool, err error) {
 	tableSep := strings.Split(strings.Join(path, "."), ".")
 	if len(tableSep) == 3 {
-		return tableSep[0], tableSep[1], tableSep[2], nil
+		return tableSep[0], tableSep[1], tableSep[2], false, nil
 	} else if len(tableSep) == 2 {
-		return c.bqClient.GetDefaultProject(), tableSep[0], tableSep[1], nil
+		return c.bqClient.GetDefaultProject(), tableSep[0], tableSep[1], true, nil
 	}
-	return "", "", "", fmt.Errorf(`unknown table "%s"`, strings.Join(tableSep, "."))
+	return "", "", "", false, fmt.Errorf(`unknown table "%s"`, strings.Join(tableSep, "."))
 }
 
 func bigqueryTypeToGooglesqlType(tf *googlesql.TypeFactory, typ bq.FieldType, isRepeated bool, schema bq.Schema) (googlesql.Googlesql_TypeNode, error) {

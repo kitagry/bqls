@@ -472,6 +472,11 @@ func TestCatalog_TwoPartTableNames(t *testing.T) {
 		"2-part before 3-part":               "SELECT a.x FROM d.t a JOIN p.d.t b ON a.x = b.x",
 		"dataset named like another project": "SELECT a.x FROM other.x.t a JOIN other.t b ON a.x = b.x",
 		"dataset named like a project, 2-part first": "SELECT a.x FROM other.t a JOIN other.x.t b ON a.x = b.x",
+		"repeated unquoted":                          "SELECT a.x FROM d.t a JOIN d.t b ON a.x = b.x",
+		"repeated backticked":                        "SELECT a.x FROM `d.t` a JOIN `d.t` b ON a.x = b.x",
+		"mixed case":                                 "SELECT a.x FROM d.t a JOIN D.T b ON a.x = b.x",
+		"multiple statements":                        "SELECT x FROM d.t;\nSELECT x FROM d.t;",
+		"DML target also read":                       "INSERT d.t (x) SELECT x FROM d.t",
 	}
 	for name, src := range tests {
 		t.Run(name, func(t *testing.T) {
