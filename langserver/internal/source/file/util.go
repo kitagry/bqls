@@ -27,10 +27,13 @@ func CreateTableNameFromTablePathExpressionNode(node *googlesql.ASTTablePathExpr
 		return "", false
 	}
 
+	return joinPathExpression(pathExpr)
+}
+
+func joinPathExpression(pathExpr *googlesql.ASTPathExpression) (string, bool) {
 	names, err := pathExpr.ToIdentifierVector()
 	if err != nil || len(names) == 0 {
 		return "", false
 	}
-
 	return strings.Join(names, "."), true
 }

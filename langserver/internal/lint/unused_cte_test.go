@@ -222,12 +222,10 @@ func TestUnusedCTE(t *testing.T) {
 			want:      []lint.Diagnostic{unusedCTE("b", rng(0, 44, 0, 45), del(rng(0, 42, 0, 64)))},
 			wantFixed: "CREATE VIEW v AS WITH a AS (SELECT 1 AS x) SELECT * FROM a",
 		},
-		// The MERGE target is read inside USING too because only table path
-		// expressions are preloaded into the catalog.
 		"MERGE USING subquery": {
-			src:       "MERGE p.d.t T USING (WITH a AS (SELECT x FROM p.d.t), b AS (SELECT 2 AS x) SELECT * FROM a) S ON T.x = S.x WHEN MATCHED THEN DELETE",
-			want:      []lint.Diagnostic{unusedCTE("b", rng(0, 54, 0, 55), del(rng(0, 52, 0, 74)))},
-			wantFixed: "MERGE p.d.t T USING (WITH a AS (SELECT x FROM p.d.t) SELECT * FROM a) S ON T.x = S.x WHEN MATCHED THEN DELETE",
+			src:       "MERGE p.d.t T USING (WITH a AS (SELECT 1 AS x), b AS (SELECT 2 AS x) SELECT * FROM a) S ON T.x = S.x WHEN MATCHED THEN DELETE",
+			want:      []lint.Diagnostic{unusedCTE("b", rng(0, 48, 0, 49), del(rng(0, 46, 0, 68)))},
+			wantFixed: "MERGE p.d.t T USING (WITH a AS (SELECT 1 AS x) SELECT * FROM a) S ON T.x = S.x WHEN MATCHED THEN DELETE",
 		},
 		"each statement of a script": {
 			src: "WITH a AS (SELECT 1 AS x) SELECT 1 AS y;\nWITH a AS (SELECT 1 AS x) SELECT * FROM a;\nWITH b AS (SELECT 1 AS x) SELECT 1 AS y",

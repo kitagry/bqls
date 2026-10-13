@@ -299,21 +299,55 @@ func isWildCardTable(path []string) bool {
 	return strings.HasSuffix(path[len(path)-1], "*")
 }
 
-// PreloadTablesFromAST walks the AST to find all table path expressions and pre-loads them.
+// PreloadTablesFromAST walks the AST to find all table path expressions and
+// DML target tables, and pre-loads them.
 func (c *Catalog) PreloadTablesFromAST(node *googlesql.ASTScript) {
 	Walk(node, func(n googlesql.ASTNode) error { //nolint
-		tpe, ok := n.(*googlesql.ASTTablePathExpression)
+		var name string
+		var ok bool
+		if tpe, isTPE := n.(*googlesql.ASTTablePathExpression); isTPE {
+			name, ok = CreateTableNameFromTablePathExpressionNode(tpe)
+		} else if pe := dmlTargetPath(n); pe != nil {
+			name, ok = joinPathExpression(pe)
+		}
 		if !ok {
 			return nil
 		}
-		name, ok := CreateTableNameFromTablePathExpressionNode(tpe)
-		if !ok {
-			return nil
-		}
+		// Split after joining so that a backticked `p.d.t` becomes three parts.
 		path := strings.Split(name, ".")
 		_ = c.EnsureTable(path)
 		return nil
 	})
+}
+
+// dmlTargetPath returns the target table of a top-level DML statement, or nil.
+func dmlTargetPath(n googlesql.ASTNode) *googlesql.ASTPathExpression {
+	var target googlesql.ASTNode
+	var err error
+	switch stmt := n.(type) {
+	case *googlesql.ASTInsertStatement:
+		target, err = stmt.TargetPath()
+	case *googlesql.ASTUpdateStatement:
+		target, err = stmt.TargetPath()
+	case *googlesql.ASTDeleteStatement:
+		target, err = stmt.TargetPath()
+	case *googlesql.ASTMergeStatement:
+		target, err = stmt.TargetPath()
+	default:
+		return nil
+	}
+	if err != nil {
+		return nil
+	}
+	// Nested DML inside UPDATE ... SET (...) targets an array column, not a
+	// table. Checked after the switch because Walk visits every node.
+	if parent, err := n.Parent(); err == nil {
+		if _, ok := parent.(*googlesql.ASTUpdateItem); ok {
+			return nil
+		}
+	}
+	pe, _ := target.(*googlesql.ASTPathExpression)
+	return pe
 }
 
 // FindTableMetadata returns the BigQuery metadata for a table path (e.g., "project.dataset.table").
