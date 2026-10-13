@@ -1335,16 +1335,28 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 		// SET @@system_variable is supported by the resolver, so it must still
 		// be analyzed rather than skipped like other SET statements.
 		"SET system variable is still analyzed": {
-			file: "SET @@dataset_id = 'foo';",
+			file:             "SET @@dataset_id = 'foo';",
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 1,
+		},
+		"SET system variable with wrong type": {
+			file: "SET @@dataset_id = 1;",
 			expectedErrs: []file.Error{
 				{
-					Msg:                  "Unrecognized name: @@dataset_id",
-					Position:             lsp.Position{Line: 0, Character: 4},
-					TermLength:           12,
-					IncompleteColumnName: "@@dataset_id",
+					Msg:      "Expected type STRING; found INT64",
+					Position: lsp.Position{Line: 0, Character: 19},
 				},
 			},
 			expectedRNodeLen: 0,
+		},
+		"system variables with field paths": {
+			file: "BEGIN\n" +
+				"  SELECT 1;\n" +
+				"EXCEPTION WHEN ERROR THEN\n" +
+				"  SELECT @@error.message, @@error.stack_trace[SAFE_OFFSET(0)].line, @@script.job_id, @@row_count, @@project_id;\n" +
+				"END;",
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 2,
 		},
 		// While typing a SET, the parser error and its recovery attempt are
 		// reported just like for other incomplete statements.

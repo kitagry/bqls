@@ -68,7 +68,7 @@ func newLanguageOptions() (*googlesql.LanguageOptions, error) {
 	return langOpt, nil
 }
 
-func (a *Analyzer) newAnalyzerOptions(langOpt *googlesql.LanguageOptions) (*googlesql.AnalyzerOptions, error) {
+func (a *Analyzer) newAnalyzerOptions(langOpt *googlesql.LanguageOptions, tf *googlesql.TypeFactory) (*googlesql.AnalyzerOptions, error) {
 	opts, err := googlesql.NewAnalyzerOptions2()
 	if err != nil {
 		return nil, err
@@ -85,12 +85,15 @@ func (a *Analyzer) newAnalyzerOptions(langOpt *googlesql.LanguageOptions) (*goog
 	if err := opts.SetParseLocationRecordType(googlesql.ParseLocationRecordTypeParseLocationRecordCodeSearch); err != nil {
 		return nil, err
 	}
+	if err := addBigQuerySystemVariables(opts, tf); err != nil {
+		return nil, err
+	}
 	return opts, nil
 }
 
 func (a *Analyzer) AnalyzeStatement(rawText string, stmt googlesql.ASTStatementNode, catalog *Catalog) (*googlesql.AnalyzerOutput, error) {
 	langOpt := catalog.langOpts
-	opts, err := a.newAnalyzerOptions(langOpt)
+	opts, err := a.newAnalyzerOptions(langOpt, catalog.TypeFactory())
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +176,7 @@ func (a *Analyzer) analyzeAssignmentExpression(rawText string, stmt googlesql.AS
 		return nil
 	}
 
-	opts, err := a.newAnalyzerOptions(catalog.langOpts)
+	opts, err := a.newAnalyzerOptions(catalog.langOpts, catalog.TypeFactory())
 	if err != nil {
 		return err
 	}
