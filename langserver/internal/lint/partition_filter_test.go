@@ -207,6 +207,75 @@ func TestPartitionFilter(t *testing.T) {
 		"pipe WHERE": {
 			src: "FROM p.d.by_col |> WHERE dt = '2020-01-01'",
 		},
+		// The FROM keyword and alias are excluded, as in a SELECT query.
+		"pipe FROM unfiltered": {
+			src:  "FROM p.d.by_col",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM backquoted path with alias bare": {
+			src:  "FROM `p.d.by_col` AS t",
+			want: []report{{sub: "`p.d.by_col`", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM after a script statement": {
+			src:  "DECLARE v INT64 DEFAULT 1;\nFROM p.d.by_col",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM a join": {
+			src:  "FROM p.d.plain CROSS JOIN p.d.by_col",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM a subquery": {
+			src:  "FROM (SELECT x FROM p.d.by_col)",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM in a CTE": {
+			src:  "WITH c AS (FROM p.d.by_col) SELECT * FROM c",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM with alias in a CTE": {
+			src:  "WITH c AS (FROM p.d.by_col AS t) SELECT * FROM c",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM a parenthesized FROM": {
+			src:  "FROM (FROM p.d.by_col)",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM an aliased parenthesized FROM": {
+			src:  "FROM (FROM p.d.by_col AS a) AS b",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM a parenthesized FROM joined with another table": {
+			src:  "FROM (FROM p.d.plain) AS a |> JOIN p.d.by_col USING (x)",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM followed by UNION ALL of another FROM": {
+			src:  "FROM p.d.by_col |> UNION ALL (FROM p.d.plain)",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM followed by AS": {
+			src:  "FROM p.d.by_col |> AS t",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM with time travel": {
+			src:  "FROM p.d.by_col FOR SYSTEM_TIME AS OF CURRENT_TIMESTAMP()",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM followed by SELECT": {
+			src:  "FROM p.d.by_col |> SELECT x",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM backquoted path with alias followed by SELECT": {
+			src:  "FROM `p.d.by_col` AS t |> SELECT x",
+			want: []report{{sub: "`p.d.by_col`", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe JOIN unfiltered": {
+			src:  "FROM p.d.plain |> JOIN p.d.by_col USING (x)",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM same table twice": {
+			src:  "FROM p.d.by_col AS a |> JOIN p.d.by_col AS b USING (x) |> WHERE a.dt = '2020-01-01'",
+			want: []report{{sub: "p.d.by_col", n: 1, table: "p.d.by_col", columns: "`dt`"}},
+		},
 		"backquoted path": {
 			src:  "SELECT x FROM `p.d.by_col`",
 			want: []report{{sub: "`p.d.by_col`", table: "p.d.by_col", columns: "`dt`"}},

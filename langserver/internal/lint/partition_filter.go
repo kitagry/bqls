@@ -408,7 +408,8 @@ func checkPartitionFilter(pass *Pass, flow *columnFlow, scan *googlesql.Resolved
 		}
 	}
 
-	r, ok := pass.File.ToLspRange(loc)
+	at := tablePathOffsets(pass.File.Node, offsets{file.ParseLocStart(loc), file.ParseLocEnd(loc)})
+	r, ok := pass.File.OffsetsToLspRange(at.start, at.end)
 	if !ok {
 		return
 	}
@@ -425,6 +426,53 @@ func checkPartitionFilter(pass *Pass, flow *columnFlow, scan *googlesql.Resolved
 		Message:  fmt.Sprintf("Query on partitioned table `%s` has no filter on partition column %s; %s", name, strings.Join(quoted, " or "), consequence),
 		Severity: SeverityWarning,
 	})
+}
+
+// tablePathOffsets narrows a table scan location to its table path. The
+// resolver locates a scan from a FROM-first query at an enclosing node, such
+// as the whole `FROM ...` query, its parentheses, or the statement, whereas
+// other scans are located at the path alone. The scan's own FROM-first query
+// always lies inside its location, so another one reading a table there makes
+// the match ambiguous and the location is kept.
+func tablePathOffsets(script *googlesql.ASTScript, at offsets) offsets {
+	found := offsets{-1, -1}
+	n := 0
+	for _, q := range file.ListAstNode[*googlesql.ASTFromQuery](script) {
+		qo := astOffsets(q)
+		if qo.start < at.start || at.end < qo.end {
+			continue
+		}
+		path, ok := fromQueryPath(q)
+		if !ok {
+			continue
+		}
+		found = astOffsets(path)
+		n++
+	}
+	if n != 1 {
+		return at
+	}
+	return found
+}
+
+func fromQueryPath(q *googlesql.ASTFromQuery) (*googlesql.ASTPathExpression, bool) {
+	from, err := q.FromClause()
+	if err != nil || from == nil {
+		return nil, false
+	}
+	expr, err := from.TableExpression()
+	if err != nil {
+		return nil, false
+	}
+	tp, ok := expr.(*googlesql.ASTTablePathExpression)
+	if !ok {
+		return nil, false
+	}
+	path, err := tp.PathExpr()
+	if err != nil || path == nil {
+		return nil, false
+	}
+	return path, true
 }
 
 func partitionColumnNames(meta *bq.TableMetadata) []string {
