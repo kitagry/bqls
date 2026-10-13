@@ -248,6 +248,10 @@ func TestPartitionFilter(t *testing.T) {
 			src:  "FROM (FROM p.d.plain) AS a |> JOIN p.d.by_col USING (x)",
 			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
 		},
+		"pipe FROM followed by UNION ALL of another FROM": {
+			src:  "FROM p.d.by_col |> UNION ALL (FROM p.d.plain)",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
 		"pipe FROM followed by AS": {
 			src:  "FROM p.d.by_col |> AS t",
 			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},

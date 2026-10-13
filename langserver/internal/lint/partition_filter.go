@@ -428,33 +428,51 @@ func checkPartitionFilter(pass *Pass, flow *columnFlow, scan *googlesql.Resolved
 	})
 }
 
-// tablePathOffsets narrows a table scan location to its table path. A scan
-// from a bare FROM-first query is located at the whole `FROM ...` query,
-// unlike other scans which are located at the path alone.
+// tablePathOffsets narrows a table scan location to its table path. The
+// resolver locates a scan from a FROM-first query at an enclosing node, such
+// as the whole `FROM ...` query, its parentheses, or the statement, whereas
+// other scans are located at the path alone. The scan's own FROM-first query
+// always lies inside its location, so another one reading a table there makes
+// the match ambiguous and the location is kept.
 func tablePathOffsets(script *googlesql.ASTScript, at offsets) offsets {
+	found := offsets{-1, -1}
+	n := 0
 	for _, q := range file.ListAstNode[*googlesql.ASTFromQuery](script) {
-		if astOffsets(q) != at {
+		qo := astOffsets(q)
+		if qo.start < at.start || at.end < qo.end {
 			continue
 		}
-		from, err := q.FromClause()
-		if err != nil || from == nil {
-			return at
-		}
-		expr, err := from.TableExpression()
-		if err != nil {
-			return at
-		}
-		tp, ok := expr.(*googlesql.ASTTablePathExpression)
+		path, ok := fromQueryPath(q)
 		if !ok {
-			return at
+			continue
 		}
-		path, err := tp.PathExpr()
-		if err != nil || path == nil {
-			return at
-		}
-		return astOffsets(path)
+		found = astOffsets(path)
+		n++
 	}
-	return at
+	if n != 1 {
+		return at
+	}
+	return found
+}
+
+func fromQueryPath(q *googlesql.ASTFromQuery) (*googlesql.ASTPathExpression, bool) {
+	from, err := q.FromClause()
+	if err != nil || from == nil {
+		return nil, false
+	}
+	expr, err := from.TableExpression()
+	if err != nil {
+		return nil, false
+	}
+	tp, ok := expr.(*googlesql.ASTTablePathExpression)
+	if !ok {
+		return nil, false
+	}
+	path, err := tp.PathExpr()
+	if err != nil || path == nil {
+		return nil, false
+	}
+	return path, true
 }
 
 func partitionColumnNames(meta *bq.TableMetadata) []string {
