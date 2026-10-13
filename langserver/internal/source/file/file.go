@@ -220,7 +220,7 @@ func collectStatementsFromNode(node *googlesql.ASTScript) []googlesql.ASTStateme
 			return nil
 		}
 		isStmt, _ := n.IsStatement()
-		if isStmt {
+		if isStmt && !isNestedDMLStatement(n) {
 			if sn, ok := n.(googlesql.ASTStatementNode); ok {
 				stmts = append(stmts, sn)
 			}

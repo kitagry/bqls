@@ -432,7 +432,7 @@ func collectStatements(node *googlesql.ASTScript) []googlesql.ASTStatementNode {
 			return nil
 		}
 		isStmt, _ := n.IsStatement()
-		if isStmt {
+		if isStmt && !isNestedDMLStatement(n) {
 			if sn, ok := n.(googlesql.ASTStatementNode); ok {
 				stmts = append(stmts, sn)
 			}
@@ -440,6 +440,18 @@ func collectStatements(node *googlesql.ASTScript) []googlesql.ASTStatementNode {
 		return nil
 	})
 	return stmts
+}
+
+// isNestedDMLStatement reports whether n is a DML inside UPDATE ... SET (...).
+// It targets an array column of the outer table, so it is part of the outer
+// statement rather than a statement of its own.
+func isNestedDMLStatement(n googlesql.ASTNode) bool {
+	parent, err := n.Parent()
+	if err != nil {
+		return false
+	}
+	_, ok := parent.(*googlesql.ASTUpdateItem)
+	return ok
 }
 
 // isScriptControlStatement reports whether the statement is a procedural
