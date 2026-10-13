@@ -133,12 +133,8 @@ func (c *Catalog) addTable(path []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to convert type(%s): %w", field.Name, err)
 		}
-		col, err := googlesql.NewSimpleColumn(tableName, field.Name, typ, false, true)
-		if err != nil {
-			return fmt.Errorf("failed to create column(%s): %w", field.Name, err)
-		}
-		if err := table.AddColumn2(col, false); err != nil {
-			return fmt.Errorf("failed to add column(%s): %w", field.Name, err)
+		if err := addColumn(table, tableName, field.Name, typ, false, true); err != nil {
+			return err
 		}
 	}
 
@@ -148,32 +144,32 @@ func (c *Catalog) addTable(path []string) error {
 		// Pseudo so that it stays out of SELECT *, but writable because BigQuery
 		// accepts INSERT INTO t (_PARTITIONTIME, ...) on ingestion-time tables.
 		tsType, err := c.typeFactory.GetTimestamp()
-		if err == nil {
-			col, err := googlesql.NewSimpleColumn(tableName, "_PARTITIONTIME", tsType, true, true)
-			if err == nil {
-				_ = table.AddColumn2(col, false)
-			}
+		if err != nil {
+			return fmt.Errorf("failed to get TIMESTAMP type: %w", err)
+		}
+		if err := addColumn(table, tableName, "_PARTITIONTIME", tsType, true, true); err != nil {
+			return err
 		}
 		// A pseudo column, as in BigQuery, so that it stays out of SELECT * and
 		// cannot be written.
 		if HasPartitionDate(metadata) {
 			dateType, err := c.typeFactory.GetDate()
-			if err == nil {
-				col, err := googlesql.NewSimpleColumn(tableName, "_PARTITIONDATE", dateType, true, false)
-				if err == nil {
-					_ = table.AddColumn2(col, false)
-				}
+			if err != nil {
+				return fmt.Errorf("failed to get DATE type: %w", err)
+			}
+			if err := addColumn(table, tableName, "_PARTITIONDATE", dateType, true, false); err != nil {
+				return err
 			}
 		}
 	}
 
 	if isWildCardTable(path) {
 		strType, err := c.typeFactory.GetString()
-		if err == nil {
-			col, err := googlesql.NewSimpleColumn(tableName, "_TABLE_SUFFIX", strType, false, true)
-			if err == nil {
-				_ = table.AddColumn2(col, false)
-			}
+		if err != nil {
+			return fmt.Errorf("failed to get STRING type: %w", err)
+		}
+		if err := addColumn(table, tableName, "_TABLE_SUFFIX", strType, false, true); err != nil {
+			return err
 		}
 	}
 
@@ -193,6 +189,17 @@ func (c *Catalog) addTable(path []string) error {
 	}
 
 	c.tableMetaMap[tableName] = metadata
+	return nil
+}
+
+func addColumn(table *googlesql.SimpleTable, tableName, name string, typ googlesql.Googlesql_TypeNode, isPseudoColumn, isWritableColumn bool) error {
+	col, err := googlesql.NewSimpleColumn(tableName, name, typ, isPseudoColumn, isWritableColumn)
+	if err != nil {
+		return fmt.Errorf("failed to create column(%s): %w", name, err)
+	}
+	if err := table.AddColumn2(col, false); err != nil {
+		return fmt.Errorf("failed to add column(%s): %w", name, err)
+	}
 	return nil
 }
 

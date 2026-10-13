@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"testing"
 
 	bq "cloud.google.com/go/bigquery"
@@ -18,14 +17,19 @@ import (
 )
 
 func TestCatalog_AddTable(t *testing.T) {
+	type column struct {
+		Name     string
+		Pseudo   bool
+		Writable bool
+	}
 	dummyErr := fmt.Errorf("dummy error")
 	tests := map[string]struct {
 		path               []string
 		createMockBigQuery func(ctrl *gomock.Controller) bigquery.Client
 
-		expectError       error
-		expectTableName   string
-		expectColumnNames []string
+		expectError     error
+		expectTableName string
+		expectColumns   []column
 	}{
 		"Normal case": {
 			path: []string{"project.dataset.table"},
@@ -42,8 +46,8 @@ func TestCatalog_AddTable(t *testing.T) {
 				return bqClient
 			},
 
-			expectTableName:   "project.dataset.table",
-			expectColumnNames: []string{"name"},
+			expectTableName: "project.dataset.table",
+			expectColumns:   []column{{Name: "name", Writable: true}},
 		},
 		"Expect error": {
 			path: []string{"project.dataset.table"},
@@ -69,8 +73,11 @@ func TestCatalog_AddTable(t *testing.T) {
 				}, nil)
 				return bqClient
 			},
-			expectTableName:   "project.dataset.table*",
-			expectColumnNames: []string{"name", "_TABLE_SUFFIX"},
+			expectTableName: "project.dataset.table*",
+			expectColumns: []column{
+				{Name: "name", Writable: true},
+				{Name: "_TABLE_SUFFIX", Writable: true},
+			},
 		},
 		"partitiontime table": {
 			path: []string{"project.dataset.table"},
@@ -89,8 +96,12 @@ func TestCatalog_AddTable(t *testing.T) {
 				}, nil)
 				return bqClient
 			},
-			expectTableName:   "project.dataset.table",
-			expectColumnNames: []string{"name"},
+			expectTableName: "project.dataset.table",
+			expectColumns: []column{
+				{Name: "name", Writable: true},
+				{Name: "_PARTITIONTIME", Pseudo: true, Writable: true},
+				{Name: "_PARTITIONDATE", Pseudo: true},
+			},
 		},
 	}
 
@@ -110,34 +121,46 @@ func TestCatalog_AddTable(t *testing.T) {
 				return
 			}
 
-			tablePath := strings.Join(tt.path, ".")
-			// strip trailing dots if path was ["project.dataset.table"] form
-			meta, err := catalog.FindTableMetadata(tablePath)
+			tables, err := catalog.CatalogNode().Tables()
 			if err != nil {
-				t.Fatalf("FindTableMetadata: %v", err)
+				t.Fatal(err)
+			}
+			var table googlesql.TableNode
+			for _, tbl := range tables {
+				if name, _ := tbl.Name(); name == tt.expectTableName {
+					table = tbl
+				}
+			}
+			if table == nil {
+				t.Fatalf("table %s is not registered in the catalog", tt.expectTableName)
 			}
 
-			// The tableName in tableMetaMap uses the 3-part form
-			wantTableName := tt.expectTableName
-			if meta == nil {
-				t.Fatalf("expected metadata for %s, got nil", wantTableName)
+			n, err := table.NumColumns()
+			if err != nil {
+				t.Fatal(err)
 			}
-
-			// Verify columns via schema
-			schemaNames := make([]string, 0, len(meta.Schema))
-			for _, f := range meta.Schema {
-				schemaNames = append(schemaNames, f.Name)
+			got := make([]column, 0, n)
+			for i := range n {
+				col, err := table.GetColumn(i)
+				if err != nil {
+					t.Fatal(err)
+				}
+				name, err := col.Name()
+				if err != nil {
+					t.Fatal(err)
+				}
+				pseudo, err := col.IsPseudoColumn()
+				if err != nil {
+					t.Fatal(err)
+				}
+				writable, err := col.IsWritableColumn()
+				if err != nil {
+					t.Fatal(err)
+				}
+				got = append(got, column{Name: name, Pseudo: pseudo, Writable: writable})
 			}
-			// expectColumnNames may include pseudo-columns (_PARTITIONTIME, _TABLE_SUFFIX)
-			// which are not in the schema — just verify schema columns are a prefix
-			for i, name := range tt.expectColumnNames {
-				if i >= len(schemaNames) {
-					// pseudo-columns are ok to miss from schema
-					break
-				}
-				if schemaNames[i] != name {
-					t.Errorf("columnName(%d): got %s, want %s", i, schemaNames[i], name)
-				}
+			if diff := cmp.Diff(tt.expectColumns, got); diff != "" {
+				t.Errorf("columns diff (-want +got):\n%s", diff)
 			}
 		})
 	}
