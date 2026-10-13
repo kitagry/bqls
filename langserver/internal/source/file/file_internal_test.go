@@ -175,3 +175,46 @@ func TestAddInformationFunctions_KeepErrorWhenOutOfRange(t *testing.T) {
 		})
 	}
 }
+
+func TestAddInformationFunctions_StopAtAnyWhitespace(t *testing.T) {
+	tests := map[string]struct {
+		add       func(src string, parsedErr Error) Error
+		src       string
+		parsedErr Error
+		want      string
+	}{
+		"addInformationToNotExistInStructError after tab": {
+			add:       addInformationToNotExistInStructError,
+			src:       "SELECT 'a',\ts.zz, id FROM t",
+			parsedErr: Error{Msg: "Field name zz does not exist in STRUCT<id INT64>", Position: lsp.Position{Line: 0, Character: 14}},
+			want:      "s.zz",
+		},
+		"addInformationToNotExistInStructError after newline": {
+			add:       addInformationToNotExistInStructError,
+			src:       "SELECT id,\n  'a',\ns.zz FROM t",
+			parsedErr: Error{Msg: "Field name zz does not exist in STRUCT<id INT64>", Position: lsp.Position{Line: 2, Character: 2}},
+			want:      "s.zz",
+		},
+		"addInformationToNotFoundInsideTableError after tab": {
+			add:       addInformationToNotFoundInsideTableError,
+			src:       "SELECT 'a',\ts.zz, id FROM t",
+			parsedErr: Error{Msg: "Name zz not found inside s", Position: lsp.Position{Line: 0, Character: 14}},
+			want:      "s.zz",
+		},
+		"addInformationToNotFoundInsideTableError after newline": {
+			add:       addInformationToNotFoundInsideTableError,
+			src:       "SELECT id,\n  'a',\ns.zz FROM t",
+			parsedErr: Error{Msg: "Name zz not found inside s", Position: lsp.Position{Line: 2, Character: 2}},
+			want:      "s.zz",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := tt.add(tt.src, tt.parsedErr)
+			if got.IncompleteColumnName != tt.want {
+				t.Errorf("IncompleteColumnName = %q, want %q", got.IncompleteColumnName, tt.want)
+			}
+		})
+	}
+}

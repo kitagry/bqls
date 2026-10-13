@@ -415,6 +415,54 @@ func TestProject_ParseFile(t *testing.T) {
 				},
 			},
 		},
+		"parse not found inside table error file after tab": {
+			file: "SELECT 'a',\tt.unexist_column, id FROM `project.dataset.table` t",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Name unexist_column not found inside t",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 14,
+					},
+					TermLength:           14,
+					IncompleteColumnName: "t.unexist_column",
+				},
+			},
+		},
+		"parse not found inside table error file after newline": {
+			file: "SELECT id,\n  'a',\nt.unexist_column FROM `project.dataset.table` t",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Name unexist_column not found inside t",
+					Position: lsp.Position{
+						Line:      2,
+						Character: 2,
+					},
+					TermLength:           14,
+					IncompleteColumnName: "t.unexist_column",
+				},
+			},
+		},
 		"parse not found inside table error file in where clause": {
 			file: "SELECT * FROM `project.dataset.table` t\nWHERE t.unexist_column",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
