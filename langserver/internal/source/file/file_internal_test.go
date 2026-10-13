@@ -328,11 +328,35 @@ func TestFixIncompletePipeOperator(t *testing.T) {
 			wantSrc:        "FROM t ",
 			wantFixOffsets: []FixOffset{{Offset: 18, Length: -11}},
 		},
+		"pipe operator followed by a semicolon": {
+			src:            "FROM t |> WHERE; SELECT 1",
+			errPosition:    lsp.Position{Line: 0, Character: 15},
+			wantSrc:        "FROM t ; SELECT 1",
+			wantFixOffsets: []FixOffset{{Offset: 15, Length: -8}},
+		},
 		"pipe operator followed by a comment": {
 			src:            "FROM t |> SELECT -- c",
 			errPosition:    lsp.Position{Line: 0, Character: 21},
 			wantSrc:        "FROM t  -- c",
 			wantFixOffsets: []FixOffset{{Offset: 16, Length: -9}},
+		},
+		"pipe operator followed by a semicolon on the next line": {
+			src:            "FROM t |> SELECT\n;\nSELECT 1",
+			errPosition:    lsp.Position{Line: 1, Character: 0},
+			wantSrc:        "FROM t \n;\nSELECT 1",
+			wantFixOffsets: []FixOffset{{Offset: 16, Length: -9}},
+		},
+		"pipe operator followed by another pipe operator": {
+			src:            "FROM t |> WHERE |> SELECT x",
+			errPosition:    lsp.Position{Line: 0, Character: 16},
+			wantSrc:        "FROM t  |> SELECT x",
+			wantFixOffsets: []FixOffset{{Offset: 15, Length: -8}},
+		},
+		"pipe operator in a subquery": {
+			src:            "SELECT * FROM (FROM t |> SELECT)",
+			errPosition:    lsp.Position{Line: 0, Character: 31},
+			wantSrc:        "SELECT * FROM (FROM t )",
+			wantFixOffsets: []FixOffset{{Offset: 31, Length: -9}},
 		},
 		"lower case keywords": {
 			src:            "FROM t |> left outer join",

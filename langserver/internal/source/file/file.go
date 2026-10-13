@@ -476,8 +476,11 @@ func fixIncompletePipeOperator(src string, parsedErr Error) (fixedSrc string, fi
 		deleteEnd = wordEnd
 	}
 
+	// Only delete the operator when what follows can end the query, so that
+	// the rest of the file is kept as it is.
 	next := skipSpacesAndComments(src, deleteEnd)
-	if next != len(src) || errOffset > next {
+	endsQuery := next == len(src) || src[next] == ';' || src[next] == ')' || strings.HasPrefix(src[next:], "|>")
+	if !endsQuery || errOffset > next {
 		return src, nil
 	}
 

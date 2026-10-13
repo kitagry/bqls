@@ -821,6 +821,90 @@ func TestProject_ParseFile(t *testing.T) {
 				},
 			},
 		},
+		"pipe WHERE without condition followed by a semicolon": {
+			file: "FROM `project.dataset.table` |> WHERE;",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Syntax error: Unexpected \";\"",
+					Position: lsp.Position{Line: 0, Character: 37},
+				},
+			},
+		},
+		"pipe AGGREGATE without aggregations followed by a semicolon": {
+			file: "SELECT x FROM `project.dataset.table` |> AGGREGATE;",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Pipe AGGREGATE cannot have both an empty aggregate list and an empty GROUP BY",
+					Position: lsp.Position{Line: 0, Character: 41},
+				},
+			},
+		},
+		"pipe SELECT without columns followed by another statement": {
+			file: "FROM `project.dataset.table` |> SELECT\n;\nSELECT 1",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Syntax error: Unexpected \";\"",
+					Position: lsp.Position{Line: 1, Character: 0},
+				},
+			},
+		},
+		"pipe SELECT without columns followed by a comment": {
+			file: "FROM `project.dataset.table` |> SELECT -- comment",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Syntax error: Unexpected end of script",
+					Position: lsp.Position{Line: 0, Character: 49},
+				},
+			},
+		},
+		"pipe WHERE without condition followed by another pipe operator": {
+			file: "FROM `project.dataset.table` |> WHERE |> SELECT x",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Syntax error: Unexpected \"|>\"",
+					Position: lsp.Position{Line: 0, Character: 38},
+				},
+			},
+		},
+		"pipe SELECT without columns in a subquery": {
+			file: "SELECT * FROM (FROM `project.dataset.table` |> SELECT)",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Syntax error: Unexpected \")\"",
+					Position: lsp.Position{Line: 0, Character: 53},
+				},
+			},
+		},
 		"parse with clause only": {
 			file: "WITH t1 AS (SELECT * FROM `project.dataset.table` t1)\n",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
