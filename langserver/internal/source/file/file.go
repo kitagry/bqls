@@ -14,6 +14,8 @@ import (
 
 var lastDotRegex = regexp.MustCompile(`[\w.]+\.\s`)
 
+var zetaSQLLocationRegex = regexp.MustCompile(`\[at (\d+):(\d+)\]`)
+
 type ParsedFile struct {
 	URI lsp.DocumentURI
 	Src string
@@ -247,20 +249,23 @@ func (e Error) Error() string {
 
 func parseZetaSQLError(src string, err error) Error {
 	errStr := err.Error()
-	if !strings.Contains(errStr, "[at ") {
+
+	// extract position information like "... [at 1:28]". A message can carry
+	// several locations (e.g. "... [at 1:8]; ... [at 2:3]"), and the first one
+	// belongs to the error itself.
+	loc := zetaSQLLocationRegex.FindStringSubmatchIndex(errStr)
+	if loc == nil {
 		return Error{Msg: errStr}
 	}
-
-	// extract position information like "... [at 1:28]"
-	positionInd := strings.Index(errStr, "[at ")
-	location := errStr[positionInd+4 : len(errStr)-1]
-	locationSep := strings.Split(location, ":")
-	line, _ := strconv.Atoi(locationSep[0])
-	col, _ := strconv.Atoi(locationSep[1])
+	line, err1 := strconv.Atoi(errStr[loc[2]:loc[3]])
+	col, err2 := strconv.Atoi(errStr[loc[4]:loc[5]])
+	if err1 != nil || err2 != nil {
+		return Error{Msg: errStr}
+	}
 	pos := lsp.Position{Line: line - 1, Character: zetaSQLColumnToByteOffset(src, line-1, col)}
 
 	// Trim position information
-	errStr = strings.TrimSpace(errStr[:positionInd])
+	errStr = strings.TrimSpace(errStr[:loc[0]])
 	return Error{Msg: errStr, Position: pos}
 }
 
@@ -346,10 +351,9 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) 
 		currentOffset += len(line) + 1
 	}
 
-	fixed := fixedBuilder.String()
-	if !strings.HasSuffix(src, "\n") && strings.HasSuffix(fixed, "\n") {
-		fixed = fixed[:len(fixed)-1]
-	}
+	// Every line, including the last one, was written with "\n", which is one
+	// more than src has.
+	fixed := strings.TrimSuffix(fixedBuilder.String(), "\n")
 	return fixed, errs, fixOffsets
 }
 
@@ -604,7 +608,9 @@ func addInformationToNotExistInStructError(src string, parsedErr Error) Error {
 		return parsedErr
 	}
 	notExistColumn := parsedErr.Msg[ind+len("Field name "):]
-	notExistColumn = notExistColumn[:strings.Index(notExistColumn, " ")]
+	if end := strings.Index(notExistColumn, " "); end != -1 {
+		notExistColumn = notExistColumn[:end]
+	}
 
 	errOffset, ok := errorByteOffset(src, parsedErr.Position)
 	if !ok || errOffset == 0 || errOffset == len(src) || errOffset+len(notExistColumn) > len(src) {
@@ -624,7 +630,9 @@ func addInformationToNotFoundInsideTableError(src string, parsedErr Error) Error
 		return parsedErr
 	}
 	notExistColumn := parsedErr.Msg[ind+len("Name "):]
-	notExistColumn = notExistColumn[:strings.Index(notExistColumn, " ")]
+	if end := strings.Index(notExistColumn, " "); end != -1 {
+		notExistColumn = notExistColumn[:end]
+	}
 
 	errOffset, ok := errorByteOffset(src, parsedErr.Position)
 	if !ok || errOffset == 0 || errOffset == len(src) || errOffset+len(notExistColumn) > len(src) {
