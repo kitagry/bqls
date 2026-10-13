@@ -408,7 +408,8 @@ func checkPartitionFilter(pass *Pass, flow *columnFlow, scan *googlesql.Resolved
 		}
 	}
 
-	r, ok := pass.File.ToLspRange(loc)
+	at := tablePathOffsets(pass.File.Node, offsets{file.ParseLocStart(loc), file.ParseLocEnd(loc)})
+	r, ok := pass.File.OffsetsToLspRange(at.start, at.end)
 	if !ok {
 		return
 	}
@@ -425,6 +426,35 @@ func checkPartitionFilter(pass *Pass, flow *columnFlow, scan *googlesql.Resolved
 		Message:  fmt.Sprintf("Query on partitioned table `%s` has no filter on partition column %s; %s", name, strings.Join(quoted, " or "), consequence),
 		Severity: SeverityWarning,
 	})
+}
+
+// tablePathOffsets narrows a table scan location to its table path. A scan
+// from a bare FROM-first query is located at the whole `FROM ...` query,
+// unlike other scans which are located at the path alone.
+func tablePathOffsets(script *googlesql.ASTScript, at offsets) offsets {
+	for _, q := range file.ListAstNode[*googlesql.ASTFromQuery](script) {
+		if astOffsets(q) != at {
+			continue
+		}
+		from, err := q.FromClause()
+		if err != nil || from == nil {
+			return at
+		}
+		expr, err := from.TableExpression()
+		if err != nil {
+			return at
+		}
+		tp, ok := expr.(*googlesql.ASTTablePathExpression)
+		if !ok {
+			return at
+		}
+		path, err := tp.PathExpr()
+		if err != nil || path == nil {
+			return at
+		}
+		return astOffsets(path)
+	}
+	return at
 }
 
 func partitionColumnNames(meta *bq.TableMetadata) []string {
