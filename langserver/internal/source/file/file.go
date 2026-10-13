@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
@@ -612,7 +613,7 @@ func addInformationToNotExistInStructError(src string, parsedErr Error) Error {
 
 	parsedErr.TermLength = len(notExistColumn)
 
-	firstIndex := strings.LastIndex(src[:errOffset], " ") + 1
+	firstIndex := strings.LastIndexFunc(src[:errOffset], unicode.IsSpace) + 1
 	parsedErr.IncompleteColumnName = src[firstIndex : errOffset+len(notExistColumn)]
 	return parsedErr
 }
@@ -632,7 +633,7 @@ func addInformationToNotFoundInsideTableError(src string, parsedErr Error) Error
 
 	parsedErr.TermLength = len(notExistColumn)
 
-	firstIndex := strings.LastIndex(src[:errOffset], " ") + 1
+	firstIndex := strings.LastIndexFunc(src[:errOffset], unicode.IsSpace) + 1
 	parsedErr.IncompleteColumnName = src[firstIndex : errOffset+len(notExistColumn)]
 	return parsedErr
 }
