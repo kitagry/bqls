@@ -656,78 +656,64 @@ Storage info
 			},
 			expectMarkedStrings: nil,
 		},
-		"hover column of dataset-qualified table": {
+		"hover record field of dataset-qualified table": {
 			files: map[lsp.DocumentURI]string{
-				"file1.sql": "SELECT id, |name FROM dataset.table",
+				"file1.sql": "SELECT param.|key FROM dataset.table, UNNEST(params) AS param",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
 				ctrl := gomock.NewController(t)
 				bqClient := mock_bigquery.NewMockClient(ctrl)
 				bqClient.EXPECT().GetDefaultProject().Return("project").AnyTimes()
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
-					FullID:           "project:dataset.table",
-					CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
-					LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+					FullID: "project:dataset.table",
 					Schema: bq.Schema{
 						{
-							Name:        "id",
-							Type:        bq.IntegerFieldType,
-							Description: "id description",
-						},
-						{
-							Name:        "name",
-							Type:        bq.StringFieldType,
-							Description: "name description",
+							Name:     "params",
+							Type:     bq.RecordFieldType,
+							Repeated: true,
+							Schema: bq.Schema{
+								{
+									Name: "key",
+									Type: bq.StringFieldType,
+								},
+							},
 						},
 					},
 				}, nil).MinTimes(0)
 				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
-				{Language: "sql", Value: "name: STRING (nullable)"},
-				lsp.RawMarkedString("name description"),
+				{
+					Language: "sql",
+					Value:    "key: STRING",
+				},
 			},
 		},
-		"hover dataset-qualified table": {
+		"hover WITH clause reading a dataset-qualified table": {
 			files: map[lsp.DocumentURI]string{
-				"file1.sql": "SELECT name FROM dataset.|table",
+				"file1.sql": "WITH data AS (SELECT id AS hoge FROM dataset.table)\nSELECT * FROM data|",
 			},
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
 				ctrl := gomock.NewController(t)
 				bqClient := mock_bigquery.NewMockClient(ctrl)
 				bqClient.EXPECT().GetDefaultProject().Return("project").AnyTimes()
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
-					FullID:           "project:dataset.table",
-					Description:      "table description",
-					CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
-					LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+					FullID: "project:dataset.table",
 					Schema: bq.Schema{
 						{
-							Name:        "name",
-							Type:        bq.StringFieldType,
-							Description: "name description",
+							Name: "id",
+							Type: bq.IntegerFieldType,
 						},
 					},
 				}, nil).MinTimes(0)
 				return bqClient
 			},
 			expectMarkedStrings: []lsp.MarkedString{
-				lsp.RawMarkedString(`Table: project.dataset.table
-table description
-
-Table info
-
-* Created: 2023-06-17 00:00:00
-* Last modified: 2023-06-17 00:00:00
-
-Storage info
-
-* Number of rows: 0
-* Total logical bytes: 0 bytes
-
-[Docs](https://console.cloud.google.com/bigquery?project=project&ws=!1m5!1m4!4m3!1sproject!2sdataset!3stable)
-`),
-				lsp.RawMarkedString("| Name | Type | Mode | Description |\n| --- | --- | --- | --- |\n| name | STRING | NULLABLE | name description |\n"),
+				lsp.RawMarkedString("| Name | Type |\n| --- | --- |\n| hoge | INT64 |\n"),
+				{
+					Language: "sql",
+					Value:    "WITH data AS (\nSELECT id AS hoge FROM dataset.table\n)",
+				},
 			},
 		},
 		"hover column with alias": {
