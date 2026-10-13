@@ -423,15 +423,45 @@ func (p *Project) getSelectColumnNodeToAnalyzedOutputColumnNode(output *googlesq
 	return nil, fmt.Errorf("failed to find column info")
 }
 
+// findProjectScanForSelect finds the ProjectScan of the SELECT ending at
+// selectEnd among scanNode and its inputs. A pipe SELECT followed by other
+// pipe operators is an input of their scans, and only the outermost scan of a
+// pipe query has a parse location, so a ProjectScan without one is used only
+// when it is the sole candidate.
+func findProjectScanForSelect(scanNode googlesql.ResolvedScanNode, selectEnd int) (*googlesql.ResolvedProjectScan, bool) {
+	var candidates []*googlesql.ResolvedProjectScan
+	for scanNode != nil {
+		if projectScan, ok := scanNode.(*googlesql.ResolvedProjectScan); ok {
+			loc, _ := projectScan.GetParseLocationRangeOrNULL()
+			if loc == nil {
+				candidates = append(candidates, projectScan)
+			} else if file.ParseLocEnd(loc) == selectEnd {
+				return projectScan, true
+			}
+		}
+		withInput, ok := scanNode.(interface {
+			InputScan() (googlesql.ResolvedScanNode, error)
+		})
+		if !ok {
+			break
+		}
+		next, err := withInput.InputScan()
+		if err != nil {
+			break
+		}
+		scanNode = next
+	}
+	if len(candidates) != 1 {
+		return nil, false
+	}
+	return candidates[0], true
+}
+
 // getSelectColumnByPosition finds the column by its position in the select
 // list. Pipe operators such as RENAME and AS change the names that SELECT
 // refers to without creating new columns, so the name does not always match
 // the resolved column.
 func getSelectColumnByPosition(scanNode googlesql.ResolvedScanNode, column *googlesql.ASTSelectColumn) (*googlesql.ResolvedColumn, bool) {
-	projectScan, ok := scanNode.(*googlesql.ResolvedProjectScan)
-	if !ok {
-		return nil, false
-	}
 	parent, err := column.Parent()
 	if err != nil {
 		return nil, false
@@ -445,10 +475,20 @@ func getSelectColumnByPosition(scanNode googlesql.ResolvedScanNode, column *goog
 	if err != nil {
 		return nil, false
 	}
-	if selectNode, ok := selectParent.(*googlesql.ASTSelect); ok {
-		if selectAs, err := selectNode.SelectAs(); err != nil || selectAs != nil {
-			return nil, false
-		}
+	selectNode, ok := selectParent.(*googlesql.ASTSelect)
+	if !ok {
+		return nil, false
+	}
+	if selectAs, err := selectNode.SelectAs(); err != nil || selectAs != nil {
+		return nil, false
+	}
+	selectLoc, err := selectNode.GetParseLocationRange()
+	if err != nil || selectLoc == nil {
+		return nil, false
+	}
+	projectScan, ok := findProjectScanForSelect(scanNode, file.ParseLocEnd(selectLoc))
+	if !ok {
+		return nil, false
 	}
 	columnLoc, err := column.GetParseLocationRange()
 	if err != nil || columnLoc == nil {
