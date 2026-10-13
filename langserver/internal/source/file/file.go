@@ -759,6 +759,35 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 	return fixedSrc, []FixOffset{fixOffset}
 }
 
+// addInformationToNotBoolClauseError fills IncompleteColumnName only when the whole
+// WHERE/ON condition is a bare path, because only then is the user plausibly mid-way
+// through typing a column name (as opposed to e.g. `WHERE 1 + 1`).
+func addInformationToNotBoolClauseError(src string, node googlesql.ASTNode, parsedErr Error) Error {
+	errOffset, ok := errorByteOffset(src, parsedErr.Position)
+	if !ok {
+		return parsedErr
+	}
+
+	var expr googlesql.ASTExpressionNode
+	if where, ok := SearchAstNode[*googlesql.ASTWhereClause](node, errOffset); ok {
+		expr, _ = where.Expression()
+	} else if on, ok := SearchAstNode[*googlesql.ASTOnClause](node, errOffset); ok {
+		expr, _ = on.Expression()
+	}
+	pathExpr, ok := expr.(*googlesql.ASTPathExpression)
+	if !ok {
+		return parsedErr
+	}
+
+	start, end := locStart(pathExpr), locEnd(pathExpr)
+	if start != errOffset || end < start || end > len(src) {
+		return parsedErr
+	}
+	parsedErr.TermLength = end - start
+	parsedErr.IncompleteColumnName = src[start:end]
+	return parsedErr
+}
+
 func addInformationToNotExistInStructError(src string, parsedErr Error) Error {
 	ind := strings.Index(parsedErr.Msg, "Field name ")
 	if ind == -1 {

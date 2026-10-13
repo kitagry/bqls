@@ -342,6 +342,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			isNotFoundInsideError := strings.Contains(pErr.Msg, "not found inside")
 			isTableNotFoundError := strings.Contains(pErr.Msg, "Table not found: ")
 			isEmptyPipeAggregateError := strings.Contains(pErr.Msg, "Pipe AGGREGATE cannot have both an empty aggregate list and an empty GROUP BY")
+			isNotBoolClauseError := strings.Contains(pErr.Msg, "clause should return type BOOL")
 
 			// add information to Error
 			switch {
@@ -356,6 +357,8 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				table := strings.TrimSpace(pErr.Msg[ind+len("Table not found: "):])
 				pErr.TermLength = len(table)
 				pErr.IncompleteColumnName = table
+			case isNotBoolClauseError:
+				pErr = addInformationToNotBoolClauseError(fixedSrc, s, pErr)
 			}
 
 			// fix src
@@ -387,6 +390,12 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 
 			if isEmptyPipeAggregateError {
 				fixedSrc, fo = fixIncompletePipeOperator(fixedSrc, pErr)
+			}
+
+			// Typing an existing non-BOOL column name (e.g. `WHERE id` while aiming for `id_alias`)
+			// fails analysis without an "Unrecognized name" error, so it needs its own recovery.
+			if isNotBoolClauseError && pErr.IncompleteColumnName != "" {
+				fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
 			}
 
 			if !skipError {

@@ -118,6 +118,54 @@ func TestProject_ParseFile(t *testing.T) {
 				},
 			},
 		},
+		"parse non-bool column in where clause": {
+			file: "SELECT * FROM `project.dataset.table` WHERE id",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg: "WHERE clause should return type BOOL, but returns INT64",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 44,
+					},
+					TermLength:           2,
+					IncompleteColumnName: "id",
+				},
+			},
+		},
+		"parse non-bool column in join on clause": {
+			file: "SELECT * FROM `project.dataset.table` t1 JOIN `project.dataset.table` t2 ON t1.id",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg: "JOIN ON clause should return type BOOL, but returns INT64",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 76,
+					},
+					TermLength:           5,
+					IncompleteColumnName: "t1.id",
+				},
+			},
+		},
 		"parse SELECT list must not be empty error file": {
 			file: "SELECT FROM `project.dataset.table`",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -978,6 +1026,28 @@ func TestAnalyzer_SnapshotParameterPreservesTypeErrors(t *testing.T) {
 	defer literal.Close()
 	if len(literal.Errors) != 1 || literal.Errors[0].Msg != "FOR SYSTEM_TIME AS OF must be of type TIMESTAMP but was of type INT64" {
 		t.Fatalf("expected an invalid snapshot literal to fail, got %v", literal.Errors)
+	}
+}
+
+func TestAnalyzer_NotBoolWhereClauseWithNonPathExpression(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+	bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+		Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
+		AnyTimes()
+	analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+	got := analyzer.ParseFile("uri", "SELECT * FROM `project.dataset.table` WHERE id + 1")
+	defer got.Close()
+
+	expected := []file.Error{
+		{
+			Msg:      "WHERE clause should return type BOOL, but returns INT64",
+			Position: lsp.Position{Line: 0, Character: 44},
+		},
+	}
+	if diff := cmp.Diff(expected, got.Errors, cmpopts.IgnoreUnexported()); diff != "" {
+		t.Errorf("ParseFile result diff (-expect, +got)\n%s", diff)
 	}
 }
 
