@@ -933,3 +933,263 @@ func TestAnalyzer_ParseFileDoesNotPanicOnLoneCarriageReturn(t *testing.T) {
 		t.Errorf("ParseFile result diff (-expect, +got)\n%s", diff)
 	}
 }
+
+func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
+	tests := map[string]struct {
+		file               string
+		bqTableMetadataMap map[string]*bq.TableMetadata
+
+		expectedErrs []file.Error
+		// Only successfully analyzed non-script statements produce outputs.
+		expectedRNodeLen int
+	}{
+		"SET with function call": {
+			file:             "DECLARE x DATE;\nSET x = CURRENT_DATE();",
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 0,
+		},
+		"SET with subquery": {
+			file: "DECLARE x INT64;\nSET x = (SELECT MAX(id) FROM `project.dataset.table`);",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 0,
+		},
+		"SET with unknown column in subquery": {
+			file: "DECLARE x INT64;\nSET x = (SELECT MAX(unknown_column) FROM `project.dataset.table`);",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg:                  "Unrecognized name: unknown_column",
+					Position:             lsp.Position{Line: 1, Character: 20},
+					TermLength:           14,
+					IncompleteColumnName: "unknown_column",
+				},
+			},
+			expectedRNodeLen: 0,
+		},
+		"SET referencing declared variable": {
+			file:             "DECLARE y INT64 DEFAULT 1;\nDECLARE x INT64;\nSET x = y + 1;",
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 0,
+		},
+		"SET struct assignment with unknown function": {
+			file: "DECLARE a INT64;\nDECLARE b INT64;\nSET (a, b) = (1, UNKNOWN_FUNC());",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 2, Character: 17},
+				},
+			},
+			expectedRNodeLen: 0,
+		},
+		"SET parameter with unknown function": {
+			file: "SET @p = UNKNOWN_FUNC();",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 0, Character: 9},
+				},
+			},
+			expectedRNodeLen: 0,
+		},
+		"control flow statements": {
+			file: "IF TRUE THEN SELECT 1; ELSEIF FALSE THEN SELECT 2; ELSE SELECT 3; END IF;\n" +
+				"BEGIN SELECT 1; EXCEPTION WHEN ERROR THEN RAISE USING MESSAGE = 'x'; END;\n" +
+				"WHILE TRUE DO BREAK; CONTINUE; END WHILE;\n" +
+				"LOOP LEAVE; END LOOP;\n" +
+				"REPEAT SELECT 1; UNTIL TRUE END REPEAT;\n" +
+				"FOR r IN (SELECT 1 AS a) DO SELECT 1; END FOR;\n" +
+				"CASE WHEN TRUE THEN SELECT 1; END CASE;\n" +
+				"RETURN;",
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 7,
+		},
+		"broken SELECT inside IF": {
+			file: "IF TRUE THEN\n  SELECT UNKNOWN_FUNC();\nEND IF;",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 1, Character: 9},
+				},
+			},
+			expectedRNodeLen: 0,
+		},
+		"broken SELECT inside BEGIN END": {
+			file: "BEGIN\n  SELECT UNKNOWN_FUNC();\nEND;",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 1, Character: 9},
+				},
+			},
+			expectedRNodeLen: 0,
+		},
+		"broken SELECT inside WHILE": {
+			file: "WHILE TRUE DO\n  SELECT UNKNOWN_FUNC();\nEND WHILE;",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 1, Character: 9},
+				},
+			},
+			expectedRNodeLen: 0,
+		},
+		// SET @@system_variable is supported by the resolver, so it must still
+		// be analyzed rather than skipped like other SET statements.
+		"SET system variable is still analyzed": {
+			file: "SET @@dataset_id = 'foo';",
+			expectedErrs: []file.Error{
+				{
+					Msg:                  "Unrecognized name: @@dataset_id",
+					Position:             lsp.Position{Line: 0, Character: 4},
+					TermLength:           12,
+					IncompleteColumnName: "@@dataset_id",
+				},
+			},
+			expectedRNodeLen: 0,
+		},
+		// While typing a SET, the parser error and its recovery attempt are
+		// reported just like for other incomplete statements.
+		"incomplete SET with trailing space": {
+			file: "DECLARE x INT64;\nSET x = ",
+			expectedErrs: []file.Error{
+				{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Line: 1, Character: 7}},
+				{Msg: "Syntax error: Unexpected keyword SELECT", Position: lsp.Position{Line: 1, Character: 8}},
+			},
+			expectedRNodeLen: 0,
+		},
+		"incomplete SET without expression": {
+			file: "DECLARE x INT64;\nSET x =",
+			expectedErrs: []file.Error{
+				{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Line: 1, Character: 7}},
+				{Msg: "Syntax error: Unexpected keyword SELECT", Position: lsp.Position{Line: 1, Character: 8}},
+			},
+			expectedRNodeLen: 0,
+		},
+		"incomplete SET without equal sign": {
+			file: "DECLARE x INT64;\nSET x",
+			expectedErrs: []file.Error{
+				{Msg: "Syntax error: Expected \",\" or \"=\" but got end of script", Position: lsp.Position{Line: 1, Character: 5}},
+			},
+			expectedRNodeLen: 0,
+		},
+		"incomplete SET subquery": {
+			file: "DECLARE x INT64;\nSET x = (SELECT ",
+			expectedErrs: []file.Error{
+				{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Line: 1, Character: 15}},
+				{Msg: "Syntax error: Unexpected keyword SELECT", Position: lsp.Position{Line: 1, Character: 16}},
+			},
+			expectedRNodeLen: 0,
+		},
+		"incomplete SET struct assignment": {
+			file: "DECLARE a INT64;\nDECLARE b INT64;\nSET (a, b) = ",
+			expectedErrs: []file.Error{
+				{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Line: 2, Character: 12}},
+				{Msg: "Syntax error: Unexpected keyword SELECT", Position: lsp.Position{Line: 2, Character: 13}},
+			},
+			expectedRNodeLen: 0,
+		},
+		"incomplete SET parameter": {
+			file: "SET @p = ",
+			expectedErrs: []file.Error{
+				{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Line: 0, Character: 8}},
+				{Msg: "Syntax error: Unexpected keyword SELECT", Position: lsp.Position{Line: 0, Character: 9}},
+			},
+			expectedRNodeLen: 0,
+		},
+		"SET nested in IF with unknown function": {
+			file: "DECLARE x INT64;\nIF TRUE THEN\n  SET x = UNKNOWN_FUNC();\nEND IF;",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 2, Character: 10},
+				},
+			},
+			expectedRNodeLen: 0,
+		},
+		"SET subquery referencing declared variable": {
+			file: "DECLARE y INT64 DEFAULT 1;\nDECLARE x INT64;\nSET x = (SELECT y + id FROM `project.dataset.table`);",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 0,
+		},
+		// Error positions are byte offsets within the line, like errors in
+		// other statements; "あ" is 3 bytes and a tab is 1 byte.
+		"SET error after multibyte identifier": {
+			file: "DECLARE `あ` INT64;\nSET `あ` = UNKNOWN_FUNC();",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 1, Character: 12},
+				},
+			},
+			expectedRNodeLen: 0,
+		},
+		"SET error after tab": {
+			file: "DECLARE x INT64;\nSET\tx = UNKNOWN_FUNC();",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 1, Character: 8},
+				},
+			},
+			expectedRNodeLen: 0,
+		},
+		"SET indented with tab referencing declared variable": {
+			file:             "DECLARE my_variable INT64;\nDECLARE x INT64;\n\tSET x = my_variable;",
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 0,
+		},
+		"SET in WHILE indented with tab referencing loop variable": {
+			file:             "DECLARE i INT64 DEFAULT 0;\nWHILE i < 3 DO\n\tSET i = i + 1;\nEND WHILE;",
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 0,
+		},
+		"SET with unknown function": {
+			file: "DECLARE x DATE;\nSET x = UNKNOWN_FUNC();",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 1, Character: 8},
+				},
+			},
+			expectedRNodeLen: 0,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			for tablePath, schema := range tt.bqTableMetadataMap {
+				tablePathSplitted := strings.Split(tablePath, ".")
+				if len(tablePathSplitted) != 3 {
+					t.Fatalf("table path length should be 3, got %s", tablePath)
+				}
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), tablePathSplitted[0], tablePathSplitted[1], tablePathSplitted[2]).Return(schema, nil).MinTimes(0)
+			}
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
+			if diff := cmp.Diff(tt.expectedErrs, got.Errors, cmpopts.IgnoreUnexported()); diff != "" {
+				t.Errorf("ParseFile result diff (-expect, +got)\n%s", diff)
+			}
+			if len(got.RNode) != tt.expectedRNodeLen {
+				t.Errorf("expected %d analyzer outputs, got %d", tt.expectedRNodeLen, len(got.RNode))
+			}
+		})
+	}
+}

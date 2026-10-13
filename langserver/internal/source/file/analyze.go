@@ -146,6 +146,58 @@ func (a *Analyzer) AnalyzeStatement(rawText string, stmt googlesql.ASTStatementN
 	return googlesql.AnalyzeStatementFromParserAST(stmt, opts, rawText, catalog.CatalogNode(), catalog.TypeFactory())
 }
 
+// analyzeAssignmentExpression analyzes the right-hand side of a SET statement,
+// which the resolver cannot analyze as a statement.
+func (a *Analyzer) analyzeAssignmentExpression(rawText string, stmt googlesql.ASTStatementNode, catalog *Catalog) error {
+	var expr googlesql.ASTExpressionNode
+	var err error
+	switch n := stmt.(type) {
+	case *googlesql.ASTSingleAssignment:
+		expr, err = n.Expression()
+	case *googlesql.ASTAssignmentFromStruct:
+		expr, err = n.StructExpression()
+	case *googlesql.ASTParameterAssignment:
+		expr, err = n.Expression()
+	default:
+		return nil
+	}
+	if err != nil || expr == nil {
+		return err
+	}
+	loc, err := expr.GetParseLocationRange()
+	if err != nil {
+		return err
+	}
+	start, end := parseLocStart(loc), parseLocEnd(loc)
+	if start < 0 || end < start || end > len(rawText) {
+		return nil
+	}
+
+	opts, err := a.newAnalyzerOptions(catalog.langOpts)
+	if err != nil {
+		return err
+	}
+	_, err = googlesql.AnalyzeExpression(maskOutside(rawText, start, end), opts, catalog.CatalogNode(), catalog.TypeFactory())
+	return err
+}
+
+// maskOutside blanks everything except rawText[start:end]. Each character
+// becomes one space and line breaks and tabs are kept, so the masked text has
+// the same code-point/tab column layout as rawText in GoogleSQL's eyes and
+// reported columns can be converted to byte offsets against rawText.
+func maskOutside(rawText string, start, end int) string {
+	var b strings.Builder
+	b.Grow(len(rawText))
+	for i, r := range rawText {
+		if (i >= start && i < end) || r == '\n' || r == '\r' || r == '\t' {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteByte(' ')
+	}
+	return b.String()
+}
+
 func (a *Analyzer) parseScript(src string) (*googlesql.ASTScript, error) {
 	// Create a fresh LanguageOptions for parsing to avoid WASM object aliasing
 	// issues when the same pointer is used for both parser and analyzer options.
@@ -238,6 +290,10 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				continue
 			}
 
+			if isScriptControlStatement(kind) && !isAssignmentStatement(kind) {
+				continue
+			}
+
 			if kind == googlesql.ASTNodeKindAstCreateFunctionStatement {
 				fnNode := s.(*googlesql.ASTCreateFunctionStatement)
 				newFunc, err := a.createFunctionTypes(fnNode, fixedSrc, catalog)
@@ -258,9 +314,18 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				}
 			}
 
-			output, err := a.AnalyzeStatement(fixedSrc, s, catalog)
+			var output *googlesql.AnalyzerOutput
+			var err error
+			if isAssignmentStatement(kind) {
+				err = a.analyzeAssignmentExpression(fixedSrc, s, catalog)
+			} else {
+				output, err = a.AnalyzeStatement(fixedSrc, s, catalog)
+			}
 			if err == nil {
-				rnode = append(rnode, output)
+				// Assignments are not statement outputs, so they never enter RNode.
+				if output != nil {
+					rnode = append(rnode, output)
+				}
 				continue
 			}
 
@@ -348,6 +413,42 @@ func collectStatements(node *googlesql.ASTScript) []googlesql.ASTStatementNode {
 		return nil
 	})
 	return stmts
+}
+
+// isScriptControlStatement reports whether the statement is a procedural
+// script statement. The GoogleSQL resolver rejects these with "Statement not
+// supported", although BigQuery accepts them.
+func isScriptControlStatement(kind googlesql.ASTNodeKind) bool {
+	if isAssignmentStatement(kind) {
+		return true
+	}
+	switch kind {
+	case googlesql.ASTNodeKindAstIfStatement,
+		googlesql.ASTNodeKindAstCaseStatement,
+		googlesql.ASTNodeKindAstBeginEndBlock,
+		googlesql.ASTNodeKindAstWhileStatement,
+		googlesql.ASTNodeKindAstRepeatStatement,
+		googlesql.ASTNodeKindAstForInStatement,
+		googlesql.ASTNodeKindAstBreakStatement,
+		googlesql.ASTNodeKindAstContinueStatement,
+		googlesql.ASTNodeKindAstReturnStatement,
+		googlesql.ASTNodeKindAstRaiseStatement:
+		return true
+	}
+	return false
+}
+
+// isAssignmentStatement reports whether the statement is a SET of script
+// variables or query parameters. SET @@system_variable is excluded because
+// the resolver supports it.
+func isAssignmentStatement(kind googlesql.ASTNodeKind) bool {
+	switch kind {
+	case googlesql.ASTNodeKindAstSingleAssignment,
+		googlesql.ASTNodeKindAstAssignmentFromStruct,
+		googlesql.ASTNodeKindAstParameterAssignment:
+		return true
+	}
+	return false
 }
 
 func (a *Analyzer) GetTableMetadataFromPath(ctx context.Context, path string) (*bq.TableMetadata, error) {
