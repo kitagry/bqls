@@ -76,7 +76,7 @@ func TestCatalog_AddTable(t *testing.T) {
 			expectTableName: "project.dataset.table*",
 			expectColumns: []column{
 				{Name: "name", Writable: true},
-				{Name: "_TABLE_SUFFIX", Writable: true},
+				{Name: "_TABLE_SUFFIX", Pseudo: true},
 			},
 		},
 		"partitiontime table": {
@@ -312,6 +312,52 @@ func TestCatalog_PartitionPseudoColumns(t *testing.T) {
 		}
 		if diff := cmp.Diff([]string{"Cannot INSERT value on non-writable column: _PARTITIONDATE"}, msgs); diff != "" {
 			t.Errorf("errors diff (-want +got):\n%s", diff)
+		}
+	})
+}
+
+func TestCatalog_TableSuffixPseudoColumn(t *testing.T) {
+	parse := func(t *testing.T, src string) file.ParsedFile {
+		t.Helper()
+		ctrl := gomock.NewController(t)
+		bqClient := mock_bigquery.NewMockClient(ctrl)
+		bqClient.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+		bqClient.EXPECT().GetTableMetadata(gomock.Any(), "p", "d", "t_*").Return(&bq.TableMetadata{
+			Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+		}, nil).AnyTimes()
+		return file.NewAnalyzer(logrus.New(), bqClient).ParseFile("file:///a.sql", src)
+	}
+
+	t.Run("referenced by name", func(t *testing.T) {
+		parsed := parse(t, "SELECT _TABLE_SUFFIX FROM `p.d.t_*` WHERE _TABLE_SUFFIX = '20200101'")
+		if len(parsed.Errors) > 0 {
+			t.Errorf("unexpected errors: %v", parsed.Errors)
+		}
+	})
+
+	t.Run("excluded from SELECT *", func(t *testing.T) {
+		parsed := parse(t, "SELECT * FROM `p.d.t_*`")
+		if len(parsed.Errors) > 0 {
+			t.Fatalf("unexpected errors: %v", parsed.Errors)
+		}
+		stmt, err := parsed.RNode[0].ResolvedStatement()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cols, err := stmt.(*googlesql.ResolvedQueryStmt).OutputColumnList()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, c := range cols {
+			name, err := c.Name()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got = append(got, name)
+		}
+		if diff := cmp.Diff([]string{"x"}, got); diff != "" {
+			t.Errorf("SELECT * columns diff (-want +got):\n%s", diff)
 		}
 	})
 }
