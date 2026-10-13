@@ -768,11 +768,18 @@ func addInformationToNotBoolClauseError(src string, node googlesql.ASTNode, pars
 		return parsedErr
 	}
 
+	// The message names the failing clause; searching by it avoids matching an outer
+	// WHERE when the error is in a JOIN ON nested inside it (and vice versa).
 	var expr googlesql.ASTExpressionNode
-	if where, ok := SearchAstNode[*googlesql.ASTWhereClause](node, errOffset); ok {
-		expr, _ = where.Expression()
-	} else if on, ok := SearchAstNode[*googlesql.ASTOnClause](node, errOffset); ok {
-		expr, _ = on.Expression()
+	switch {
+	case strings.HasPrefix(parsedErr.Msg, "WHERE clause"):
+		if where, ok := SearchAstNode[*googlesql.ASTWhereClause](node, errOffset); ok {
+			expr, _ = where.Expression()
+		}
+	case strings.HasPrefix(parsedErr.Msg, "JOIN ON clause"):
+		if on, ok := SearchAstNode[*googlesql.ASTOnClause](node, errOffset); ok {
+			expr, _ = on.Expression()
+		}
 	}
 	pathExpr, ok := expr.(*googlesql.ASTPathExpression)
 	if !ok {
@@ -786,6 +793,18 @@ func addInformationToNotBoolClauseError(src string, node googlesql.ASTNode, pars
 	parsedErr.TermLength = end - start
 	parsedErr.IncompleteColumnName = src[start:end]
 	return parsedErr
+}
+
+// fixNotBoolClauseError replaces only the bare path itself; searching for an enclosing
+// binary expression (as fixErrorForWhereStatement does) could rewrite an outer one.
+func fixNotBoolClauseError(src string, parsedErr Error) (fixedSrc string, fixOffsets []FixOffset) {
+	start, ok := errorByteOffset(src, parsedErr.Position)
+	end := start + parsedErr.TermLength
+	if !ok || end > len(src) {
+		return src, nil
+	}
+	fixedSrc = src[:start] + "true" + src[end:]
+	return fixedSrc, []FixOffset{{Offset: start, Length: len("true") - parsedErr.TermLength}}
 }
 
 func addInformationToNotExistInStructError(src string, parsedErr Error) Error {

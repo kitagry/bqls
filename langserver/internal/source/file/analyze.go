@@ -392,10 +392,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				fixedSrc, fo = fixIncompletePipeOperator(fixedSrc, pErr)
 			}
 
-			// Typing an existing non-BOOL column name (e.g. `WHERE id` while aiming for `id_alias`)
-			// fails analysis without an "Unrecognized name" error, so it needs its own recovery.
+			// A partially typed name that already matches a non-BOOL column is not "Unrecognized".
 			if isNotBoolClauseError && pErr.IncompleteColumnName != "" {
-				fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
+				fixedSrc, fo = fixNotBoolClauseError(fixedSrc, pErr)
 			}
 
 			if !skipError {

@@ -1051,6 +1051,55 @@ func TestAnalyzer_NotBoolWhereClauseWithNonPathExpression(t *testing.T) {
 	}
 }
 
+func TestAnalyzer_NotBoolClauseRewritesOnlyBarePath(t *testing.T) {
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc   string
+		expectedFixOffsets []file.FixOffset
+	}{
+		"where clause": {
+			file:               "SELECT * FROM `project.dataset.table` WHERE id",
+			expectedFixedSrc:   "SELECT * FROM `project.dataset.table` WHERE true",
+			expectedFixOffsets: []file.FixOffset{{Offset: 44, Length: 2}},
+		},
+		"where clause in subquery compared by outer binary expression": {
+			file:               "SELECT * FROM `project.dataset.table` WHERE id = (SELECT 1 FROM `project.dataset.table` WHERE id)",
+			expectedFixedSrc:   "SELECT * FROM `project.dataset.table` WHERE id = (SELECT 1 FROM `project.dataset.table` WHERE true)",
+			expectedFixOffsets: []file.FixOffset{{Offset: 94, Length: 2}},
+		},
+		"join on clause in where subquery": {
+			file:               "SELECT * FROM `project.dataset.table` WHERE EXISTS(SELECT 1 FROM `project.dataset.table` a JOIN `project.dataset.table` b ON a.id)",
+			expectedFixedSrc:   "SELECT * FROM `project.dataset.table` WHERE EXISTS(SELECT 1 FROM `project.dataset.table` a JOIN `project.dataset.table` b ON true)",
+			expectedFixOffsets: []file.FixOffset{{Offset: 125, Length: 0}},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
+				AnyTimes()
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			if diff := cmp.Diff(tt.expectedFixOffsets, got.FixOffsets); diff != "" {
+				t.Errorf("FixOffsets diff (-expect, +got)\n%s", diff)
+			}
+			if len(got.RNode) == 0 {
+				t.Errorf("failed to analyze")
+			}
+		})
+	}
+}
+
 func TestProject_ParseFileWithIncompleteTable(t *testing.T) {
 	tests := map[string]struct {
 		file                   string
