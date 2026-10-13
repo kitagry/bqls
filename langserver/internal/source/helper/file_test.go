@@ -31,6 +31,20 @@ func TestGetLspPosition(t *testing.T) {
 			expectedPath: "file.sql",
 			expectedPos:  lsp.Position{Line: 1, Character: 4},
 		},
+		"keeps files without position in multiple files": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT * FROM a",
+				"b.sql": "SELECT |* FROM b",
+				"c.sql": "SELECT * FROM c",
+			},
+			expectedFiles: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT * FROM a",
+				"b.sql": "SELECT * FROM b",
+				"c.sql": "SELECT * FROM c",
+			},
+			expectedPath: "b.sql",
+			expectedPos:  lsp.Position{Line: 0, Character: 7},
+		},
 		"no position": {
 			files:         map[lsp.DocumentURI]string{"file.sql": "SELECT * FROM table"},
 			expectedFiles: nil,
