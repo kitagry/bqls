@@ -49,6 +49,22 @@ func TestRun_StdioFlag(t *testing.T) {
 	}
 }
 
+func TestRun_LintSubcommand(t *testing.T) {
+	origStderr := os.Stderr
+	t.Cleanup(func() { os.Stderr = origStderr })
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { devNull.Close() })
+	os.Stderr = devNull
+
+	// Without inputs, lint mode reports a usage error instead of starting the language server.
+	if got := run([]string{"lint"}); got != 2 {
+		t.Errorf("run([]string{\"lint\"}) = %v, want 2", got)
+	}
+}
+
 func TestRun_Exit(t *testing.T) {
 	shutdown := `{"jsonrpc":"2.0","id":1,"method":"shutdown"}`
 	exit := `{"jsonrpc":"2.0","method":"exit"}`
