@@ -1302,6 +1302,58 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 			expectedErrs:     []file.Error{},
 			expectedRNodeLen: 7,
 		},
+		"FOR loop variable in body": {
+			file:             "FOR r IN (SELECT 1 AS a) DO\n  SELECT r.a;\nEND FOR;",
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 1,
+		},
+		"FOR loop variable over table query": {
+			file: "FOR r IN (SELECT id, name FROM `project.dataset.table`) DO\n  INSERT INTO `project.dataset.table` (id, name) VALUES (r.id, r.name);\nEND FOR;",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+						{Name: "name", Type: bq.StringFieldType},
+					},
+				},
+			},
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 1,
+		},
+		"FOR loop variable in SET": {
+			file:             "DECLARE x INT64;\nFOR r IN (SELECT 1 AS a) DO\n  SET x = r.a;\nEND FOR;",
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 0,
+		},
+		"nested FOR loop variables": {
+			file:             "FOR r IN (SELECT 1 AS a) DO\n  FOR s IN (SELECT r.a AS b) DO\n    FOR r IN (SELECT 'x' AS c) DO\n      SELECT r.c, s.b;\n    END FOR;\n  END FOR;\nEND FOR;",
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 1,
+		},
+		"FOR loop variable with unknown field": {
+			file: "FOR r IN (SELECT 1 AS a) DO\n  SELECT r.b;\nEND FOR;",
+			expectedErrs: []file.Error{
+				{
+					Msg:                  "Field name b does not exist in STRUCT<a INT64>",
+					Position:             lsp.Position{Line: 1, Character: 11},
+					TermLength:           1,
+					IncompleteColumnName: "r.b",
+				},
+			},
+			expectedRNodeLen: 1,
+		},
+		"FOR loop variable is out of scope after the loop": {
+			file: "FOR r IN (SELECT 1 AS a) DO\n  SELECT 1;\nEND FOR;\nSELECT r.a;",
+			expectedErrs: []file.Error{
+				{
+					Msg:                  "Unrecognized name: r",
+					Position:             lsp.Position{Line: 3, Character: 7},
+					TermLength:           1,
+					IncompleteColumnName: "r",
+				},
+			},
+			expectedRNodeLen: 2,
+		},
 		"broken SELECT inside IF": {
 			file: "IF TRUE THEN\n  SELECT UNKNOWN_FUNC();\nEND IF;",
 			expectedErrs: []file.Error{
