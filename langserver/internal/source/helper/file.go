@@ -18,7 +18,7 @@ func GetLspPosition(files map[lsp.DocumentURI]string) (formattedFiles map[lsp.Do
 			path = filePath
 			position = IndexToPosition(file, ind)
 		}
-		formattedFiles[path] = file
+		formattedFiles[filePath] = file
 	}
 
 	if path == "" {
