@@ -212,7 +212,7 @@ func TestPartitionFilter(t *testing.T) {
 			src:  "FROM p.d.by_col",
 			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
 		},
-		"pipe FROM backquoted path with alias only": {
+		"pipe FROM backquoted path with alias bare": {
 			src:  "FROM `p.d.by_col` AS t",
 			want: []report{{sub: "`p.d.by_col`", table: "p.d.by_col", columns: "`dt`"}},
 		},
@@ -228,11 +228,39 @@ func TestPartitionFilter(t *testing.T) {
 			src:  "FROM (SELECT x FROM p.d.by_col)",
 			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
 		},
+		"pipe FROM in a CTE": {
+			src:  "WITH c AS (FROM p.d.by_col) SELECT * FROM c",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM with alias in a CTE": {
+			src:  "WITH c AS (FROM p.d.by_col AS t) SELECT * FROM c",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM a parenthesized FROM": {
+			src:  "FROM (FROM p.d.by_col)",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM an aliased parenthesized FROM": {
+			src:  "FROM (FROM p.d.by_col AS a) AS b",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM a parenthesized FROM joined with another table": {
+			src:  "FROM (FROM p.d.plain) AS a |> JOIN p.d.by_col USING (x)",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM followed by AS": {
+			src:  "FROM p.d.by_col |> AS t",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"pipe FROM with time travel": {
+			src:  "FROM p.d.by_col FOR SYSTEM_TIME AS OF CURRENT_TIMESTAMP()",
+			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
 		"pipe FROM followed by SELECT": {
 			src:  "FROM p.d.by_col |> SELECT x",
 			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},
 		},
-		"pipe FROM backquoted path with alias": {
+		"pipe FROM backquoted path with alias followed by SELECT": {
 			src:  "FROM `p.d.by_col` AS t |> SELECT x",
 			want: []report{{sub: "`p.d.by_col`", table: "p.d.by_col", columns: "`dt`"}},
 		},
