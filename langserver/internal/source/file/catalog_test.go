@@ -474,9 +474,11 @@ func TestCatalog_TwoPartTableNames(t *testing.T) {
 		"dataset named like a project, 2-part first": "SELECT a.x FROM other.t a JOIN other.x.t b ON a.x = b.x",
 		"repeated unquoted":                          "SELECT a.x FROM d.t a JOIN d.t b ON a.x = b.x",
 		"repeated backticked":                        "SELECT a.x FROM `d.t` a JOIN `d.t` b ON a.x = b.x",
-		"mixed case":                                 "SELECT a.x FROM d.t a JOIN D.T b ON a.x = b.x",
-		"multiple statements":                        "SELECT x FROM d.t;\nSELECT x FROM d.t;",
-		"DML target also read":                       "INSERT d.t (x) SELECT x FROM d.t",
+		// The mock has no p.D.T, so D.T can only resolve through the d.t alias.
+		// When both casings exist, registering p.D.T itself traps (#435).
+		"mixed case resolves via alias when the other casing does not exist": "SELECT a.x FROM d.t a JOIN D.T b ON a.x = b.x",
+		"multiple statements":  "SELECT x FROM d.t;\nSELECT x FROM d.t;",
+		"DML target also read": "INSERT d.t (x) SELECT x FROM d.t",
 	}
 	for name, src := range tests {
 		t.Run(name, func(t *testing.T) {
