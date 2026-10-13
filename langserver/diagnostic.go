@@ -39,6 +39,7 @@ func (h *Handler) scheduleDiagnostics() {
 			defer func() {
 				if err := recover(); err != nil {
 					h.logger.Errorf("panic in diagnostics: %v", err)
+					h.clearDiagnosticsAfterPanic(ctx, uri)
 				}
 			}()
 			diagnostics, err := h.diagnose(ctx, uri)
@@ -82,6 +83,7 @@ func (h *Handler) scheduleDryRun() {
 			defer func() {
 				if err := recover(); err != nil {
 					h.logger.Errorf("panic in dryrun: %v", err)
+					h.clearDiagnosticsAfterPanic(ctx, uri)
 				}
 			}()
 
@@ -108,6 +110,18 @@ func (h *Handler) scheduleDryRun() {
 				h.logger.Debugf(`failed to send "window/showMessageRequest": %v`, err)
 			}
 		}()
+	}
+}
+
+// clearDiagnosticsAfterPanic drops whatever was published before, since
+// diagnostics from an earlier version of the file would point at stale
+// positions and hide that analysis is currently failing.
+func (h *Handler) clearDiagnosticsAfterPanic(ctx context.Context, uri lsp.DocumentURI) {
+	if ctx.Err() != nil {
+		return // superseded; clearing could wipe the newer request's result
+	}
+	if err := h.publishDiagnostics(ctx, uri, []lsp.Diagnostic{}); err != nil {
+		h.logger.Errorf(`failed to send "textDocument/publishDiagnostics" for %s: %v`, uri, err)
 	}
 }
 

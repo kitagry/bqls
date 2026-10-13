@@ -110,13 +110,21 @@ func (h *Handler) setupByInitializeParams() error {
 }
 
 func (h *Handler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	jsonrpc2.HandlerWithError(h.handleWithRecover).Handle(ctx, conn, req)
+}
+
+// handleWithRecover turns a panic into an InternalError so that
+// HandlerWithError still replies and the client doesn't wait forever.
+func (h *Handler) handleWithRecover(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
 	defer func() {
-		if err := recover(); err != nil {
-			h.logger.Errorf("panic! %#v", err)
+		if r := recover(); r != nil {
+			h.logger.Errorf("panic in %s: %v", req.Method, r)
 			h.logger.Errorf("stack trace: %s", string(debug.Stack()))
+			result = nil
+			err = &jsonrpc2.Error{Code: jsonrpc2.CodeInternalError, Message: fmt.Sprintf("internal error while handling %s: %v", req.Method, r)}
 		}
 	}()
-	jsonrpc2.HandlerWithError(h.handle).Handle(ctx, conn, req)
+	return h.handle(ctx, conn, req)
 }
 
 func (h *Handler) Close() error {
