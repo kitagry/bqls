@@ -145,6 +145,13 @@ func TestPartitionFilter(t *testing.T) {
 		"filtered by WHERE": {
 			src: "SELECT x FROM p.d.by_col WHERE dt = '2020-01-01'",
 		},
+		"unfiltered dataset-qualified table": {
+			src:  "SELECT x FROM d.by_col",
+			want: []report{{sub: "d.by_col", table: "p.d.by_col", columns: "`dt`"}},
+		},
+		"filtered dataset-qualified table": {
+			src: "SELECT x FROM d.by_col WHERE dt = '2020-01-01'",
+		},
 		"filter on a different column": {
 			src:  "SELECT x FROM p.d.by_col WHERE x = 1",
 			want: []report{{sub: "p.d.by_col", table: "p.d.by_col", columns: "`dt`"}},

@@ -341,6 +341,61 @@ func TestProject_CompleteColumns(t *testing.T) {
 				},
 			},
 		},
+		"Complete incomplete column of dataset-qualified table": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT i| FROM dataset.table",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Type:        bq.IntegerFieldType,
+							Description: "id description",
+						},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
+					TypedPrefix: "i",
+				},
+			},
+		},
+		"Complete column with alias of dataset-qualified table": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT t.| FROM dataset.table AS t",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name:        "id",
+							Description: "id description",
+							Type:        bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER\nid description",
+					},
+				},
+			},
+		},
 		"Complete incomplete column2": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT id, i| id FROM `project.dataset.table`",
@@ -1413,6 +1468,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 				bqClient.EXPECT().GetTableMetadata(gomock.Any(), tablePathSplitted[0], tablePathSplitted[1], tablePathSplitted[2]).Return(schema, nil).MinTimes(0)
 			}
 			bqClient.EXPECT().ListTables(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).MinTimes(0)
+			bqClient.EXPECT().GetDefaultProject().Return("project").AnyTimes()
 			logger := logrus.New()
 			logger.SetLevel(logrus.DebugLevel)
 

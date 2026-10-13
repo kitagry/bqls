@@ -458,3 +458,29 @@ func TestRun_TableMetadataFetchedOncePerTable(t *testing.T) {
 		t.Errorf("stdout = %q, want partition-filter findings", got.stdout)
 	}
 }
+
+func TestRun_PartitionFilterOnDatasetQualifiedTable(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeFiles(t, map[string]string{"a.sql": "SELECT x FROM d.t\n"})
+
+	ctrl := gomock.NewController(t)
+	c := mock_bigquery.NewMockClient(ctrl)
+	c.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+	c.EXPECT().Close().Return(nil).AnyTimes()
+	c.EXPECT().GetTableMetadata(gomock.Any(), "p", "d", "t").
+		Return(&bq.TableMetadata{
+			Schema:           bq.Schema{{Name: "x", Type: bq.IntegerFieldType}, {Name: "dt", Type: bq.DateFieldType}},
+			Type:             bq.RegularTable,
+			TimePartitioning: &bq.TimePartitioning{Type: bq.DayPartitioningType, Field: "dt"},
+		}, nil).AnyTimes()
+	factory := func(context.Context, string, string) (bigquery.Client, error) { return c, nil }
+
+	got := runWith(t, factory, "", "a.sql")
+	want := result{
+		code:   1,
+		stdout: "a.sql:1:15: warning: Query on partitioned table `p.d.t` has no filter on partition column `dt`; it may scan all partitions (partition-filter)\n",
+	}
+	if diff := cmp.Diff(want, got, cmp.AllowUnexported(result{})); diff != "" {
+		t.Errorf("run result diff (-want +got):\n%s", diff)
+	}
+}
