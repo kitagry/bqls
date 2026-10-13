@@ -1197,6 +1197,87 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 			},
 			expectedErrs: []file.Error{},
 		},
+		"Parse typed declaration with NULL default": {
+			file: "DECLARE target_id INT64 DEFAULT NULL;\n" +
+				"SELECT * FROM `project.dataset.table` WHERE id = target_id",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []file.Error{},
+		},
+		"Parse untyped declaration with NULL default": {
+			file: "DECLARE target_id DEFAULT NULL;\n" +
+				"SELECT * FROM `project.dataset.table` WHERE id = target_id",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []file.Error{},
+		},
+		"Parse lowercase type declaration with NULL default": {
+			file: "DECLARE target_id int64 DEFAULT NULL;\n" +
+				"SELECT * FROM `project.dataset.table` WHERE id = target_id",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []file.Error{},
+		},
+		"Parse type alias declaration with NULL default": {
+			file: "DECLARE target_id INTEGER DEFAULT NULL;\n" +
+				"SELECT * FROM `project.dataset.table` WHERE id = target_id",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []file.Error{},
+		},
+		"Parse numeric declaration with NULL default": {
+			file: "DECLARE target_id NUMERIC DEFAULT NULL;\n" +
+				"SELECT * FROM `project.dataset.table` WHERE id = target_id",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.NumericFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []file.Error{},
+		},
+		"Parse json declaration with NULL default": {
+			file: "DECLARE v JSON DEFAULT NULL;\n" +
+				"SELECT JSON_VALUE(v, '$.a')",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
 		"Parse datetime declaration statement": {
 			file: "DECLARE target_date DATETIME DEFAULT '20230612';\n" +
 				"SELECT * FROM `project.dataset.table` WHERE date = target_date",

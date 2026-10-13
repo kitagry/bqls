@@ -633,11 +633,16 @@ func getDummyValueForDeclarationNode(node *googlesql.ASTVariableDeclaration) (st
 }
 
 func getDummyValueForDeclarationIdentifierName(name string) (string, error) {
-	switch name {
-	case "BOOL":
+	// Type names are case-insensitive in BigQuery.
+	switch strings.ToUpper(name) {
+	case "BOOL", "BOOLEAN":
 		return "TRUE", nil
-	case "INT64":
+	case "INT64", "INT", "SMALLINT", "INTEGER", "BIGINT", "TINYINT", "BYTEINT":
 		return "1", nil
+	case "NUMERIC", "DECIMAL":
+		return "NUMERIC '1'", nil
+	case "BIGNUMERIC", "BIGDECIMAL":
+		return "BIGNUMERIC '1'", nil
 	case "FLOAT64":
 		return "1.0", nil
 	case "STRING":
@@ -652,6 +657,12 @@ func getDummyValueForDeclarationIdentifierName(name string) (string, error) {
 		return "TIME('00:00:00')", nil
 	case "TIMESTAMP":
 		return "TIMESTAMP('1970-01-01 00:00:00')", nil
+	case "INTERVAL":
+		return "INTERVAL 0 DAY", nil
+	case "JSON":
+		return "JSON 'null'", nil
+	case "GEOGRAPHY":
+		return "ST_GEOGPOINT(0, 0)", nil
 	default:
 		return "", fmt.Errorf("not implemented: %s", name)
 	}
@@ -660,7 +671,10 @@ func getDummyValueForDeclarationIdentifierName(name string) (string, error) {
 func getDummyValueForDefaultValueNode(node googlesql.ASTExpressionNode) (string, error) {
 	switch node.(type) {
 	case *googlesql.ASTNullLiteral:
-		return "NULL", nil
+		// A bare NULL literal makes comparisons like `x = v` fail with
+		// "Operands of = cannot be literal NULL"; BigQuery types an untyped
+		// NULL default as INT64.
+		return "CAST(NULL AS INT64)", nil
 	case *googlesql.ASTBooleanLiteral:
 		return "TRUE", nil
 	case *googlesql.ASTIntLiteral:

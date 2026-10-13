@@ -90,6 +90,10 @@ func TestNullComparison(t *testing.T) {
 			src:  "DECLARE v INT64;\nSELECT x FROM UNNEST([1]) AS x WHERE x = v",
 			want: nil,
 		},
+		"comparison with variable declared with NULL default is fine": {
+			src:  "DECLARE v DEFAULT NULL;\nSELECT x FROM UNNEST([1]) AS x WHERE x = v",
+			want: nil,
+		},
 		"parenthesized typed NULL": {
 			src: "SELECT x FROM UNNEST([1]) AS x WHERE x = (CAST(NULL AS INT64))",
 			want: []lint.Diagnostic{{
