@@ -223,6 +223,10 @@ func TestPartitionFilter(t *testing.T) {
 			src:  "SELECT x FROM p.d.ingest",
 			want: []report{{sub: "p.d.ingest", table: "p.d.ingest", columns: "`_PARTITIONTIME` or `_PARTITIONDATE`"}},
 		},
+		"ingestion time SELECT * unfiltered": {
+			src:  "SELECT * FROM p.d.ingest",
+			want: []report{{sub: "p.d.ingest", table: "p.d.ingest", columns: "`_PARTITIONTIME` or `_PARTITIONDATE`"}},
+		},
 		"ingestion time filtered by _PARTITIONTIME": {
 			src: "SELECT x FROM p.d.ingest WHERE _PARTITIONTIME > '2020-01-01'",
 		},
