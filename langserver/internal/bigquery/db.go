@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"cloud.google.com/go/bigquery"
-	_ "modernc.org/sqlite"
 	"google.golang.org/api/cloudresourcemanager/v1"
+	_ "modernc.org/sqlite"
 )
 
 type database struct {
