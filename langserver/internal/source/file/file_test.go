@@ -1473,6 +1473,16 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 			},
 			expectedRNodeLen: 2,
 		},
+		"DML inside BEGIN END and IF": {
+			file: "BEGIN\n  INSERT INTO p.d.t SELECT 1;\nEND;\n\nIF true THEN\n  DELETE FROM p.d.t WHERE true;\nEND IF;",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"p.d.t": {
+					Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 2,
+		},
 		"broken SELECT inside IF": {
 			file: "IF TRUE THEN\n  SELECT UNKNOWN_FUNC();\nEND IF;",
 			expectedErrs: []file.Error{

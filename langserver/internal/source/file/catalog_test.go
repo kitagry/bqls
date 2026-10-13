@@ -417,8 +417,6 @@ func TestCatalog_PreloadDMLTargets(t *testing.T) {
 		"DML inside BEGIN END": {
 			src:    "BEGIN\n  DELETE FROM p.d.t WHERE true;\nEND;",
 			tables: []string{"t"},
-			// BEGIN...END itself is reported as unsupported (#403).
-			tolerate: []string{"Statement not supported: BeginEndBlock"},
 		},
 		"nested DML targets are array columns": {
 			src:    "UPDATE p.d.t SET (DELETE FROM arr WHERE true), (INSERT d.arr VALUES (1)) WHERE true",
