@@ -13,8 +13,8 @@ var ErrNoPosition = errors.New("no position")
 func GetLspPosition(files map[lsp.DocumentURI]string) (formattedFiles map[lsp.DocumentURI]string, path lsp.DocumentURI, position lsp.Position, err error) {
 	formattedFiles = make(map[lsp.DocumentURI]string)
 	for filePath, file := range files {
-		if ind := strings.Index(file, "|"); ind != -1 {
-			file = strings.Replace(file, "|", "", 1)
+		if ind := cursorIndex(file); ind != -1 {
+			file = file[:ind] + file[ind+1:]
 			path = filePath
 			position = IndexToPosition(file, ind)
 		}
@@ -26,6 +26,23 @@ func GetLspPosition(files map[lsp.DocumentURI]string) (formattedFiles map[lsp.Do
 	}
 
 	return
+}
+
+// cursorIndex returns the index of the first "|" that marks the cursor. A "|"
+// directly followed by ">" is the pipe operator, so it is not the cursor.
+func cursorIndex(file string) int {
+	offset := 0
+	for {
+		ind := strings.Index(file[offset:], "|")
+		if ind == -1 {
+			return -1
+		}
+		ind += offset
+		if !strings.HasPrefix(file[ind+1:], ">") {
+			return ind
+		}
+		offset = ind + 1
+	}
 }
 
 func IndexToPosition(file string, index int) lsp.Position {

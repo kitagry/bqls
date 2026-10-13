@@ -175,3 +175,118 @@ func TestAddInformationFunctions_KeepErrorWhenOutOfRange(t *testing.T) {
 		})
 	}
 }
+
+func TestFixIncompletePipeOperator(t *testing.T) {
+	tests := map[string]struct {
+		src            string
+		errPosition    lsp.Position
+		wantSrc        string
+		wantFixOffsets []FixOffset
+	}{
+		"pipe operator at the end": {
+			src:            "FROM t |> ",
+			errPosition:    lsp.Position{Line: 0, Character: 9},
+			wantSrc:        "FROM t  ",
+			wantFixOffsets: []FixOffset{{Offset: 9, Length: -2}},
+		},
+		"pipe operator with keywords at the end": {
+			src:            "FROM t |> ORDER BY",
+			errPosition:    lsp.Position{Line: 0, Character: 18},
+			wantSrc:        "FROM t ",
+			wantFixOffsets: []FixOffset{{Offset: 18, Length: -11}},
+		},
+		"pipe operator followed by a semicolon": {
+			src:            "FROM t |> WHERE; SELECT 1",
+			errPosition:    lsp.Position{Line: 0, Character: 15},
+			wantSrc:        "FROM t ; SELECT 1",
+			wantFixOffsets: []FixOffset{{Offset: 15, Length: -8}},
+		},
+		"pipe operator followed by a comment": {
+			src:            "FROM t |> SELECT -- c",
+			errPosition:    lsp.Position{Line: 0, Character: 21},
+			wantSrc:        "FROM t  -- c",
+			wantFixOffsets: []FixOffset{{Offset: 16, Length: -9}},
+		},
+		"pipe operator followed by a semicolon on the next line": {
+			src:            "FROM t |> SELECT\n;\nSELECT 1",
+			errPosition:    lsp.Position{Line: 1, Character: 0},
+			wantSrc:        "FROM t \n;\nSELECT 1",
+			wantFixOffsets: []FixOffset{{Offset: 16, Length: -9}},
+		},
+		"pipe operator followed by another pipe operator": {
+			src:            "FROM t |> WHERE |> SELECT x",
+			errPosition:    lsp.Position{Line: 0, Character: 16},
+			wantSrc:        "FROM t  |> SELECT x",
+			wantFixOffsets: []FixOffset{{Offset: 15, Length: -8}},
+		},
+		"pipe operator in a subquery": {
+			src:            "SELECT * FROM (FROM t |> SELECT)",
+			errPosition:    lsp.Position{Line: 0, Character: 31},
+			wantSrc:        "SELECT * FROM (FROM t )",
+			wantFixOffsets: []FixOffset{{Offset: 31, Length: -9}},
+		},
+		"lower case keywords": {
+			src:            "FROM t |> left outer join",
+			errPosition:    lsp.Position{Line: 0, Character: 25},
+			wantSrc:        "FROM t ",
+			wantFixOffsets: []FixOffset{{Offset: 25, Length: -18}},
+		},
+		"identifier after pipe operator": {
+			src:         "SELECT x FROM t WHERE x |> y",
+			errPosition: lsp.Position{Line: 0, Character: 27},
+			wantSrc:     "SELECT x FROM t WHERE x |> y",
+		},
+		"pipe operator in a line comment": {
+			src:         "SELECT x FROM t WHERE -- a |> b",
+			errPosition: lsp.Position{Line: 0, Character: 31},
+			wantSrc:     "SELECT x FROM t WHERE -- a |> b",
+		},
+		"pipe operator in a block comment": {
+			src:         "SELECT x FROM t WHERE /* a |> b */",
+			errPosition: lsp.Position{Line: 0, Character: 34},
+			wantSrc:     "SELECT x FROM t WHERE /* a |> b */",
+		},
+		"pipe operator in a string": {
+			src:         "SELECT x FROM t WHERE x = '|> SELECT'",
+			errPosition: lsp.Position{Line: 0, Character: 37},
+			wantSrc:     "SELECT x FROM t WHERE x = '|> SELECT'",
+		},
+		"keyword of the following statement": {
+			src:         "FROM t |> SELECT x\nSELECT",
+			errPosition: lsp.Position{Line: 1, Character: 0},
+			wantSrc:     "FROM t |> SELECT x\nSELECT",
+		},
+		"keyword on the next line": {
+			src:         "FROM t |> SELECT\nSELECT",
+			errPosition: lsp.Position{Line: 1, Character: 0},
+			wantSrc:     "FROM t |> SELECT\nSELECT",
+		},
+		"error before the pipe operator": {
+			src:         "SELECT FROM t |> SELECT",
+			errPosition: lsp.Position{Line: 0, Character: 7},
+			wantSrc:     "SELECT FROM t |> SELECT",
+		},
+		"position beyond the end of the line": {
+			src:         "FROM t |> SELECT",
+			errPosition: lsp.Position{Line: 0, Character: 100},
+			wantSrc:     "FROM t |> SELECT",
+		},
+		"position beyond the last line": {
+			src:         "FROM t |> SELECT",
+			errPosition: lsp.Position{Line: 5, Character: 0},
+			wantSrc:     "FROM t |> SELECT",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			gotSrc, gotFixOffsets := fixIncompletePipeOperator(tt.src, Error{Position: tt.errPosition})
+			if gotSrc != tt.wantSrc {
+				t.Errorf("fixed source = %q, want %q", gotSrc, tt.wantSrc)
+			}
+			if diff := cmp.Diff(tt.wantFixOffsets, gotFixOffsets); diff != "" {
+				t.Errorf("fix offsets diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

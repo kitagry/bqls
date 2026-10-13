@@ -119,7 +119,9 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 	if selectColumnNode, ok := file.LookupNode[*googlesql.ASTSelectColumn](targetNode); ok {
 		column, err := p.getSelectColumnNodeToAnalyzedOutputColumnNode(output, selectColumnNode, termOffset)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get column info: %w", err)
+			// Not finding the column is not a failure of the request, so no hover is shown.
+			p.logger.Debugf("failed to get column info: %v", err)
+			return nil, nil
 		}
 
 		tableName, _ := column.TableName()
@@ -414,7 +416,136 @@ func (p *Project) getSelectColumnNodeToAnalyzedOutputColumnNode(output *googlesq
 			return c, nil
 		}
 	}
+
+	if c, ok := getSelectColumnByPosition(targetScanNode, column); ok {
+		return c, nil
+	}
 	return nil, fmt.Errorf("failed to find column info")
+}
+
+// findProjectScanForSelect finds the ProjectScan of the SELECT ending at
+// selectEnd among scanNode and its inputs. A pipe SELECT followed by other
+// pipe operators is an input of their scans, and only the outermost scan of a
+// pipe query has a parse location, so a ProjectScan without one is used only
+// when it is the sole candidate.
+func findProjectScanForSelect(scanNode googlesql.ResolvedScanNode, selectEnd int) (*googlesql.ResolvedProjectScan, bool) {
+	var candidates []*googlesql.ResolvedProjectScan
+	for scanNode != nil {
+		if projectScan, ok := scanNode.(*googlesql.ResolvedProjectScan); ok {
+			loc, _ := projectScan.GetParseLocationRangeOrNULL()
+			if loc == nil {
+				candidates = append(candidates, projectScan)
+			} else if file.ParseLocEnd(loc) == selectEnd {
+				return projectScan, true
+			}
+		}
+		withInput, ok := scanNode.(interface {
+			InputScan() (googlesql.ResolvedScanNode, error)
+		})
+		if !ok {
+			break
+		}
+		next, err := withInput.InputScan()
+		if err != nil {
+			break
+		}
+		scanNode = next
+	}
+	if len(candidates) != 1 {
+		return nil, false
+	}
+	return candidates[0], true
+}
+
+// getSelectColumnByPosition finds the column by its position in the select
+// list. Pipe operators such as RENAME and AS change the names that SELECT
+// refers to without creating new columns, so the name does not always match
+// the resolved column.
+func getSelectColumnByPosition(scanNode googlesql.ResolvedScanNode, column *googlesql.ASTSelectColumn) (*googlesql.ResolvedColumn, bool) {
+	parent, err := column.Parent()
+	if err != nil {
+		return nil, false
+	}
+	selectList, ok := parent.(*googlesql.ASTSelectList)
+	if !ok {
+		return nil, false
+	}
+	// SELECT AS STRUCT/VALUE packs the select list into a single column.
+	selectParent, err := selectList.Parent()
+	if err != nil {
+		return nil, false
+	}
+	selectNode, ok := selectParent.(*googlesql.ASTSelect)
+	if !ok {
+		return nil, false
+	}
+	if selectAs, err := selectNode.SelectAs(); err != nil || selectAs != nil {
+		return nil, false
+	}
+	selectLoc, err := selectNode.GetParseLocationRange()
+	if err != nil || selectLoc == nil {
+		return nil, false
+	}
+	projectScan, ok := findProjectScanForSelect(scanNode, file.ParseLocEnd(selectLoc))
+	if !ok {
+		return nil, false
+	}
+	columnLoc, err := column.GetParseLocationRange()
+	if err != nil || columnLoc == nil {
+		return nil, false
+	}
+
+	n, err := selectList.NumChildren()
+	if err != nil {
+		return nil, false
+	}
+	index := -1
+	starsBefore, starsAfter := 0, 0
+	for i := int32(0); i < n; i++ {
+		c, err := selectList.Columns(i)
+		if err != nil || c == nil {
+			return nil, false
+		}
+		expr, err := c.Expression()
+		if err != nil {
+			return nil, false
+		}
+		switch expr.(type) {
+		case *googlesql.ASTStar, *googlesql.ASTStarWithModifiers, *googlesql.ASTDotStar, *googlesql.ASTDotStarWithModifiers:
+			if index == -1 {
+				starsBefore++
+			} else {
+				starsAfter++
+			}
+			continue
+		}
+		loc, err := c.GetParseLocationRange()
+		if err != nil || loc == nil {
+			continue
+		}
+		if file.ParseLocStart(loc) == file.ParseLocStart(columnLoc) {
+			index = int(i)
+		}
+	}
+	if index == -1 {
+		return nil, false
+	}
+
+	// A star expands to an unknown number of columns, so the position is
+	// counted from the side that has no star.
+	columns, _ := projectScan.MutableColumnList()
+	switch {
+	case starsBefore == 0 && starsAfter == 0:
+		if len(columns) != int(n) {
+			return nil, false
+		}
+		return columns[index], true
+	case starsBefore == 0 && index < len(columns):
+		return columns[index], true
+	case starsAfter == 0 && len(columns)-(int(n)-index) >= 0:
+		return columns[len(columns)-(int(n)-index)], true
+	}
+	return nil, false
 }
 
 func (p *Project) listRefNamesForScanNode(scanNode googlesql.ResolvedScanNode) []string {
