@@ -218,3 +218,93 @@ func TestAddInformationFunctions_StopAtAnyWhitespace(t *testing.T) {
 		})
 	}
 }
+func TestParseZetaSQLError_MalformedLocation(t *testing.T) {
+	tests := map[string]struct {
+		errMsg string
+		want   Error
+	}{
+		"no closing bracket": {
+			errMsg: "msg [at ",
+			want:   Error{Msg: "msg [at "},
+		},
+		"no column": {
+			errMsg: "msg [at 1]",
+			want:   Error{Msg: "msg [at 1]"},
+		},
+		"non numeric location": {
+			errMsg: "msg [at x:y]",
+			want:   Error{Msg: "msg [at x:y]"},
+		},
+		"several locations": {
+			errMsg: "msg [at 1:8]; inner [at 2:3]",
+			want:   Error{Msg: "msg", Position: lsp.Position{Line: 0, Character: 7}},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := parseZetaSQLError("SELECT X\nSELECT 1", errors.New(tt.errMsg))
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("parseZetaSQLError(%q) diff (-want +got):\n%s", tt.errMsg, diff)
+			}
+		})
+	}
+}
+
+func TestAddInformationFunctions_NameAtEndOfMessage(t *testing.T) {
+	const src = "SELECT t.zz FROM t"
+	tests := map[string]struct {
+		add       func(src string, parsedErr Error) Error
+		parsedErr Error
+	}{
+		"addInformationToNotExistInStructError": {
+			add:       addInformationToNotExistInStructError,
+			parsedErr: Error{Msg: "Field name zz", Position: lsp.Position{Line: 0, Character: 9}},
+		},
+		"addInformationToNotFoundInsideTableError": {
+			add:       addInformationToNotFoundInsideTableError,
+			parsedErr: Error{Msg: "Name zz", Position: lsp.Position{Line: 0, Character: 9}},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := tt.add(src, tt.parsedErr)
+			want := tt.parsedErr
+			want.TermLength = 2
+			want.IncompleteColumnName = "t.zz"
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestFixDot_KeepsTrailingNewline(t *testing.T) {
+	tests := map[string]struct {
+		src  string
+		want string
+	}{
+		"lf": {
+			src:  "SELECT t. FROM t\n",
+			want: "SELECT true FROM t\n",
+		},
+		"crlf": {
+			src:  "SELECT * FROM t WHERE 1=1\r\n\n",
+			want: "SELECT * FROM t WHERE 1=1\r\n\n",
+		},
+		"no trailing newline": {
+			src:  "SELECT t. FROM t",
+			want: "SELECT true FROM t",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, _, _ := fixDot(tt.src)
+			if got != tt.want {
+				t.Errorf("fixDot(%q) = %q, want %q", tt.src, got, tt.want)
+			}
+		})
+	}
+}
