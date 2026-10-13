@@ -26,5 +26,13 @@ jobs:
     - name: download modules
       run: |
         go mod download
+    - name: check gofmt
+      run: |
+        unformatted=$(gofmt -l .)
+        if [ -n "$unformatted" ]; then
+          echo "The following files are not gofmt-formatted:"
+          echo "$unformatted"
+          exit 1
+        fi
     - name: test
       run: go test -v ./... -count=1
