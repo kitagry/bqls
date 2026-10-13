@@ -143,7 +143,7 @@ func (a *Analyzer) AnalyzeStatement(rawText string, stmt googlesql.ASTStatementN
 	}); err != nil {
 		return nil, err
 	}
-	return googlesql.AnalyzeStatementFromParserAST(stmt, opts, rawText, catalog.CatalogNode(), catalog.TypeFactory())
+	return googlesql.AnalyzeStatementFromParserAST(stmt, opts, rawText, a.loopVariableCatalog(rawText, stmt, catalog), catalog.TypeFactory())
 }
 
 // analyzeAssignmentExpression analyzes the right-hand side of a SET statement,
@@ -177,7 +177,7 @@ func (a *Analyzer) analyzeAssignmentExpression(rawText string, stmt googlesql.AS
 	if err != nil {
 		return err
 	}
-	_, err = googlesql.AnalyzeExpression(maskOutside(rawText, start, end), opts, catalog.CatalogNode(), catalog.TypeFactory())
+	_, err = googlesql.AnalyzeExpression(maskOutside(rawText, start, end), opts, a.loopVariableCatalog(rawText, stmt, catalog), catalog.TypeFactory())
 	return err
 }
 
