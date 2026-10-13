@@ -1024,6 +1024,224 @@ func TestProject_CompleteColumns(t *testing.T) {
 				},
 			},
 		},
+		"Complete partition pseudo columns of daily ingestion-time partitioned table": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT | FROM `project.dataset.table`",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+					TimePartitioning: &bq.TimePartitioning{Type: bq.DayPartitioningType},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+				},
+				{
+					Kind:    lsp.CIKField,
+					NewText: "_PARTITIONTIME",
+					Detail:  "TIMESTAMP",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "TIMESTAMP",
+					},
+				},
+				{
+					Kind:    lsp.CIKField,
+					NewText: "_PARTITIONDATE",
+					Detail:  "DATE",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "DATE",
+					},
+				},
+			},
+		},
+		"Complete only _PARTITIONTIME of hourly ingestion-time partitioned table": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT | FROM `project.dataset.table`",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+					TimePartitioning: &bq.TimePartitioning{Type: bq.HourPartitioningType},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+				},
+				{
+					Kind:    lsp.CIKField,
+					NewText: "_PARTITIONTIME",
+					Detail:  "TIMESTAMP",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "TIMESTAMP",
+					},
+				},
+			},
+		},
+		"Do not complete partition pseudo columns of column-partitioned table": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT | FROM `project.dataset.table`",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "dt", Type: bq.DateFieldType},
+					},
+					TimePartitioning: &bq.TimePartitioning{Type: bq.DayPartitioningType, Field: "dt"},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "dt",
+					Detail:  "DATE",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "DATE",
+					},
+				},
+			},
+		},
+		"Complete incomplete partition pseudo column": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT _PART| FROM `project.dataset.table`",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+					TimePartitioning: &bq.TimePartitioning{Type: bq.DayPartitioningType},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "_PARTITIONTIME",
+					Detail:  "TIMESTAMP",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "TIMESTAMP",
+					},
+					TypedPrefix: "_PART",
+				},
+				{
+					Kind:    lsp.CIKField,
+					NewText: "_PARTITIONDATE",
+					Detail:  "DATE",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "DATE",
+					},
+					TypedPrefix: "_PART",
+				},
+			},
+		},
+		"Complete partition pseudo columns with table alias": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT t.| FROM `project.dataset.table` AS t",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+					TimePartitioning: &bq.TimePartitioning{Type: bq.DayPartitioningType},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+				},
+				{
+					Kind:    lsp.CIKField,
+					NewText: "_PARTITIONTIME",
+					Detail:  "TIMESTAMP",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "TIMESTAMP",
+					},
+				},
+				{
+					Kind:    lsp.CIKField,
+					NewText: "_PARTITIONDATE",
+					Detail:  "DATE",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "DATE",
+					},
+				},
+			},
+		},
+		"Complete partition pseudo columns in where clause": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT id FROM `project.dataset.table` WHERE |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+					TimePartitioning: &bq.TimePartitioning{Type: bq.DayPartitioningType},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+				},
+				{
+					Kind:    lsp.CIKField,
+					NewText: "_PARTITIONTIME",
+					Detail:  "TIMESTAMP",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "TIMESTAMP",
+					},
+				},
+				{
+					Kind:    lsp.CIKField,
+					NewText: "_PARTITIONDATE",
+					Detail:  "DATE",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "DATE",
+					},
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {

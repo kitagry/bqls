@@ -85,7 +85,27 @@ func (c *completor) createCompletionItemFromColumn(ctx context.Context, incomple
 		}
 	}
 
+	// Partition pseudo columns are not part of the BigQuery schema, so they have
+	// to be recognized from the partitioning metadata instead.
+	if isPartitionPseudoColumn(tableMetadata, colName) {
+		return createCompletionItemFromResolvedColumn(column, incompleteColumnName), true
+	}
+
 	return CompletionItem{}, false
+}
+
+func isPartitionPseudoColumn(metadata *bq.TableMetadata, colName string) bool {
+	tp := metadata.TimePartitioning
+	if tp == nil || tp.Field != "" {
+		return false
+	}
+	switch colName {
+	case "_PARTITIONTIME":
+		return true
+	case "_PARTITIONDATE":
+		return file.HasPartitionDate(metadata)
+	}
+	return false
 }
 
 func (c *completor) createCompletionItemForRecordType(ctx context.Context, incompleteColumnName string, column *googlesql.ResolvedColumn) []CompletionItem {
