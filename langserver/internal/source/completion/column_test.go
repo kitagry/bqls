@@ -45,6 +45,80 @@ func TestProject_CompleteColumns(t *testing.T) {
 				},
 			},
 		},
+		"Select columns after statement with unfixable error": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT UNKNOWN_FUNC();\nSELECT | FROM `project.dataset.table`",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+				},
+			},
+		},
+		"Select columns between statement with unfixable error and following statement": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT UNKNOWN_FUNC();\nSELECT | FROM `project.dataset.table`;\nSELECT name FROM `project.dataset.table2`",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				},
+				"project.dataset.table2": {
+					Schema: bq.Schema{
+						{Name: "name", Type: bq.StringFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+				},
+			},
+		},
+		"Select columns after CREATE TEMP FUNCTION without RETURNS": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "CREATE TEMP FUNCTION f(x INT64) AS (x);\nSELECT | FROM `project.dataset.table`",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+				},
+			},
+		},
 		"Select columns in pipe WHERE": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "FROM `project.dataset.table` |> WHERE |",

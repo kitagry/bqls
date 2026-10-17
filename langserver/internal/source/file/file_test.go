@@ -1443,6 +1443,92 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 				},
 			},
 		},
+		"Report error once when a later statement triggers a declaration retry": {
+			file: "DECLARE y STRING;\n" +
+				"DECLARE x INT64;\n" +
+				"SELECT UNKNOWN_FUNC() + LENGTH(y);\n" +
+				"SELECT y;",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{
+						Line:      2,
+						Character: 7,
+					},
+				},
+			},
+		},
+		"Report errors once when a later statement triggers a fix-up retry": {
+			file: "SELECT UNKNOWN_FUNC();\n" +
+				"SELECT unknown_column;",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 7,
+					},
+				},
+				{
+					Msg: "Unrecognized name: unknown_column",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 7,
+					},
+					TermLength:           14,
+					IncompleteColumnName: "unknown_column",
+				},
+			},
+		},
+		"Keep analysis errors when a fix-up makes the source unparsable": {
+			file: "SELECT UNKNOWN_FUNC();\n" +
+				"SELECT unknown.*;",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: `Syntax error: Unexpected ";"`,
+					Position: lsp.Position{
+						Line:      1,
+						Character: 10,
+					},
+				},
+				{
+					Msg: "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 7,
+					},
+				},
+				{
+					Msg: "Unrecognized name: unknown",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 7,
+					},
+					TermLength:           7,
+					IncompleteColumnName: "unknown",
+				},
+			},
+		},
+		"Report create function error once when a later statement triggers a retry": {
+			file: "CREATE TEMP FUNCTION target_func(x INT64) AS (x * 10);\n" +
+				"DECLARE y INT64;\n" +
+				"SELECT y;",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Currently, bqls does not support function without return type.",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 0,
+					},
+					TermLength: 53,
+					Severity:   lsp.Warning,
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {
@@ -1834,6 +1920,141 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 			}
 			if len(got.RNode) != tt.expectedRNodeLen {
 				t.Errorf("expected %d analyzer outputs, got %d", tt.expectedRNodeLen, len(got.RNode))
+			}
+		})
+	}
+}
+
+func TestAnalyzer_ParseFile_StatementResults(t *testing.T) {
+	type statementResult struct {
+		hasOutput bool
+		errMsg    string
+	}
+	tests := map[string]struct {
+		file               string
+		bqTableMetadataMap map[string]*bq.TableMetadata
+
+		expected []statementResult
+	}{
+		"failed statement followed by successful statement": {
+			file: "SELECT UNKNOWN_FUNC();\nSELECT id FROM `project.dataset.table`",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}},
+				},
+			},
+			expected: []statementResult{
+				{errMsg: "Function not found: UNKNOWN_FUNC"},
+				{hasOutput: true},
+			},
+		},
+		"CREATE TEMP FUNCTION without RETURNS": {
+			file: "CREATE TEMP FUNCTION f(x INT64) AS (x);\nSELECT 1",
+			expected: []statementResult{
+				{errMsg: "Currently, bqls does not support function without return type."},
+				{hasOutput: true},
+			},
+		},
+		"DECLARE has no entry": {
+			file: "DECLARE x INT64;\nSELECT x",
+			expected: []statementResult{
+				{hasOutput: true},
+			},
+		},
+		"statement fixed by a fix-up after a statement failing for good": {
+			file: "SELECT UNKNOWN_FUNC();\nSELECT unknown_col FROM `project.dataset.table`",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}},
+				},
+			},
+			expected: []statementResult{
+				{errMsg: "Function not found: UNKNOWN_FUNC"},
+				{hasOutput: true},
+			},
+		},
+		"SET assignment has an entry without output": {
+			file: "DECLARE x INT64;\nSET x = 1;\nSELECT x",
+			expected: []statementResult{
+				{},
+				{hasOutput: true},
+			},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			for tablePath, schema := range tt.bqTableMetadataMap {
+				tablePathSplitted := strings.Split(tablePath, ".")
+				if len(tablePathSplitted) != 3 {
+					t.Fatalf("table path length should be 3, got %s", tablePath)
+				}
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), tablePathSplitted[0], tablePathSplitted[1], tablePathSplitted[2]).Return(schema, nil).MinTimes(0)
+			}
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
+
+			results := make([]statementResult, len(got.Statements))
+			for i, s := range got.Statements {
+				if s.Output != nil && s.Err != nil {
+					t.Errorf("statement %d has both output and error", i)
+				}
+				results[i].hasOutput = s.Output != nil
+				if s.Err != nil {
+					results[i].errMsg = s.Err.Msg
+				}
+			}
+			if diff := cmp.Diff(tt.expected, results, cmp.AllowUnexported(statementResult{})); diff != "" {
+				t.Errorf("statement results diff (-expect, +got)\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestParsedFile_FindTargetAnalyzeOutput(t *testing.T) {
+	tests := map[string]struct {
+		file               string
+		bqTableMetadataMap map[string]*bq.TableMetadata
+		position           lsp.Position
+
+		expectedOK bool
+	}{
+		// Each retry fixes one reference to x, so the retry limit is reached
+		// before the third statement is analyzed.
+		"statement not analyzed because the retry limit is reached": {
+			file: "DECLARE x INT64 DEFAULT 1;\nSELECT a FROM `p.d.t1`;\nSELECT b FROM `p.d.t2` WHERE b IN (x,x,x,x,x,x,x,x,x,x,x,x)",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"p.d.t1": {Schema: bq.Schema{{Name: "a", Type: bq.IntegerFieldType}}},
+				"p.d.t2": {Schema: bq.Schema{{Name: "b", Type: bq.IntegerFieldType}}},
+			},
+			position:   lsp.Position{Line: 2, Character: 7},
+			expectedOK: false,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			for tablePath, schema := range tt.bqTableMetadataMap {
+				tablePathSplitted := strings.Split(tablePath, ".")
+				if len(tablePathSplitted) != 3 {
+					t.Fatalf("table path length should be 3, got %s", tablePath)
+				}
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), tablePathSplitted[0], tablePathSplitted[1], tablePathSplitted[2]).Return(schema, nil).MinTimes(0)
+			}
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
+
+			_, ok := got.FindTargetAnalyzeOutput(got.TermOffset(tt.position))
+			if ok != tt.expectedOK {
+				t.Errorf("FindTargetAnalyzeOutput ok = %v, want %v", ok, tt.expectedOK)
 			}
 		})
 	}
