@@ -85,7 +85,7 @@ func (p *Project) OpenFiles() []lsp.DocumentURI {
 
 func (p *Project) DeleteFile(uri lsp.DocumentURI) {
 	p.cache.Delete(uri)
-	p.forgetDiagnostics(uri)
+	p.InvalidateDiagnostics(uri)
 }
 
 func (p *Project) Dryrun(ctx context.Context, uri lsp.DocumentURI) (*bq.JobStatus, error) {

@@ -61,6 +61,11 @@ func (p *Project) Diagnose(ctx context.Context, uri lsp.DocumentURI, cfg lint.Co
 func (p *Project) diagnoseEntry(uri lsp.DocumentURI, src string, cfg lint.Config) *diagnoseEntry {
 	p.diagnoseMu.Lock()
 	defer p.diagnoseMu.Unlock()
+	// DeleteFile removes the text before taking diagnoseMu, so this check
+	// keeps a run that raced with closing the file from re-inserting an entry.
+	if p.cache.Get(uri) == nil {
+		return &diagnoseEntry{}
+	}
 	if e, ok := p.diagnoseCache[uri]; ok && e.src == src && maps.Equal(e.rules, cfg.Rules) {
 		return e
 	}
@@ -70,7 +75,10 @@ func (p *Project) diagnoseEntry(uri lsp.DocumentURI, src string, cfg lint.Config
 	return e
 }
 
-func (p *Project) forgetDiagnostics(uri lsp.DocumentURI) {
+// InvalidateDiagnostics drops the cached Diagnose result for uri. Table
+// metadata fetch failures are cached with the result, so callers use this
+// when the user asks for a fresh check without editing, e.g. on save.
+func (p *Project) InvalidateDiagnostics(uri lsp.DocumentURI) {
 	p.diagnoseMu.Lock()
 	defer p.diagnoseMu.Unlock()
 	delete(p.diagnoseCache, uri)

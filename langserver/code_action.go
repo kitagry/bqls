@@ -9,9 +9,9 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 )
 
-// lintCodeActions recomputes lint diagnostics instead of trusting the
-// client-supplied context, so actions always match the current text and
-// settings.
+// lintCodeActions derives actions from the server's own Diagnose result
+// instead of trusting the client-supplied context, so actions always match
+// the current text and settings.
 func (h *Handler) lintCodeActions(ctx context.Context, uri lsp.DocumentURI, rng lsp.Range) []any {
 	if h.project == nil || !h.supportsCodeActionLiterals() {
 		return nil
