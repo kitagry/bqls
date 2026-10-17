@@ -321,49 +321,49 @@ func TestFixIncompletePipeOperator(t *testing.T) {
 			src:            "FROM t |> ",
 			errPosition:    lsp.Position{Line: 0, Character: 9},
 			wantSrc:        "FROM t  ",
-			wantFixOffsets: []FixOffset{{Offset: 9, Length: -2}},
+			wantFixOffsets: []FixOffset{{Offset: 9, Length: -2, edits: []sourceEdit{{start: 7, oldLen: 2}}}},
 		},
 		"pipe operator with keywords at the end": {
 			src:            "FROM t |> ORDER BY",
 			errPosition:    lsp.Position{Line: 0, Character: 18},
 			wantSrc:        "FROM t ",
-			wantFixOffsets: []FixOffset{{Offset: 18, Length: -11}},
+			wantFixOffsets: []FixOffset{{Offset: 18, Length: -11, edits: []sourceEdit{{start: 7, oldLen: 11}}}},
 		},
 		"pipe operator followed by a semicolon": {
 			src:            "FROM t |> WHERE; SELECT 1",
 			errPosition:    lsp.Position{Line: 0, Character: 15},
 			wantSrc:        "FROM t ; SELECT 1",
-			wantFixOffsets: []FixOffset{{Offset: 15, Length: -8}},
+			wantFixOffsets: []FixOffset{{Offset: 15, Length: -8, edits: []sourceEdit{{start: 7, oldLen: 8}}}},
 		},
 		"pipe operator followed by a comment": {
 			src:            "FROM t |> SELECT -- c",
 			errPosition:    lsp.Position{Line: 0, Character: 21},
 			wantSrc:        "FROM t  -- c",
-			wantFixOffsets: []FixOffset{{Offset: 16, Length: -9}},
+			wantFixOffsets: []FixOffset{{Offset: 16, Length: -9, edits: []sourceEdit{{start: 7, oldLen: 9}}}},
 		},
 		"pipe operator followed by a semicolon on the next line": {
 			src:            "FROM t |> SELECT\n;\nSELECT 1",
 			errPosition:    lsp.Position{Line: 1, Character: 0},
 			wantSrc:        "FROM t \n;\nSELECT 1",
-			wantFixOffsets: []FixOffset{{Offset: 16, Length: -9}},
+			wantFixOffsets: []FixOffset{{Offset: 16, Length: -9, edits: []sourceEdit{{start: 7, oldLen: 9}}}},
 		},
 		"pipe operator followed by another pipe operator": {
 			src:            "FROM t |> WHERE |> SELECT x",
 			errPosition:    lsp.Position{Line: 0, Character: 16},
 			wantSrc:        "FROM t  |> SELECT x",
-			wantFixOffsets: []FixOffset{{Offset: 15, Length: -8}},
+			wantFixOffsets: []FixOffset{{Offset: 15, Length: -8, edits: []sourceEdit{{start: 7, oldLen: 8}}}},
 		},
 		"pipe operator in a subquery": {
 			src:            "SELECT * FROM (FROM t |> SELECT)",
 			errPosition:    lsp.Position{Line: 0, Character: 31},
 			wantSrc:        "SELECT * FROM (FROM t )",
-			wantFixOffsets: []FixOffset{{Offset: 31, Length: -9}},
+			wantFixOffsets: []FixOffset{{Offset: 31, Length: -9, edits: []sourceEdit{{start: 22, oldLen: 9}}}},
 		},
 		"lower case keywords": {
 			src:            "FROM t |> left outer join",
 			errPosition:    lsp.Position{Line: 0, Character: 25},
 			wantSrc:        "FROM t ",
-			wantFixOffsets: []FixOffset{{Offset: 25, Length: -18}},
+			wantFixOffsets: []FixOffset{{Offset: 25, Length: -18, edits: []sourceEdit{{start: 7, oldLen: 18}}}},
 		},
 		"identifier after pipe operator": {
 			src:         "SELECT x FROM t WHERE x |> y",
@@ -418,7 +418,7 @@ func TestFixIncompletePipeOperator(t *testing.T) {
 			if gotSrc != tt.wantSrc {
 				t.Errorf("fixed source = %q, want %q", gotSrc, tt.wantSrc)
 			}
-			if diff := cmp.Diff(tt.wantFixOffsets, gotFixOffsets); diff != "" {
+			if diff := cmp.Diff(tt.wantFixOffsets, gotFixOffsets, cmp.AllowUnexported(FixOffset{}, sourceEdit{})); diff != "" {
 				t.Errorf("fix offsets diff (-want +got):\n%s", diff)
 			}
 		})
@@ -462,5 +462,130 @@ func TestNewLanguageOptions_PipeFeatures(t *testing.T) {
 				t.Errorf("LanguageFeatureEnabled(%v) = %v, want %v", tt.feature, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestErrorToSrc(t *testing.T) {
+	src := "SELECT aaa + bb + UNKNOWN(),\nUNKNOWN2()"
+	pass1 := "SELECT 1 + bb + UNKNOWN(),\nUNKNOWN2()"
+	pass2 := "SELECT 1 + 'xyz' + UNKNOWN(),\nUNKNOWN2()"
+	edits := []sourceEdit{{start: 7, oldLen: len("aaa"), newLen: len("1")}, {start: 11, oldLen: len("bb"), newLen: len("'xyz'")}}
+
+	tests := map[string]struct {
+		errSrc string
+		edits  []sourceEdit
+		err    Error
+		want   Error
+	}{
+		"after every rewrite on the same line": {
+			errSrc: pass2,
+			edits:  edits,
+			err:    Error{Position: lsp.Position{Line: 0, Character: strings.Index(pass2, "UNKNOWN")}},
+			want:   Error{Position: lsp.Position{Line: 0, Character: strings.Index(src, "UNKNOWN")}},
+		},
+		"recorded before a later rewrite": {
+			errSrc: pass1,
+			edits:  edits[:1],
+			err:    Error{Position: lsp.Position{Line: 0, Character: strings.Index(pass1, "bb")}, TermLength: 2},
+			want:   Error{Position: lsp.Position{Line: 0, Character: strings.Index(src, "bb")}, TermLength: 2},
+		},
+		"term is the rewritten text": {
+			errSrc: pass2,
+			edits:  edits,
+			err:    Error{Position: lsp.Position{Line: 0, Character: strings.Index(pass2, "'xyz'")}, TermLength: len("'xyz'")},
+			want:   Error{Position: lsp.Position{Line: 0, Character: strings.Index(src, "bb")}, TermLength: len("bb")},
+		},
+		"on a later line": {
+			errSrc: pass2,
+			edits:  edits,
+			err:    Error{Position: lsp.Position{Line: 1, Character: 0}, TermLength: len("UNKNOWN2")},
+			want:   Error{Position: lsp.Position{Line: 1, Character: 0}, TermLength: len("UNKNOWN2")},
+		},
+		"out of the source": {
+			errSrc: pass2,
+			edits:  edits,
+			err:    Error{Position: lsp.Position{Line: 5, Character: 3}},
+			want:   Error{Position: lsp.Position{Line: 5, Character: 3}},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := errorToSrc(src, tt.errSrc, tt.edits, tt.err)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("errorToSrc diff (-want, +got)\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestErrorToSrc_InsertedText(t *testing.T) {
+	src := "SELECT FROM t"
+	fixed := "SELECT 1 FROM t"
+	edits := []sourceEdit{{start: 7, newLen: len("1 ")}}
+
+	tests := map[string]struct {
+		err  Error
+		want Error
+	}{
+		"inside inserted text": {
+			err:  Error{Position: lsp.Position{Character: strings.Index(fixed, "1")}},
+			want: Error{Position: lsp.Position{Character: strings.Index(src, "FROM")}},
+		},
+		"after inserted text": {
+			err:  Error{Position: lsp.Position{Character: strings.Index(fixed, "t")}, TermLength: 1},
+			want: Error{Position: lsp.Position{Character: strings.Index(src, "t")}, TermLength: 1},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := errorToSrc(src, fixed, edits, tt.err)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("errorToSrc diff (-want, +got)\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestErrorToSrc_DeletedText(t *testing.T) {
+	src := "SELECT * FROM t |> WHERE x |> ORDER BY"
+	fixed := "SELECT * FROM t |> WHERE x"
+	edits := []sourceEdit{{start: len(fixed), oldLen: len(" |> ORDER BY")}}
+
+	tests := map[string]struct {
+		err  Error
+		want Error
+	}{
+		"term right before the deletion": {
+			err:  Error{Position: lsp.Position{Character: strings.Index(fixed, "x")}, TermLength: 1},
+			want: Error{Position: lsp.Position{Character: strings.Index(src, "x")}, TermLength: 1},
+		},
+		"position at the deletion": {
+			err:  Error{Position: lsp.Position{Character: len(fixed)}},
+			want: Error{Position: lsp.Position{Character: len(src)}},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := errorToSrc(src, fixed, edits, tt.err)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("errorToSrc diff (-want, +got)\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestFixDot_ReportsPositionsInSource(t *testing.T) {
+	_, errs, _ := fixDot("SELECT a.\nFROM t WHERE bb.")
+
+	want := []lsp.Position{{Line: 0, Character: 7}, {Line: 1, Character: 13}}
+	got := make([]lsp.Position, len(errs))
+	for i, e := range errs {
+		got[i] = e.Position
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("fixDot error positions diff (-want, +got)\n%s", diff)
 	}
 }
