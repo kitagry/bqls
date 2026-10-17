@@ -2,9 +2,12 @@ package langserver
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/kitagry/bqls/langserver/internal/lint"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/sourcegraph/jsonrpc2"
 )
@@ -262,4 +265,110 @@ func TestHandler_lintCodeActions_IgnoreAfterNonASCIIText(t *testing.T) {
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("lintCodeActions() diff (-want +got):\n%s", diff)
 	}
+}
+
+func TestHandler_lintCodeActions_IgnoreAroundMultiLineLiterals(t *testing.T) {
+	const uri lsp.DocumentURI = "file:///a.sql"
+	const rule = "null-comparison"
+	insertAt := func(line, char int, text string) []lsp.TextEdit {
+		pos := lsp.Position{Line: line, Character: char}
+		return []lsp.TextEdit{{Range: lsp.Range{Start: pos, End: pos}, NewText: text}}
+	}
+	tests := map[string]struct {
+		src  string
+		line int
+		// want is nil when no ignore action may be offered.
+		want []lsp.TextEdit
+	}{
+		"line starting in code gets a directive above": {
+			src:  "SELECT x\nFROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64)",
+			line: 1,
+			want: insertAt(1, 0, "-- bqls:ignore null-comparison\n"),
+		},
+		"line starting inside a multi-line string gets a trailing directive": {
+			src:  "SELECT x, '''\nfoo''' AS s FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64)",
+			line: 1,
+			want: insertAt(1, 63, " -- bqls:ignore null-comparison"),
+		},
+		"line starting inside a block comment gets a trailing directive": {
+			src:  "SELECT x /* note\nstill note */ FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64)",
+			line: 1,
+			want: insertAt(1, 65, " -- bqls:ignore null-comparison"),
+		},
+		"directive text inside a string on the line above is not extended": {
+			src:  "SELECT x, '''\n-- bqls:ignore other\n''' AS s FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64)",
+			line: 2,
+			want: insertAt(2, 60, " -- bqls:ignore null-comparison"),
+		},
+		"directive-like line above that starts inside a string is not extended": {
+			src:  "SELECT x, '''\n-- bqls:ignore other'''\nAS s FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64)",
+			line: 2,
+			want: insertAt(2, 0, "-- bqls:ignore null-comparison\n"),
+		},
+		"trailing directive position counts UTF-16 units": {
+			src:  "SELECT x, '''\nあ''' AS s FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64)",
+			line: 1,
+			want: insertAt(1, 61, " -- bqls:ignore null-comparison"),
+		},
+		"no action when the line ends inside another multi-line string": {
+			src:  "SELECT '''\nfoo''' AS s, x = CAST(NULL AS INT64) AS b, '''\nbar''' AS t FROM UNNEST([1]) AS x",
+			line: 1,
+		},
+		"no action when the line already ends with a comment": {
+			src:  "SELECT x, '''\nfoo''' AS s FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64) -- note",
+			line: 1,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			h := newTestHandlerWithFile(t, uri, tt.src)
+			h.initializeParams.Capabilities.TextDocument.CodeAction.CodeActionLiteralSupport.CodeActionKind.ValueSet = []lsp.CodeActionKind{lsp.CAKQuickFix}
+
+			rng := lsp.Range{Start: lsp.Position{Line: tt.line}, End: lsp.Position{Line: tt.line, Character: 1000}}
+			var got []lsp.TextEdit
+			for _, a := range h.lintCodeActions(t.Context(), uri, rng) {
+				if ca, ok := a.(lsp.CodeAction); ok && ca.Title == "Ignore null-comparison on this line" {
+					got = ca.Edit.Changes[string(uri)]
+				}
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Fatalf("ignore edit diff (-want +got):\n%s", diff)
+			}
+			if got == nil {
+				return
+			}
+
+			newSrc := applyTextEdit(t, tt.src, got[0])
+			targetLine := tt.line + strings.Count(got[0].NewText, "\n")
+			if !lint.ParseSuppressions(newSrc).Suppressed(rule, targetLine) {
+				t.Errorf("%s is not suppressed on line %d of the edited source:\n%s", rule, targetLine, newSrc)
+			}
+		})
+	}
+}
+
+// applyTextEdit applies a single-line insertion whose character offset is in
+// UTF-16 units, as LSP clients do.
+func applyTextEdit(t *testing.T, src string, e lsp.TextEdit) string {
+	t.Helper()
+	lines := strings.Split(src, "\n")
+	line := lines[e.Range.Start.Line]
+	units := 0
+	offset := -1
+	for i, r := range line {
+		if units == e.Range.Start.Character {
+			offset = i
+			break
+		}
+		units += len(utf16.Encode([]rune{r}))
+	}
+	if offset < 0 {
+		if units != e.Range.Start.Character {
+			t.Fatalf("edit character %d is not a UTF-16 boundary of %q", e.Range.Start.Character, line)
+		}
+		offset = len(line)
+	}
+	lines[e.Range.Start.Line] = line[:offset] + e.NewText + line[offset:]
+	return strings.Join(lines, "\n")
 }
