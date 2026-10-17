@@ -45,6 +45,19 @@ func TestNullComparison(t *testing.T) {
 				}},
 			}},
 		},
+		"equal SAFE_CAST NULL": {
+			src: "SELECT x FROM UNNEST([1]) AS x WHERE x = SAFE_CAST(NULL AS INT64)",
+			want: []lint.Diagnostic{{
+				Rule:     "null-comparison",
+				Range:    rng(0, 37, 0, 65),
+				Message:  "Comparison with NULL using = always yields NULL; use IS NULL",
+				Severity: lint.SeverityWarning,
+				SuggestedFixes: []lint.SuggestedFix{{
+					Title: "Replace with IS NULL",
+					Edits: []lsp.TextEdit{{Range: rng(0, 37, 0, 65), NewText: "x IS NULL"}},
+				}},
+			}},
+		},
 		"typed NULL on the left with !=": {
 			src: "SELECT x FROM UNNEST([1]) AS x WHERE CAST(NULL AS INT64) != x",
 			want: []lint.Diagnostic{{
