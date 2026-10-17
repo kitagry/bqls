@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
+	"slices"
+	"strings"
 
 	"github.com/kitagry/bqls/langserver/internal/lint"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
@@ -56,8 +58,14 @@ func mergeSettings(prev InitializeOption, raw json.RawMessage) (InitializeOption
 		return prev, err
 	}
 
+	// encoding/json matches field names case-insensitively, so presence
+	// must too or a "Lint" key would be merged into the previous rules.
+	hasLint := slices.ContainsFunc(slices.Collect(maps.Keys(present)), func(k string) bool {
+		return strings.EqualFold(k, "lint")
+	})
+
 	next := prev
-	if _, ok := present["lint"]; ok {
+	if hasLint {
 		// Decoding into a non-nil map would add keys to the previous rules;
 		// a present lint setting is the complete rule set (an empty one
 		// restores the defaults).
