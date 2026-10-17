@@ -85,7 +85,7 @@ func (a *Analyzer) loopVariableType(rawText string, loop *googlesql.ASTForInStat
 		return nil, fmt.Errorf("invalid FOR...IN query location: [%d, %d)", start, end)
 	}
 
-	opts, err := a.newAnalyzerOptions(catalog.langOpts)
+	opts, err := a.newAnalyzerOptions(catalog.langOpts, catalog.TypeFactory())
 	if err != nil {
 		return nil, err
 	}
