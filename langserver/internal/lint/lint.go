@@ -79,6 +79,8 @@ type SuggestedFix struct {
 }
 
 // Config is the user-facing lint settings, e.g. {"rules": {"null-comparison": false}}.
+// The Diagnose cache in package source keys on these fields, so update it
+// when adding one.
 type Config struct {
 	Rules map[string]bool `json:"rules,omitempty"`
 }
