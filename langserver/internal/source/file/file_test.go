@@ -1005,6 +1005,20 @@ func TestProject_ParseFile(t *testing.T) {
 	}
 }
 
+func TestAnalyzer_ParseFileWithUnknownFieldOfDeclaredStruct(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+	analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+	// Only the message is checked: positions after a substituted variable on
+	// the same line are not remapped yet.
+	parsed := analyzer.ParseFile("uri", "DECLARE s STRUCT<a INT64>;\nSELECT s.b")
+	defer parsed.Close()
+	if len(parsed.Errors) != 1 || parsed.Errors[0].Msg != "Field name b does not exist in STRUCT<a INT64>" {
+		t.Fatalf("expected an unknown struct field error, got %v", parsed.Errors)
+	}
+}
+
 func TestAnalyzer_SnapshotParameterPreservesTypeErrors(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	bqClient := mock_bigquery.NewMockClient(ctrl)
@@ -1275,6 +1289,58 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 		"Parse json declaration with NULL default": {
 			file: "DECLARE v JSON DEFAULT NULL;\n" +
 				"SELECT JSON_VALUE(v, '$.a')",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Parse declaration with function call default": {
+			file: "DECLARE target_date DEFAULT CURRENT_DATE();\n" +
+				"SELECT DATE_ADD(target_date, INTERVAL 1 DAY)",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Parse declaration with subquery default": {
+			file: "DECLARE max_id DEFAULT (SELECT MAX(id) FROM `project.dataset.table`);\n" +
+				"SELECT * FROM `project.dataset.table` WHERE id = max_id",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectedErrs: []file.Error{},
+		},
+		"Parse declaration with timestamp literal default": {
+			file: "DECLARE ts DEFAULT TIMESTAMP '2020-01-01 00:00:00';\n" +
+				"SELECT TIMESTAMP_ADD(ts, INTERVAL 1 HOUR)",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Parse declaration with default referencing another variable": {
+			file: "DECLARE a INT64;\n" +
+				"DECLARE b DEFAULT a + 1;\n" +
+				"SELECT b + 1",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Parse struct declaration": {
+			file: "DECLARE s STRUCT<a INT64, b STRING>;\n" +
+				"SELECT s.a + 1, LENGTH(s.b)",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Parse array of struct declaration": {
+			file: "DECLARE arr ARRAY<STRUCT<x INT64>>;\n" +
+				"SELECT arr[OFFSET(0)].x + 1",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Parse range declaration": {
+			file: "DECLARE r RANGE<DATE>;\n" +
+				"SELECT RANGE_START(r)",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{},
 			expectedErrs:       []file.Error{},
 		},

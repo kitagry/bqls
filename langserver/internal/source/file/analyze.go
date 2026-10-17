@@ -280,9 +280,10 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			kind, _ := s.NodeKind()
 			if kind == googlesql.ASTNodeKindAstVariableDeclaration {
 				declNode := s.(*googlesql.ASTVariableDeclaration)
-				dummyValue, err := getDummyValueForDeclarationNode(declNode)
+				dummyValue, err := a.getDummyValueForDeclarationNode(fixedSrc, declNode, catalog)
 				if err != nil {
 					a.logger.Debug("failed to get default value for declaration", err)
+					continue
 				}
 				varList, _ := declNode.VariableList()
 				if varList != nil {
@@ -589,105 +590,204 @@ func (a *Analyzer) createFunctionTypes(node *googlesql.ASTCreateFunctionStatemen
 	return newFunc, nil
 }
 
-func getDummyValueForDeclarationNode(node *googlesql.ASTVariableDeclaration) (string, error) {
+// getDummyValueForDeclarationNode returns a typed expression that stands in
+// for references to the declared variables.
+func (a *Analyzer) getDummyValueForDeclarationNode(src string, node *googlesql.ASTVariableDeclaration, catalog *Catalog) (string, error) {
 	typeNode, err := node.Type()
 	if err != nil {
 		return "", err
 	}
-	if typeNode == nil {
-		// DECLARE x DEFAULT expr; - no explicit type
-		defaultVal, _ := node.DefaultValue()
-		if defaultVal != nil {
-			return getDummyValueForDefaultValueNode(defaultVal)
+	if typeNode != nil {
+		typeName, err := declaredTypeName(typeNode)
+		if err != nil {
+			return "", err
 		}
+		return getDummyValueForTypeName(typeName), nil
+	}
+
+	defaultVal, err := node.DefaultValue()
+	if err != nil {
+		return "", err
+	}
+	if defaultVal == nil {
 		return "", fmt.Errorf("don't support declaration without type or default")
 	}
+	loc, err := defaultVal.GetParseLocationRange()
+	if err != nil {
+		return "", err
+	}
+	start, end := parseLocStart(loc), parseLocEnd(loc)
+	if start < 0 || end < start || end > len(src) {
+		return "", fmt.Errorf("invalid default value location")
+	}
+	typeName, err := a.analyzeExpressionTypeName(maskOutside(src, start, end), catalog)
+	if err != nil {
+		// The default may reference other declared variables, which cannot be
+		// resolved on their own. Substituting the expression itself lets the
+		// retry loop replace those references in turn.
+		return "(" + src[start:end] + ")", nil
+	}
+	return getDummyValueForTypeName(typeName), nil
+}
 
-	switch typeNode.(type) {
-	case *googlesql.ASTArrayType:
-		return "[]", nil
+func (a *Analyzer) analyzeExpressionTypeName(sql string, catalog *Catalog) (string, error) {
+	opts, err := a.newAnalyzerOptions(catalog.langOpts)
+	if err != nil {
+		return "", err
+	}
+	out, err := googlesql.AnalyzeExpression(sql, opts, catalog.CatalogNode(), catalog.TypeFactory())
+	if err != nil {
+		return "", err
+	}
+	expr, err := out.ResolvedExpr()
+	if err != nil {
+		return "", err
+	}
+	if expr == nil {
+		return "", fmt.Errorf("failed to get resolved expression")
+	}
+	typ, err := expr.Type()
+	if err != nil {
+		return "", err
+	}
+	if typ == nil {
+		return "", fmt.Errorf("failed to get expression type")
+	}
+	named, ok := typ.(interface {
+		TypeName(mode googlesql.ProductMode) (string, error)
+	})
+	if !ok {
+		return "", fmt.Errorf("not implemented: %T", typ)
+	}
+	return named.TypeName(googlesql.ProductModeProductExternal)
+}
+
+// declaredTypeName renders a declared type with BigQuery-only aliases
+// normalized, since GoogleSQL rejects them (e.g. CAST(NULL AS INTEGER)).
+func declaredTypeName(node googlesql.ASTTypeNode) (string, error) {
+	switch n := node.(type) {
 	case *googlesql.ASTSimpleType:
-		stn := typeNode.(*googlesql.ASTSimpleType)
-		pathExpr, _ := stn.TypeName()
-		if pathExpr != nil {
-			names, _ := pathExpr.ToIdentifierVector()
-			if len(names) > 0 {
-				val, err := getDummyValueForDeclarationIdentifierName(names[0])
-				if err == nil {
-					return val, nil
-				}
+		pathExpr, err := n.TypeName()
+		if err != nil || pathExpr == nil {
+			return "", fmt.Errorf("failed to get type name")
+		}
+		names, err := pathExpr.ToIdentifierVector()
+		if err != nil || len(names) == 0 {
+			return "", fmt.Errorf("failed to get type name identifiers")
+		}
+		return canonicalTypeName(strings.Join(names, ".")), nil
+	case *googlesql.ASTArrayType:
+		elem, err := n.ElementType()
+		if err != nil || elem == nil {
+			return "", fmt.Errorf("failed to get array element type")
+		}
+		elemName, err := declaredTypeName(elem)
+		if err != nil {
+			return "", err
+		}
+		return "ARRAY<" + elemName + ">", nil
+	case *googlesql.ASTRangeType:
+		elem, err := n.ElementType()
+		if err != nil || elem == nil {
+			return "", fmt.Errorf("failed to get range element type")
+		}
+		elemName, err := declaredTypeName(elem)
+		if err != nil {
+			return "", err
+		}
+		return "RANGE<" + elemName + ">", nil
+	case *googlesql.ASTStructType:
+		numChildren, err := n.NumChildren()
+		if err != nil {
+			return "", err
+		}
+		var fields []string
+		for i := int32(0); i < numChildren; i++ {
+			field, err := n.StructFields(i)
+			if err != nil || field == nil {
+				break
 			}
+			fieldType, err := field.Type()
+			if err != nil || fieldType == nil {
+				return "", fmt.Errorf("failed to get struct field type")
+			}
+			fieldTypeName, err := declaredTypeName(fieldType)
+			if err != nil {
+				return "", err
+			}
+			ident, _ := field.Name()
+			if ident == nil {
+				fields = append(fields, fieldTypeName)
+				continue
+			}
+			name, err := ident.GetAsString()
+			if err != nil {
+				return "", err
+			}
+			fields = append(fields, "`"+name+"` "+fieldTypeName)
 		}
-		defaultVal, _ := node.DefaultValue()
-		if defaultVal != nil {
-			return getDummyValueForDefaultValueNode(defaultVal)
-		}
-		return "", fmt.Errorf("failed to load default value")
-	default:
-		defaultVal, _ := node.DefaultValue()
-		if defaultVal != nil {
-			return getDummyValueForDefaultValueNode(defaultVal)
-		}
-		return "", fmt.Errorf("not implemented: %T", typeNode)
-	}
-}
-
-func getDummyValueForDeclarationIdentifierName(name string) (string, error) {
-	// Type names are case-insensitive in BigQuery.
-	switch strings.ToUpper(name) {
-	case "BOOL", "BOOLEAN":
-		return "TRUE", nil
-	case "INT64", "INT", "SMALLINT", "INTEGER", "BIGINT", "TINYINT", "BYTEINT":
-		return "1", nil
-	case "NUMERIC", "DECIMAL":
-		return "NUMERIC '1'", nil
-	case "BIGNUMERIC", "BIGDECIMAL":
-		return "BIGNUMERIC '1'", nil
-	case "FLOAT64":
-		return "1.0", nil
-	case "STRING":
-		return "''", nil
-	case "BYTES":
-		return "b''", nil
-	case "DATE":
-		return "DATE('1970-01-01')", nil
-	case "DATETIME":
-		return "DATETIME('1970-01-01 00:00:00')", nil
-	case "TIME":
-		return "TIME('00:00:00')", nil
-	case "TIMESTAMP":
-		return "TIMESTAMP('1970-01-01 00:00:00')", nil
-	case "INTERVAL":
-		return "INTERVAL 0 DAY", nil
-	case "JSON":
-		return "JSON 'null'", nil
-	case "GEOGRAPHY":
-		return "ST_GEOGPOINT(0, 0)", nil
-	default:
-		return "", fmt.Errorf("not implemented: %s", name)
-	}
-}
-
-func getDummyValueForDefaultValueNode(node googlesql.ASTExpressionNode) (string, error) {
-	switch node.(type) {
-	case *googlesql.ASTNullLiteral:
-		// A bare NULL literal makes comparisons like `x = v` fail with
-		// "Operands of = cannot be literal NULL"; BigQuery types an untyped
-		// NULL default as INT64.
-		return "CAST(NULL AS INT64)", nil
-	case *googlesql.ASTBooleanLiteral:
-		return "TRUE", nil
-	case *googlesql.ASTIntLiteral:
-		return "0", nil
-	case *googlesql.ASTFloatLiteral:
-		return "0.0", nil
-	case *googlesql.ASTStringLiteral:
-		return "''", nil
-	case *googlesql.ASTDateOrTimeLiteral:
-		return "DATE('1970-01-01')", nil
+		return "STRUCT<" + strings.Join(fields, ", ") + ">", nil
 	default:
 		return "", fmt.Errorf("not implemented: %T", node)
 	}
+}
+
+func canonicalTypeName(name string) string {
+	// Type names are case-insensitive in BigQuery.
+	name = strings.ToUpper(name)
+	switch name {
+	case "INT", "SMALLINT", "INTEGER", "BIGINT", "TINYINT", "BYTEINT":
+		return "INT64"
+	case "BOOLEAN":
+		return "BOOL"
+	case "DECIMAL":
+		return "NUMERIC"
+	case "BIGDECIMAL":
+		return "BIGNUMERIC"
+	default:
+		return name
+	}
+}
+
+func getDummyValueForTypeName(typeName string) string {
+	switch typeName {
+	case "BOOL":
+		return "TRUE"
+	case "INT64":
+		return "1"
+	case "FLOAT64":
+		return "1.0"
+	case "NUMERIC":
+		return "NUMERIC '1'"
+	case "BIGNUMERIC":
+		return "BIGNUMERIC '1'"
+	case "STRING":
+		return "''"
+	case "BYTES":
+		return "b''"
+	case "DATE":
+		return "DATE('1970-01-01')"
+	case "DATETIME":
+		return "DATETIME('1970-01-01 00:00:00')"
+	case "TIME":
+		return "TIME('00:00:00')"
+	case "TIMESTAMP":
+		return "TIMESTAMP('1970-01-01 00:00:00')"
+	case "INTERVAL":
+		return "INTERVAL 0 DAY"
+	case "JSON":
+		return "JSON 'null'"
+	case "GEOGRAPHY":
+		return "ST_GEOGPOINT(0, 0)"
+	}
+
+	// Whitespace inside the dummy breaks the error recovery that extracts the
+	// incomplete column name, e.g. for an unknown struct field `s.b`.
+	compact := strings.ReplaceAll(typeName, " ", "/**/")
+	if strings.HasPrefix(typeName, "ARRAY<") {
+		return compact + "[]"
+	}
+	return "CAST(NULL/**/AS/**/" + compact + ")"
 }
 
 func getTypeFromTypeNode(node googlesql.ASTTypeNode, tf *googlesql.TypeFactory) (googlesql.Googlesql_TypeNode, error) {
