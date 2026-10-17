@@ -242,20 +242,56 @@ func TestProject_Diagnose_RecomputesWhenConfigChanges(t *testing.T) {
 	}
 }
 
-func TestProject_Diagnose_ForgetsResultOfClosedFile(t *testing.T) {
+func TestProject_Diagnose_RecomputesAfterFileIsReopened(t *testing.T) {
 	const uri lsp.DocumentURI = "file:///a.sql"
-	p, _ := newPartitionedTableProject(t)
-	if err := p.UpdateFile(uri, "SELECT x FROM p.d.part", 1); err != nil {
+	const src = "SELECT x FROM p.d.part"
+	p, calls := newPartitionedTableProject(t)
+	if err := p.UpdateFile(uri, src, 1); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := p.Diagnose(t.Context(), uri, lint.Config{}); !ok {
 		t.Fatal("Diagnose() ok = false, want true for an open file")
 	}
+	callsBeforeReopen := calls.Load()
 
 	p.DeleteFile(uri)
+	if err := p.UpdateFile(uri, src, 1); err != nil {
+		t.Fatal(err)
+	}
+	p.Diagnose(t.Context(), uri, lint.Config{})
 
-	if _, ok := p.Diagnose(t.Context(), uri, lint.Config{}); ok {
-		t.Error("Diagnose() ok = true, want false after the file is closed")
+	if calls.Load() == callsBeforeReopen {
+		t.Error("Diagnose() after closing and reopening the file made no GetTableMetadata calls, want it to recompute")
+	}
+}
+
+func TestProject_InvalidateDiagnostics_RecoversFromTransientTableFetchFailure(t *testing.T) {
+	const uri lsp.DocumentURI = "file:///a.sql"
+	ctrl := gomock.NewController(t)
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+	bqClient.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+	gomock.InOrder(
+		bqClient.EXPECT().GetTableMetadata(gomock.Any(), "p", "d", "t").
+			Return(nil, fmt.Errorf("transient network error")),
+		bqClient.EXPECT().GetTableMetadata(gomock.Any(), "p", "d", "t").
+			Return(&bq.TableMetadata{
+				Type:   bq.RegularTable,
+				Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+			}, nil).AnyTimes(),
+	)
+	p := source.NewProjectWithBQClient("/", bqClient, logrus.New())
+	if err := p.UpdateFile(uri, "SELECT x FROM p.d.t", 1); err != nil {
+		t.Fatal(err)
+	}
+	if failed, _ := p.Diagnose(t.Context(), uri, lint.Config{}); len(failed.Errors) == 0 {
+		t.Fatal("Diagnose() reported no errors, want the failed table fetch to surface as an error")
+	}
+
+	p.InvalidateDiagnostics(uri)
+	got, _ := p.Diagnose(t.Context(), uri, lint.Config{})
+
+	if len(got.Errors) != 0 {
+		t.Errorf("Diagnose() after InvalidateDiagnostics reported %+v, want no errors once the table fetch succeeds", got.Errors)
 	}
 }
 
