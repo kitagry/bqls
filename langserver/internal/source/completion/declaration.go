@@ -54,6 +54,7 @@ func (c *completor) completeDeclaration(ctx context.Context, parsedFile file.Par
 					Kind:  lsp.MKMarkdown,
 					Value: fmt.Sprintf("```sql\n%s```", unparsed),
 				},
+				TypedPrefix: incompleteColumnName,
 			})
 		}
 	}

@@ -52,6 +52,22 @@ func TestProject_CompleteDeclaration(t *testing.T) {
 				},
 			},
 		},
+		"Complete incomplete variable declaration": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "DECLARE myvar INT64;\n" + "SELECT myv|",
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKVariable,
+					NewText: "myvar",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKMarkdown,
+						Value: "```sql\nDECLARE myvar INT64\n```",
+					},
+					TypedPrefix: "myv",
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {
