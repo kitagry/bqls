@@ -656,6 +656,66 @@ Storage info
 			},
 			expectMarkedStrings: nil,
 		},
+		"hover record field of dataset-qualified table": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT param.|key FROM dataset.table, UNNEST(params) AS param",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetDefaultProject().Return("project").AnyTimes()
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project:dataset.table",
+					Schema: bq.Schema{
+						{
+							Name:     "params",
+							Type:     bq.RecordFieldType,
+							Repeated: true,
+							Schema: bq.Schema{
+								{
+									Name: "key",
+									Type: bq.StringFieldType,
+								},
+							},
+						},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{
+					Language: "sql",
+					Value:    "key: STRING",
+				},
+			},
+		},
+		"hover WITH clause reading a dataset-qualified table": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "WITH data AS (SELECT id AS hoge FROM dataset.table)\nSELECT * FROM data|",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetDefaultProject().Return("project").AnyTimes()
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project:dataset.table",
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				lsp.RawMarkedString("| Name | Type |\n| --- | --- |\n| hoge | INT64 |\n"),
+				{
+					Language: "sql",
+					Value:    "WITH data AS (\nSELECT id AS hoge FROM dataset.table\n)",
+				},
+			},
+		},
 		"hover column with alias": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT |name AS alias_name FROM `project.dataset.table`",

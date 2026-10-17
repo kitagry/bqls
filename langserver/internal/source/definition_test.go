@@ -20,6 +20,7 @@ func TestProject_LookupIdent(t *testing.T) {
 		// prepare
 		files           map[lsp.DocumentURI]string
 		bqTableMetadata *bq.TableMetadata
+		defaultProject  string
 
 		// output
 		expectLocations []lsp.Location
@@ -90,6 +91,66 @@ SELECT a FROM data2|`,
 					},
 				},
 			},
+			expectLocations: []lsp.Location{
+				{
+					URI: lsp.NewTableVirtualTextDocumentURI("project", "dataset", "table"),
+					Range: lsp.Range{
+						Start: lsp.Position{
+							Line:      0,
+							Character: 0,
+						},
+						End: lsp.Position{
+							Line:      0,
+							Character: 0,
+						},
+					},
+				},
+			},
+		},
+		"definition to dataset-qualified bq table": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT * FROM dataset.table|",
+			},
+			bqTableMetadata: &bq.TableMetadata{
+				FullID: "project:dataset.table",
+				Schema: bq.Schema{
+					{
+						Name: "id",
+						Type: bq.IntegerFieldType,
+					},
+				},
+			},
+			defaultProject: "project",
+			expectLocations: []lsp.Location{
+				{
+					URI: lsp.NewTableVirtualTextDocumentURI("project", "dataset", "table"),
+					Range: lsp.Range{
+						Start: lsp.Position{
+							Line:      0,
+							Character: 0,
+						},
+						End: lsp.Position{
+							Line:      0,
+							Character: 0,
+						},
+					},
+				},
+			},
+		},
+		"definition to backticked dataset-qualified bq table": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT * FROM `dataset.table|`",
+			},
+			bqTableMetadata: &bq.TableMetadata{
+				FullID: "project:dataset.table",
+				Schema: bq.Schema{
+					{
+						Name: "id",
+						Type: bq.IntegerFieldType,
+					},
+				},
+			},
+			defaultProject: "project",
 			expectLocations: []lsp.Location{
 				{
 					URI: lsp.NewTableVirtualTextDocumentURI("project", "dataset", "table"),
@@ -224,6 +285,9 @@ SELECT a FROM data2|`,
 			ctrl := gomock.NewController(t)
 			bqClient := mock_bigquery.NewMockClient(ctrl)
 			bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.bqTableMetadata, nil).MinTimes(0)
+			if tt.defaultProject != "" {
+				bqClient.EXPECT().GetDefaultProject().Return(tt.defaultProject).AnyTimes()
+			}
 			logger := logrus.New()
 			logger.SetLevel(logrus.DebugLevel)
 			p := source.NewProjectWithBQClient("/", bqClient, logger)
