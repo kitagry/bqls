@@ -43,6 +43,15 @@ func TestInNull(t *testing.T) {
 			src:  "SELECT x FROM UNNEST([1]) AS x WHERE NOT (x IN (NULL))",
 			want: []lint.Diagnostic{{Rule: "in-null", Range: rng(0, 42, 0, 53), Message: inMsg, Severity: lint.SeverityWarning}},
 		},
+		"NOT IN split by a comment across lines": {
+			src:  "SELECT x FROM UNNEST([1]) AS x WHERE x NOT -- c\n IN (NULL)",
+			want: []lint.Diagnostic{{Rule: "in-null", Range: rng(0, 37, 1, 10), Message: notInMsg, Severity: lint.SeverityWarning}},
+		},
+		// NOT binds looser than IN, so this is NOT (x IN (NULL)).
+		"NOT before an unparenthesized IN": {
+			src:  "SELECT x FROM UNNEST([1]) AS x WHERE NOT x IN (NULL)",
+			want: []lint.Diagnostic{{Rule: "in-null", Range: rng(0, 41, 0, 52), Message: inMsg, Severity: lint.SeverityWarning}},
+		},
 		"after non-ASCII text on the same line": {
 			src:  "SELECT 'あいう' AS s, x FROM UNNEST([1]) AS x WHERE x IN (NULL)",
 			want: []lint.Diagnostic{{Rule: "in-null", Range: rng(0, 55, 0, 66), Message: inMsg, Severity: lint.SeverityWarning}},
