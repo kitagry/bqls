@@ -7,6 +7,7 @@ import (
 
 	"github.com/kitagry/bqls/langserver/internal/lint"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
+	"github.com/kitagry/bqls/langserver/internal/source/helper"
 )
 
 // lintCodeActions derives actions from the server's own Diagnose result
@@ -22,10 +23,13 @@ func (h *Handler) lintCodeActions(ctx context.Context, uri lsp.DocumentURI, rng 
 	}
 
 	src, _ := h.project.GetFile(uri)
+	// Diagnose works in byte columns while rng and everything sent back are
+	// in UTF-16 units, so all comparisons happen after conversion.
+	conv := helper.NewPositionConverter(src)
 	var result []any
 	for i, fixes := range diags.ErrorFixes {
-		diag := convertErrorsToDiagnostics(src, diags.Errors[i:i+1])[0]
-		result = append(result, fixCodeActions(uri, diag, fixes, rng)...)
+		diag := errorsToLspDiagnostics(conv, diags.Errors[i:i+1])[0]
+		result = append(result, fixCodeActions(uri, diag, fixesToUTF16(conv, fixes), rng)...)
 	}
 	if len(diags.Lint) == 0 {
 		return result
@@ -39,19 +43,18 @@ func (h *Handler) lintCodeActions(ctx context.Context, uri lsp.DocumentURI, rng 
 	}
 	ignored := make(map[ruleLine]bool)
 	for _, d := range diags.Lint {
-		// Compare in UTF-16 units, the unit of the client-supplied rng.
-		lspDiag := convertLintDiagnostics(src, []lint.Diagnostic{d})[0]
+		lspDiag := lintDiagnosticsToLsp(conv, []lint.Diagnostic{d})[0]
 		if !rangesOverlap(lspDiag.Range, rng) {
 			continue
 		}
-		result = append(result, fixCodeActions(uri, lspDiag, d.SuggestedFixes, rng)...)
+		result = append(result, fixCodeActions(uri, lspDiag, fixesToUTF16(conv, d.SuggestedFixes), rng)...)
 
 		key := ruleLine{rule: d.Rule, line: d.Range.Start.Line}
 		if ignored[key] {
 			continue
 		}
 		ignored[key] = true
-		if action, ok := ignoreCodeAction(uri, src, lines, states, d.Rule, d.Range.Start.Line, lspDiag); ok {
+		if action, ok := ignoreCodeAction(uri, conv, lines, states, d.Rule, d.Range.Start.Line, lspDiag); ok {
 			result = append(result, action)
 		}
 	}
@@ -82,6 +85,21 @@ func fixCodeActions(uri lsp.DocumentURI, diag lsp.Diagnostic, fixes []lint.Sugge
 	return result
 }
 
+func fixesToUTF16(conv helper.PositionConverter, fixes []lint.SuggestedFix) []lint.SuggestedFix {
+	result := make([]lint.SuggestedFix, len(fixes))
+	for i, fix := range fixes {
+		edits := make([]lsp.TextEdit, len(fix.Edits))
+		for j, e := range fix.Edits {
+			e.Range = conv.RangeToUTF16(e.Range)
+			edits[j] = e
+		}
+		// Copy the whole fix so fields added to SuggestedFix later survive.
+		result[i] = fix
+		result[i].Edits = edits
+	}
+	return result
+}
+
 // supportsCodeActionLiterals reports whether the client accepts CodeAction
 // objects; older clients only understand bare Command results.
 func (h *Handler) supportsCodeActionLiterals() bool {
@@ -96,7 +114,7 @@ func (h *Handler) supportsCodeActionLiterals() bool {
 // to it instead, because a new line would push that directive off its target.
 // A line that begins inside a multi-line string or comment cannot take a
 // directive above it, so it falls back to a trailing one.
-func ignoreCodeAction(uri lsp.DocumentURI, src string, lines []string, states []lint.LineState, rule string, line int, diag lsp.Diagnostic) (lsp.CodeAction, bool) {
+func ignoreCodeAction(uri lsp.DocumentURI, conv helper.PositionConverter, lines []string, states []lint.LineState, rule string, line int, diag lsp.Diagnostic) (lsp.CodeAction, bool) {
 	var edit lsp.TextEdit
 	if line < len(states) && !states[line].StartsInCode {
 		// A trailing comment or an unclosed string would swallow the directive.
@@ -104,17 +122,17 @@ func ignoreCodeAction(uri lsp.DocumentURI, src string, lines []string, states []
 			return lsp.CodeAction{}, false
 		}
 		text := strings.TrimSuffix(lines[line], "\r")
-		pos := byteToUTF16Position(lines, lsp.Position{Line: line, Character: len(text)})
+		pos := conv.ToUTF16(lsp.Position{Line: line, Character: len(text)})
 		edit = lsp.TextEdit{Range: lsp.Range{Start: pos, End: pos}, NewText: " -- bqls:ignore " + rule}
 	} else if prev, ok := previousIgnoreLine(lines, states, line); ok {
 		if len(prev.Rules) == 0 {
 			return lsp.CodeAction{}, false
 		}
-		pos := lsp.Position{Line: line - 1, Character: prev.RulesEnd}
+		// ParseIgnoreLine only allows spaces and tabs before the directive, so
+		// RulesEnd is ASCII-only today; convert anyway so the edit stays right
+		// if the directive syntax ever admits non-ASCII text before the rules.
+		pos := conv.ToUTF16(lsp.Position{Line: line - 1, Character: prev.RulesEnd})
 		edit = lsp.TextEdit{Range: lsp.Range{Start: pos, End: pos}, NewText: ", " + rule}
-		if !lint.EditsASCIISafe(src, []lsp.TextEdit{edit}) {
-			return lsp.CodeAction{}, false
-		}
 	} else {
 		var indent string
 		if line < len(lines) {

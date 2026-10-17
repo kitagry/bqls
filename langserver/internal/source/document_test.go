@@ -1030,6 +1030,29 @@ Storage info
 				},
 			},
 		},
+		// The cursor Character is in UTF-16 units, as an LSP client sends it.
+		"hover column after multibyte text": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "WITH data AS (SELECT id FROM `project.dataset.table`)\nSELECT '😀あ',\tid| FROM data",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{Language: "sql", Value: "id: INT64"},
+			},
+		},
 		"hover with declaration": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "DECLARE target_id INT64 DEFAULT 1;\nWITH data AS (SELECT id FROM `project.dataset.table`)\nSELECT * FROM data| WHERE id = target_id",
@@ -1066,7 +1089,7 @@ Storage info
 			logger.SetLevel(logrus.DebugLevel)
 			p := source.NewProjectWithBQClient("/", bqClient, logger)
 
-			files, path, position, err := helper.GetLspPosition(tt.files)
+			files, path, position, err := helper.GetUTF16LspPosition(tt.files)
 			if err != nil {
 				t.Fatalf("failed to get position: %v", err)
 			}

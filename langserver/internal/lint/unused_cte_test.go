@@ -29,7 +29,7 @@ func parseWithTable(t *testing.T, src string) file.ParsedFile {
 	return parsed
 }
 
-// applyFixes applies every suggested fix; edits must be ASCII-only and non-overlapping.
+// applyFixes applies every suggested fix; edits are byte based and must not overlap.
 func applyFixes(t *testing.T, src string, diags []lint.Diagnostic) string {
 	t.Helper()
 	lines := strings.SplitAfter(src, "\n")

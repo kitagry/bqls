@@ -7,13 +7,36 @@ import (
 	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
+	"github.com/kitagry/bqls/langserver/internal/source/helper"
 )
 
+// LookupIdent takes and returns positions in UTF-16 units, the LSP default.
 func (p *Project) LookupIdent(ctx context.Context, uri lsp.DocumentURI, position lsp.Position) ([]lsp.Location, error) {
 	sql := p.cache.Get(uri)
 	parsedFile := p.analyzer.ParseFile(uri, sql.RawText)
 	defer parsedFile.Close()
 
+	locs, err := p.lookupIdent(ctx, uri, parsedFile, helper.UTF16PositionToBytePosition(sql.RawText, position))
+	if err != nil {
+		return nil, err
+	}
+	return locationsToUTF16(uri, sql.RawText, locs), nil
+}
+
+// locationsToUTF16 converts only locations in the current document, because
+// the only other target is a table's virtual document, whose 0:0 range is the
+// same in any unit and whose text is not src.
+func locationsToUTF16(uri lsp.DocumentURI, src string, locs []lsp.Location) []lsp.Location {
+	conv := helper.NewPositionConverter(src)
+	for i, loc := range locs {
+		if loc.URI == uri {
+			locs[i].Range = conv.RangeToUTF16(loc.Range)
+		}
+	}
+	return locs
+}
+
+func (p *Project) lookupIdent(ctx context.Context, uri lsp.DocumentURI, parsedFile file.ParsedFile, position lsp.Position) ([]lsp.Location, error) {
 	termOffset := parsedFile.TermOffset(position)
 
 	tablePathExpression, ok := file.SearchAstNode[*googlesql.ASTTablePathExpression](parsedFile.Node, termOffset)
