@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	bq "cloud.google.com/go/bigquery"
@@ -189,6 +190,36 @@ func TestCatalog_shouldNotGetSchemaTwice(t *testing.T) {
 	err = catalog.EnsureTable([]string{"project.dataset.table"})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCatalog_SubCatalogRegistrationError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	meta := &bq.TableMetadata{Schema: bq.Schema{{Name: "name", Type: bq.StringFieldType}}}
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+	bqClient.EXPECT().GetTableMetadata(gomock.Any(), "Project", "dataset", "a").Return(meta, nil).Times(1)
+	bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "b").Return(meta, nil).Times(2)
+	catalog := file.NewCatalog(bqClient)
+
+	if err := catalog.EnsureTable([]string{"Project.dataset.a"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// SimpleCatalog matches names case-insensitively, so creating the "project"
+	// sub-catalog collides with the existing "Project" one.
+	err := catalog.EnsureTable([]string{"project.dataset.b"})
+	if err == nil || !strings.Contains(err.Error(), "sub-catalog") {
+		t.Fatalf("expected sub-catalog error, got %v", err)
+	}
+	if _, err := catalog.FindTableMetadata("project.dataset.b"); err == nil {
+		t.Error("table must not be recorded when sub-catalog registration fails")
+	}
+
+	err = catalog.EnsureTable([]string{"project.dataset.b"})
+	if err == nil || !strings.Contains(err.Error(), "sub-catalog") {
+		t.Fatalf("expected the retry to fail with the same sub-catalog error, got %v", err)
 	}
 }
 
