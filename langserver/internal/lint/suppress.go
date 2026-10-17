@@ -133,6 +133,10 @@ func scan(src string, onComment func(comment)) []LineState {
 			endLine := line + strings.Count(src[i:next], "\n")
 			span(line, endLine, end >= 0)
 			onComment(comment{body: body, startLine: line, endLine: endLine, lineHasCode: lineHasCode, block: true, end: next})
+			if endLine > line {
+				// Code before the comment is on an earlier line, not on the one where it ends.
+				lineHasCode = false
+			}
 			line = endLine
 			i = next
 		case c == '\'' || c == '"' || c == '`':

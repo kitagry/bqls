@@ -59,6 +59,21 @@ func TestSuppressions_Suppressed(t *testing.T) {
 				{rule: "null-comparison", line: 1, want: false},
 			},
 		},
+		"line comment after a multi-line block comment suppresses the next line": {
+			src: "SELECT x /*\n*/ -- bqls:ignore r\nWHERE y",
+			checks: []check{
+				{rule: "r", line: 0, want: false},
+				{rule: "r", line: 1, want: false},
+				{rule: "r", line: 2, want: true},
+			},
+		},
+		"trailing comment after code following a multi-line block comment": {
+			src: "SELECT x /*\n*/ WHERE y -- bqls:ignore r\nAND z",
+			checks: []check{
+				{rule: "r", line: 1, want: true},
+				{rule: "r", line: 2, want: false},
+			},
+		},
 		"indented standalone comment": {
 			src: "SELECT 1\n    -- bqls:ignore null-comparison\n    WHERE x = NULL",
 			checks: []check{
