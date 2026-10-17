@@ -31,6 +31,25 @@ func NewAnalyzer(logger *logrus.Logger, bqClient bigquery.Client) *Analyzer {
 	}
 }
 
+// unsupportedPipeFeatures are GoogleSQL pipe features that are not listed in
+// BigQuery's pipe syntax reference, so queries using them must be reported as errors.
+// https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax
+var unsupportedPipeFeatures = []googlesql.LanguageFeature{
+	googlesql.LanguageFeatureFeaturePipeStaticDescribe,
+	googlesql.LanguageFeatureFeaturePipeAssert,
+	googlesql.LanguageFeatureFeaturePipeLog,
+	googlesql.LanguageFeatureFeaturePipeIf,
+	googlesql.LanguageFeatureFeaturePipeFork,
+	googlesql.LanguageFeatureFeaturePipeTee,
+	googlesql.LanguageFeatureFeaturePipeExportData,
+	googlesql.LanguageFeatureFeaturePipeCreateTable,
+	googlesql.LanguageFeatureFeaturePipeInsert,
+	googlesql.LanguageFeatureFeaturePipeRecursiveUnion,
+	googlesql.LanguageFeatureFeaturePipeDescribe,
+	googlesql.LanguageFeatureFeaturePipeCallInputTable,
+	googlesql.LanguageFeatureFeaturePipeAggregateWithDifferentialPrivacy,
+}
+
 func newLanguageOptions() (*googlesql.LanguageOptions, error) {
 	langOpt, err := googlesql.NewLanguageOptions()
 	if err != nil {
@@ -44,6 +63,11 @@ func newLanguageOptions() (*googlesql.LanguageOptions, error) {
 	}
 	if err := langOpt.EnableMaximumLanguageFeatures(); err != nil {
 		return nil, err
+	}
+	for _, f := range unsupportedPipeFeatures {
+		if err := langOpt.DisableLanguageFeature(f); err != nil {
+			return nil, err
+		}
 	}
 	if err := langOpt.EnableLanguageFeature(googlesql.LanguageFeatureFeatureV13AllowDashesInTableName); err != nil {
 		return nil, err

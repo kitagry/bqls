@@ -1005,6 +1005,25 @@ func TestProject_ParseFile(t *testing.T) {
 	}
 }
 
+func TestAnalyzer_ParseFileWithPipeOperatorUnsupportedByBigQuery(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+	analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+	got := analyzer.ParseFile("uri", "SELECT 1 AS x |> ASSERT x > 0")
+	defer got.Close()
+
+	want := []file.Error{
+		{
+			Msg:      "Pipe ASSERT not supported",
+			Position: lsp.Position{Line: 0, Character: 14},
+		},
+	}
+	if diff := cmp.Diff(want, got.Errors, cmpopts.IgnoreUnexported()); diff != "" {
+		t.Errorf("ParseFile errors diff (-want, +got)\n%s", diff)
+	}
+}
+
 func TestAnalyzer_ParseFileWithUnknownFieldOfDeclaredStruct(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	bqClient := mock_bigquery.NewMockClient(ctrl)
