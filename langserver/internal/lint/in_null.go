@@ -80,15 +80,6 @@ func checkInNull(pass *Pass, call *googlesql.ResolvedFunctionCall) {
 	})
 }
 
-func functionName(call *googlesql.ResolvedFunctionCall) (string, bool) {
-	fn, err := call.Function()
-	if err != nil || fn == nil {
-		return "", false
-	}
-	name, err := fn.Name()
-	return name, err == nil
-}
-
 // isWrittenNull reports whether expr is a NULL literal the user actually
 // wrote, because declared variables are analyzed as substituted literals.
 func isWrittenNull(pass *Pass, expr googlesql.ResolvedExprNode) bool {

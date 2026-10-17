@@ -26,12 +26,8 @@ func runNullComparison(pass *Pass) {
 }
 
 func checkNullComparison(pass *Pass, call *googlesql.ResolvedFunctionCall) {
-	fn, err := call.Function()
-	if err != nil || fn == nil {
-		return
-	}
-	name, err := fn.Name()
-	if err != nil {
+	name, ok := functionName(call)
+	if !ok {
 		return
 	}
 	var op, replacement string
@@ -143,6 +139,15 @@ func NullReplacement(op string) (string, bool) {
 		return "IS NOT NULL", true
 	}
 	return "", false
+}
+
+func functionName(call *googlesql.ResolvedFunctionCall) (string, bool) {
+	fn, err := call.Function()
+	if err != nil || fn == nil {
+		return "", false
+	}
+	name, err := fn.Name()
+	return name, err == nil
 }
 
 func isNullLiteral(expr googlesql.ResolvedExprNode) bool {
