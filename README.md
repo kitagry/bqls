@@ -70,6 +70,7 @@ bqls reports lint warnings and information (diagnostic source `bqls-lint`, code 
 | Rule | Default | Description |
 | --- | --- | --- |
 | `null-comparison` | on | `x = CAST(NULL AS T)` / `!=` always yields NULL; quick fix rewrites it to `IS [NOT] NULL`. |
+| `in-null` | on | `x IN (NULL)` / `x NOT IN (NULL)` whose list holds only NULLs (including `CAST(NULL AS T)`) always yields NULL. No quick fix, since `IS [NOT] NULL` is not equivalent. |
 | `unused-cte` | on | A `WITH` entry that is never referenced (a recursive CTE's self reference does not count). Reported as information; quick fix removes the entry. |
 | `partition-filter` | on | A time- or range-partitioned table that is read without any filter on its partition column (`_PARTITIONTIME` / `_PARTITIONDATE` for ingestion-time partitioning), so the query may scan every partition. A filter anywhere in the statement on the column or a value derived from it (through CTEs, subqueries, and `UNION`) counts. Statements bqls cannot trace (e.g. recursive CTEs, table functions), view definitions, DML targets, wildcard tables, unreferenced CTEs, and reads that consume no column (e.g. `SELECT COUNT(*)`, unless the table requires a partition filter) are skipped. |
 
