@@ -631,7 +631,7 @@ func (a *Analyzer) getDummyValueForDeclarationNode(src string, node *googlesql.A
 }
 
 func (a *Analyzer) analyzeExpressionTypeName(sql string, catalog *Catalog) (string, error) {
-	opts, err := a.newAnalyzerOptions(catalog.langOpts)
+	opts, err := a.newAnalyzerOptions(catalog.langOpts, catalog.TypeFactory())
 	if err != nil {
 		return "", err
 	}
