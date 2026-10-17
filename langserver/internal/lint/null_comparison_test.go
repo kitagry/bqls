@@ -107,15 +107,19 @@ func TestNullComparison(t *testing.T) {
 				}},
 			}},
 		},
-		// Ranges are byte based while clients count UTF-16 units, so an edit
-		// after non-ASCII text on its line would overwrite the wrong text.
-		"no fix after non-ASCII text on the same line": {
+		// Ranges are byte based here; the langserver converts them to UTF-16
+		// for the client, so the fix is kept after non-ASCII text.
+		"fix after non-ASCII text on the same line": {
 			src: "SELECT 'あいう' AS s, x FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64)",
 			want: []lint.Diagnostic{{
 				Rule:     "null-comparison",
 				Range:    rng(0, 55, 0, 78),
 				Message:  "Comparison with NULL using = always yields NULL; use IS NULL",
 				Severity: lint.SeverityWarning,
+				SuggestedFixes: []lint.SuggestedFix{{
+					Title: "Replace with IS NULL",
+					Edits: []lsp.TextEdit{{Range: rng(0, 55, 0, 78), NewText: "x IS NULL"}},
+				}},
 			}},
 		},
 		"fix kept when non-ASCII text follows the edit": {

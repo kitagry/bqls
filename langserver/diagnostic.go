@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"math"
 	"strings"
-	"unicode/utf16"
 
 	"github.com/kitagry/bqls/langserver/internal/lint"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
+	"github.com/kitagry/bqls/langserver/internal/source/helper"
 )
 
 func (h *Handler) scheduleDiagnostics() {
@@ -156,13 +156,10 @@ const lintDiagnosticSource = "bqls-lint"
 
 func convertLintDiagnostics(src string, diags []lint.Diagnostic) []lsp.Diagnostic {
 	result := make([]lsp.Diagnostic, len(diags))
-	lines := strings.Split(src, "\n")
+	conv := helper.NewPositionConverter(src)
 	for i, d := range diags {
 		result[i] = lsp.Diagnostic{
-			Range: lsp.Range{
-				Start: byteToUTF16Position(lines, d.Range.Start),
-				End:   byteToUTF16Position(lines, d.Range.End),
-			},
+			Range:    conv.RangeToUTF16(d.Range),
 			Severity: d.Severity,
 			Code:     d.Rule,
 			Source:   lintDiagnosticSource,
@@ -210,34 +207,15 @@ func bytesConvert(bytes int64) string {
 
 func convertErrorsToDiagnostics(src string, errs []file.Error) []lsp.Diagnostic {
 	result := make([]lsp.Diagnostic, len(errs))
-	lines := strings.Split(src, "\n")
+	conv := helper.NewPositionConverter(src)
 	for i, err := range errs {
 		endPosition := err.Position
 		endPosition.Character += err.TermLength
 		result[i] = lsp.Diagnostic{
-			Range: lsp.Range{
-				Start: byteToUTF16Position(lines, err.Position),
-				End:   byteToUTF16Position(lines, endPosition),
-			},
+			Range:    conv.RangeToUTF16(lsp.Range{Start: err.Position, End: endPosition}),
 			Message:  err.Msg,
 			Severity: cmp.Or(err.Severity, lsp.Error),
 		}
 	}
 	return result
-}
-
-// byteToUTF16Position converts a position whose Character is a byte offset
-// into one counted in UTF-16 code units, which is the LSP default encoding.
-func byteToUTF16Position(lines []string, pos lsp.Position) lsp.Position {
-	if pos.Line < 0 || pos.Line >= len(lines) {
-		return pos
-	}
-	line := lines[pos.Line]
-	if pos.Character < len(line) {
-		line = line[:pos.Character]
-	}
-	return lsp.Position{
-		Line:      pos.Line,
-		Character: len(utf16.Encode([]rune(line))),
-	}
 }

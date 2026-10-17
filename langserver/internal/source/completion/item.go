@@ -1,6 +1,10 @@
 package completion
 
-import "github.com/kitagry/bqls/langserver/internal/lsp"
+import (
+	"unicode/utf16"
+
+	"github.com/kitagry/bqls/langserver/internal/lsp"
+)
 
 type CompletionItem struct {
 	Kind          lsp.CompletionItemKind
@@ -28,8 +32,10 @@ func (c CompletionItem) ToLspCompletionItem(position lsp.Position, supportSnippe
 		textToInsert = c.SnippetText
 	}
 
+	// position comes from the client in UTF-16 units, so the prefix is
+	// measured in the same unit rather than in bytes.
 	startPosition := position
-	startPosition.Character -= len(c.TypedPrefix)
+	startPosition.Character -= len(utf16.Encode([]rune(c.TypedPrefix)))
 	return lsp.CompletionItem{
 		InsertTextFormat: lsp.ITFSnippet,
 		Kind:             c.Kind,

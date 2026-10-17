@@ -86,8 +86,5 @@ func nullComparisonFix(f file.ParsedFile, bin *googlesql.ASTBinaryExpression, nu
 		return SuggestedFix{}, false
 	}
 	edits := []lsp.TextEdit{{Range: binRange, NewText: parts.Other + " " + replacement}}
-	if !EditsASCIISafe(f.Src, edits) {
-		return SuggestedFix{}, false
-	}
 	return SuggestedFix{Title: "Replace with " + replacement, Edits: edits}, true
 }

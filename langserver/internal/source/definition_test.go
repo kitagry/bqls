@@ -248,6 +248,52 @@ SELECT a FROM data2|`,
 				},
 			},
 		},
+		// Both the cursor and the returned range are in UTF-16 units.
+		"definition to declare variable after multibyte text": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "DECLARE /* あ */ target_id INT64;\nSELECT '😀', target_id|",
+			},
+			bqTableMetadata: &bq.TableMetadata{},
+			expectLocations: []lsp.Location{
+				{
+					URI: "a.sql",
+					Range: lsp.Range{
+						Start: lsp.Position{Line: 0, Character: 16},
+						End:   lsp.Position{Line: 0, Character: 25},
+					},
+				},
+			},
+		},
+		"definition to create temp function after multibyte text": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "CREATE TEMP FUNCTION /* あ */ target_func(x INT64) RETURNS INT64 AS (x * 2);\nSELECT '😀', target_func|(1)",
+			},
+			bqTableMetadata: &bq.TableMetadata{},
+			expectLocations: []lsp.Location{
+				{
+					URI: "a.sql",
+					Range: lsp.Range{
+						Start: lsp.Position{Line: 0, Character: 29},
+						End:   lsp.Position{Line: 0, Character: 40},
+					},
+				},
+			},
+		},
+		"definition to with clause after multibyte text": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "WITH /* あ */ data AS (SELECT 1 AS a)\nSELECT '😀', a FROM data|",
+			},
+			bqTableMetadata: &bq.TableMetadata{},
+			expectLocations: []lsp.Location{
+				{
+					URI: "a.sql",
+					Range: lsp.Range{
+						Start: lsp.Position{Line: 0, Character: 13},
+						End:   lsp.Position{Line: 0, Character: 17},
+					},
+				},
+			},
+		},
 		"definition to bq table in other scan node": {
 			files: map[lsp.DocumentURI]string{
 				"a.sql": "WITH data AS (SELECT * FROM `project.dataset.table|`) SELECT * FROM data",
@@ -292,7 +338,7 @@ SELECT a FROM data2|`,
 			logger.SetLevel(logrus.DebugLevel)
 			p := source.NewProjectWithBQClient("/", bqClient, logger)
 
-			files, path, position, err := helper.GetLspPosition(tt.files)
+			files, path, position, err := helper.GetUTF16LspPosition(tt.files)
 			if err != nil {
 				t.Fatalf("failed to get position: %v", err)
 			}

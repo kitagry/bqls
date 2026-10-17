@@ -11,6 +11,7 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/function"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
+	"github.com/kitagry/bqls/langserver/internal/source/helper"
 	"golang.org/x/text/language"
 	"golang.org/x/text/message"
 )
@@ -20,6 +21,7 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 	parsedFile := p.analyzer.ParseFile(uri, sql.RawText)
 	defer parsedFile.Close()
 
+	position = helper.UTF16PositionToBytePosition(sql.RawText, position)
 	termOffset := parsedFile.TermOffset(position)
 	targetNode, ok := file.SearchAstNode[*googlesql.ASTPathExpression](parsedFile.Node, termOffset)
 	if !ok {
