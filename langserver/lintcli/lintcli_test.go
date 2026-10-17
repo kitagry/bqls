@@ -389,7 +389,7 @@ func TestRun_Help(t *testing.T) {
 	if got.code != 0 {
 		t.Errorf("exit code = %d, want 0", got.code)
 	}
-	for _, want := range []string{"bqls lint", "null-comparison", "unused-cte", "partition-filter", "-format"} {
+	for _, want := range []string{"bqls lint", "null-comparison", "in-null", "unused-cte", "partition-filter", "-format"} {
 		if !strings.Contains(got.stdout, want) {
 			t.Errorf("stdout = %q, want it to contain %q", got.stdout, want)
 		}
