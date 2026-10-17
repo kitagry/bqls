@@ -41,7 +41,7 @@ func (c *completor) completeColumns(ctx context.Context, parsedFile file.ParsedF
 	columns, _ := node.MutableColumnList()
 	for _, column := range columns {
 		name, _ := column.Name()
-		if !strings.HasPrefix(name, incompleteColumnName) {
+		if !hasPrefixFold(name, incompleteColumnName) {
 			continue
 		}
 		item, ok := c.createCompletionItemFromColumn(ctx, incompleteColumnName, column)
@@ -172,7 +172,7 @@ func (c *completor) createCompletionItemForType(ctx context.Context, incompleteC
 
 	items := make([]CompletionItem, 0)
 	for _, field := range fields {
-		if !strings.HasPrefix(field.Name, incompleteColumnName) {
+		if !hasPrefixFold(field.Name, incompleteColumnName) {
 			continue
 		}
 		items = append(items, createCompletionItemFromStructField(field, incompleteColumnName))
@@ -193,7 +193,7 @@ func (c *completor) createCompletionItemForBigquerySchema(ctx context.Context, i
 
 	items := make([]CompletionItem, 0)
 	for _, field := range schema {
-		if !strings.HasPrefix(field.Name, incompleteColumnName) {
+		if !hasPrefixFold(field.Name, incompleteColumnName) {
 			continue
 		}
 		items = append(items, createCompletionItemFromSchema(field, incompleteColumnName))
@@ -233,7 +233,7 @@ func (c *completor) completeTableScanField(ctx context.Context, tableScanNode *g
 		return nil
 	}
 
-	if strings.HasPrefix(alias, incompleteColumnName) {
+	if hasPrefixFold(alias, incompleteColumnName) {
 		table, _ := tableScanNode.Table()
 		fullName := ""
 		if table != nil {
@@ -262,7 +262,7 @@ func (c *completor) completeTableScanField(ctx context.Context, tableScanNode *g
 	columns, _ := tableScanNode.ColumnList()
 	for _, column := range columns {
 		name, _ := column.Name()
-		if !strings.HasPrefix(name, afterWord) {
+		if !hasPrefixFold(name, afterWord) {
 			continue
 		}
 		item, ok := c.createCompletionItemFromColumn(ctx, afterWord, column)
@@ -277,7 +277,7 @@ func (c *completor) completeTableScanField(ctx context.Context, tableScanNode *g
 
 func (c *completor) completeWithScanField(ctx context.Context, withScanNode *googlesql.ResolvedWithRefScan, incompleteColumnName string) []CompletionItem {
 	withQueryName, _ := withScanNode.WithQueryName()
-	if strings.HasPrefix(withQueryName, incompleteColumnName) {
+	if hasPrefixFold(withQueryName, incompleteColumnName) {
 		return []CompletionItem{
 			{
 				Kind:        lsp.CIKModule,
@@ -297,7 +297,7 @@ func (c *completor) completeWithScanField(ctx context.Context, withScanNode *goo
 	columns, _ := withScanNode.ColumnList()
 	for _, column := range columns {
 		name, _ := column.Name()
-		if !strings.HasPrefix(name, afterWord) {
+		if !hasPrefixFold(name, afterWord) {
 			continue
 		}
 		item, ok := c.createCompletionItemFromColumn(ctx, afterWord, column)
@@ -482,4 +482,9 @@ func (c *completor) getMostNarrowInputScanNode(node googlesql.ResolvedScanNode, 
 			return nil, false
 		}
 	}
+}
+
+// BigQuery column and alias names are case-insensitive.
+func hasPrefixFold(s, prefix string) bool {
+	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
 }
