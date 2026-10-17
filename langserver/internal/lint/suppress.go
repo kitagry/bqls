@@ -44,6 +44,60 @@ func (s Suppressions) add(line int, rules []string) {
 // Without rule names, every rule is suppressed.
 func ParseSuppressions(src string) Suppressions {
 	result := make(Suppressions)
+	scan(src, func(c comment) {
+		if c.block && !c.lineHasCode && codeFollowsOnLine(src[c.end:]) {
+			// `/* bqls:ignore */ SELECT ...` targets the code on its own line.
+			addDirective(result, c.body, c.endLine, true, c.endLine)
+			return
+		}
+		addDirective(result, c.body, c.startLine, c.lineHasCode, c.endLine)
+	})
+	return result
+}
+
+// LineState tells whether a line's edges are outside string literals and
+// comments, i.e. whether text inserted there would be read as code.
+type LineState struct {
+	// StartsInCode is false when the line begins inside a string literal or
+	// block comment opened on an earlier line.
+	StartsInCode bool
+	// EndsInCode is false when the line ends inside a string literal or a
+	// comment.
+	EndsInCode bool
+}
+
+// LineStates returns the LineState of every line in src.
+func LineStates(src string) []LineState {
+	return scan(src, func(comment) {})
+}
+
+type comment struct {
+	body      string
+	startLine int
+	endLine   int
+	// lineHasCode reports whether code precedes the comment on startLine.
+	lineHasCode bool
+	block       bool
+	// end is the offset just after the comment.
+	end int
+}
+
+// scan lexes src, calling onComment for each comment, and returns the state of
+// every line.
+func scan(src string, onComment func(comment)) []LineState {
+	states := make([]LineState, strings.Count(src, "\n")+1)
+	for l := range states {
+		states[l] = LineState{StartsInCode: true, EndsInCode: true}
+	}
+	span := func(from, to int, closed bool) {
+		for l := from; l < to; l++ {
+			states[l].EndsInCode = false
+			states[l+1].StartsInCode = false
+		}
+		if !closed {
+			states[to].EndsInCode = false
+		}
+	}
 
 	line := 0
 	lineHasCode := false
@@ -62,7 +116,8 @@ func ParseSuppressions(src string) Suppressions {
 			}
 			body := strings.TrimPrefix(src[i:i+end], "#")
 			body = strings.TrimPrefix(body, "--")
-			addDirective(result, body, line, lineHasCode, line)
+			states[line].EndsInCode = false
+			onComment(comment{body: body, startLine: line, endLine: line, lineHasCode: lineHasCode, end: i + end})
 			i += end
 		case c == '/' && strings.HasPrefix(src[i:], "/*"):
 			end := strings.Index(src[i+2:], "*/")
@@ -76,17 +131,15 @@ func ParseSuppressions(src string) Suppressions {
 				next = i + 2 + end + 2
 			}
 			endLine := line + strings.Count(src[i:next], "\n")
-			if !lineHasCode && codeFollowsOnLine(src[next:]) {
-				// `/* bqls:ignore */ SELECT ...` targets the code on its own line.
-				addDirective(result, body, endLine, true, endLine)
-			} else {
-				addDirective(result, body, line, lineHasCode, endLine)
-			}
+			span(line, endLine, end >= 0)
+			onComment(comment{body: body, startLine: line, endLine: endLine, lineHasCode: lineHasCode, block: true, end: next})
 			line = endLine
 			i = next
 		case c == '\'' || c == '"' || c == '`':
-			next := skipQuoted(src, i)
-			line += strings.Count(src[i:next], "\n")
+			next, closed := skipQuoted(src, i)
+			endLine := line + strings.Count(src[i:next], "\n")
+			span(line, endLine, closed)
+			line = endLine
 			lineHasCode = true
 			i = next
 		case c == ' ' || c == '\t' || c == '\r':
@@ -96,7 +149,7 @@ func ParseSuppressions(src string) Suppressions {
 			i++
 		}
 	}
-	return result
+	return states
 }
 
 func codeFollowsOnLine(rest string) bool {
@@ -206,11 +259,11 @@ func ParseIgnoreLine(line string) (IgnoreLine, bool) {
 }
 
 // skipQuoted returns the offset just after the string literal or quoted
-// identifier starting at src[start].
+// identifier starting at src[start], and whether it is terminated.
 //
 // Backslashes always skip the next byte: in GoogleSQL even raw strings cannot
 // be terminated by an escaped quote, so raw/bytes prefixes need no special case.
-func skipQuoted(src string, start int) int {
+func skipQuoted(src string, start int) (int, bool) {
 	q := src[start]
 	delim := src[start : start+1]
 	if q != '`' && strings.HasPrefix(src[start:], strings.Repeat(delim, 3)) {
@@ -223,9 +276,9 @@ func skipQuoted(src string, start int) int {
 			continue
 		}
 		if strings.HasPrefix(src[i:], delim) {
-			return i + len(delim)
+			return i + len(delim), true
 		}
 		i++
 	}
-	return len(src)
+	return len(src), false
 }

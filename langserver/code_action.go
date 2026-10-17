@@ -31,6 +31,7 @@ func (h *Handler) lintCodeActions(ctx context.Context, uri lsp.DocumentURI, rng 
 		return result
 	}
 	lines := strings.Split(src, "\n")
+	states := lint.LineStates(src)
 
 	type ruleLine struct {
 		rule string
@@ -50,7 +51,7 @@ func (h *Handler) lintCodeActions(ctx context.Context, uri lsp.DocumentURI, rng 
 			continue
 		}
 		ignored[key] = true
-		if action, ok := ignoreCodeAction(uri, src, lines, d.Rule, d.Range.Start.Line, lspDiag); ok {
+		if action, ok := ignoreCodeAction(uri, src, lines, states, d.Rule, d.Range.Start.Line, lspDiag); ok {
 			result = append(result, action)
 		}
 	}
@@ -89,13 +90,23 @@ func (h *Handler) supportsCodeActionLiterals() bool {
 	return len(h.initializeParams.Capabilities.TextDocument.CodeAction.CodeActionLiteralSupport.CodeActionKind.ValueSet) > 0
 }
 
-// ignoreCodeAction inserts a standalone directive above the line rather than
-// a trailing one, so it never lands inside a multi-line expression's tail.
+// ignoreCodeAction prefers a standalone directive above the line to a
+// trailing one, so it never lands inside a multi-line expression's tail.
 // When the line above already is a standalone directive, the rule is appended
 // to it instead, because a new line would push that directive off its target.
-func ignoreCodeAction(uri lsp.DocumentURI, src string, lines []string, rule string, line int, diag lsp.Diagnostic) (lsp.CodeAction, bool) {
+// A line that begins inside a multi-line string or comment cannot take a
+// directive above it, so it falls back to a trailing one.
+func ignoreCodeAction(uri lsp.DocumentURI, src string, lines []string, states []lint.LineState, rule string, line int, diag lsp.Diagnostic) (lsp.CodeAction, bool) {
 	var edit lsp.TextEdit
-	if prev, ok := previousIgnoreLine(lines, line); ok {
+	if line < len(states) && !states[line].StartsInCode {
+		// A trailing comment or an unclosed string would swallow the directive.
+		if !states[line].EndsInCode {
+			return lsp.CodeAction{}, false
+		}
+		text := strings.TrimSuffix(lines[line], "\r")
+		pos := byteToUTF16Position(lines, lsp.Position{Line: line, Character: len(text)})
+		edit = lsp.TextEdit{Range: lsp.Range{Start: pos, End: pos}, NewText: " -- bqls:ignore " + rule}
+	} else if prev, ok := previousIgnoreLine(lines, states, line); ok {
 		if len(prev.Rules) == 0 {
 			return lsp.CodeAction{}, false
 		}
@@ -121,8 +132,10 @@ func ignoreCodeAction(uri lsp.DocumentURI, src string, lines []string, rule stri
 	}, true
 }
 
-func previousIgnoreLine(lines []string, line int) (lint.IgnoreLine, bool) {
-	if line == 0 || line > len(lines) {
+// previousIgnoreLine skips a line that begins inside a string or comment,
+// where directive-like text is not a directive.
+func previousIgnoreLine(lines []string, states []lint.LineState, line int) (lint.IgnoreLine, bool) {
+	if line == 0 || line > len(lines) || !states[line-1].StartsInCode {
 		return lint.IgnoreLine{}, false
 	}
 	return lint.ParseIgnoreLine(lines[line-1])
