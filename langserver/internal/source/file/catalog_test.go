@@ -421,9 +421,8 @@ func TestCatalog_PreloadDMLTargets(t *testing.T) {
 		"nested DML targets are array columns": {
 			src:    "UPDATE p.d.t SET (DELETE FROM arr WHERE true), (INSERT d.arr VALUES (1)) WHERE true",
 			tables: []string{"t"},
-			// Nested DML is analyzed standalone and fails to resolve the array
-			// column (#402).
-			tolerate: []string{"Table not found: arr", "Table not found: d.arr", "Unrecognized name: d"},
+			// d.arr is not a column of the outer table.
+			tolerate: []string{"Unrecognized name: d"},
 		},
 	}
 	for name, tt := range tests {

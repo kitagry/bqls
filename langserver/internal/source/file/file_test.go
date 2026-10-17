@@ -1483,6 +1483,21 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 			expectedErrs:     []file.Error{},
 			expectedRNodeLen: 2,
 		},
+		"nested DML inside UPDATE SET": {
+			file: "UPDATE p.d.t SET (DELETE FROM arr WHERE true) WHERE true;\n" +
+				"UPDATE p.d.t SET (INSERT arr VALUES (1)) WHERE true;\n" +
+				"UPDATE p.d.t SET (UPDATE arr SET arr = 1 WHERE true) WHERE true;",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"p.d.t": {
+					Schema: bq.Schema{
+						{Name: "x", Type: bq.IntegerFieldType},
+						{Name: "arr", Type: bq.IntegerFieldType, Repeated: true},
+					},
+				},
+			},
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 3,
+		},
 		"broken SELECT inside IF": {
 			file: "IF TRUE THEN\n  SELECT UNKNOWN_FUNC();\nEND IF;",
 			expectedErrs: []file.Error{

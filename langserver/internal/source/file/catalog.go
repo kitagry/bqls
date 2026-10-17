@@ -348,12 +348,9 @@ func dmlTargetPath(n googlesql.ASTNode) *googlesql.ASTPathExpression {
 	if err != nil {
 		return nil
 	}
-	// Nested DML inside UPDATE ... SET (...) targets an array column, not a
-	// table. Checked after the switch because Walk visits every node.
-	if parent, err := n.Parent(); err == nil {
-		if _, ok := parent.(*googlesql.ASTUpdateItem); ok {
-			return nil
-		}
+	// Checked after the switch because Walk visits every node.
+	if isNestedDMLStatement(n) {
+		return nil
 	}
 	pe, _ := target.(*googlesql.ASTPathExpression)
 	return pe
