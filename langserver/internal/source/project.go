@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	bq "cloud.google.com/go/bigquery"
@@ -20,6 +21,9 @@ type Project struct {
 	cache    *cache.GlobalCache
 	bqClient bigquery.Client
 	analyzer *file.Analyzer
+
+	diagnoseMu    sync.Mutex
+	diagnoseCache map[lsp.DocumentURI]*diagnoseEntry
 }
 
 type File struct {
@@ -38,6 +42,8 @@ func NewProject(ctx context.Context, rootPath string, bqClient bigquery.Client, 
 		cache:    cache,
 		bqClient: bqClient,
 		analyzer: analyzer,
+
+		diagnoseCache: make(map[lsp.DocumentURI]*diagnoseEntry),
 	}
 }
 
@@ -50,6 +56,8 @@ func NewProjectWithBQClient(rootPath string, bqClient bigquery.Client, logger *l
 		cache:    cache,
 		bqClient: bqClient,
 		analyzer: analyzer,
+
+		diagnoseCache: make(map[lsp.DocumentURI]*diagnoseEntry),
 	}
 }
 
@@ -77,6 +85,7 @@ func (p *Project) OpenFiles() []lsp.DocumentURI {
 
 func (p *Project) DeleteFile(uri lsp.DocumentURI) {
 	p.cache.Delete(uri)
+	p.forgetDiagnostics(uri)
 }
 
 func (p *Project) Dryrun(ctx context.Context, uri lsp.DocumentURI) (*bq.JobStatus, error) {
