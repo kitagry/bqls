@@ -93,7 +93,7 @@ func checkNullComparison(pass *Pass, call *googlesql.ResolvedFunctionCall) {
 	pass.Report(d)
 }
 
-var nullSourcePattern = regexp.MustCompile(`(?i)^\(*\s*(NULL\b|CAST\s*\(\s*NULL\s+AS\b)`)
+var nullSourcePattern = regexp.MustCompile(`(?i)^\(*\s*(NULL\b|(SAFE_)?CAST\s*\(\s*NULL\s+AS\b)`)
 
 // NullComparisonParts is a `<other> <op> <null>` comparison split from its source text.
 type NullComparisonParts struct {
