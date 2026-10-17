@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode"
 
+	bq "cloud.google.com/go/bigquery"
 	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/bqparser"
@@ -31,6 +32,18 @@ type ParsedFile struct {
 
 	FixOffsets []FixOffset
 	Errors     []Error
+
+	catalog *Catalog
+}
+
+// TableMetadata returns the metadata the analysis already fetched for path,
+// so that callers can avoid asking BigQuery for the same table again.
+func (p ParsedFile) TableMetadata(path string) (*bq.TableMetadata, bool) {
+	if p.catalog == nil {
+		return nil, false
+	}
+	meta, err := p.catalog.FindTableMetadata(path)
+	return meta, err == nil
 }
 
 func (p ParsedFile) Close() {}

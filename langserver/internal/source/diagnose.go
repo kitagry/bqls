@@ -29,7 +29,12 @@ func (p *Project) Diagnose(ctx context.Context, uri lsp.DocumentURI, cfg lint.Co
 	parsedFile := p.analyzer.ParseFile(uri, sql.RawText)
 	defer parsedFile.Close()
 
-	env := lint.Env{LookupTable: p.lookupTable}
+	env := lint.Env{LookupTable: func(ctx context.Context, path string) (*bq.TableMetadata, error) {
+		if meta, ok := parsedFile.TableMetadata(path); ok {
+			return meta, nil
+		}
+		return p.lookupTable(ctx, path)
+	}}
 	return Diagnostics{
 		Errors:     parsedFile.Errors,
 		ErrorFixes: errorFixes(parsedFile),

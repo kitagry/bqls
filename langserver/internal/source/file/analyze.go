@@ -231,6 +231,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 
 	var node *googlesql.ASTScript
 	var rnode []*googlesql.AnalyzerOutput
+	var catalog *Catalog
 	for _retry := 0; _retry < 10; _retry++ {
 		rnode = make([]*googlesql.AnalyzerOutput, 0)
 		var err error
@@ -268,7 +269,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			break
 		}
 
-		catalog := a.catalog.Clone()
+		catalog = a.catalog.Clone()
 
 		// Pre-load tables referenced in the SQL from BigQuery
 		catalog.PreloadTablesFromAST(node)
@@ -421,6 +422,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 		ParseTree:  bqparser.Parse(fixedSrc),
 		FixOffsets: fixOffsets,
 		Errors:     errs,
+		catalog:    catalog,
 	}
 }
 
