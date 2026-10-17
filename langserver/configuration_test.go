@@ -125,6 +125,27 @@ func TestMergeSettings(t *testing.T) {
 				Lint:                             lint.Config{Rules: map[string]bool{}},
 			},
 		},
+		"capitalized Lint key still replaces rules": {
+			raw: `{"Lint": {"rules": {"b": true}}}`,
+			want: InitializeOption{
+				ProjectID:                        "p",
+				Location:                         "US",
+				SupportsAsyncVirtualTextDocument: true,
+				Lint:                             lint.Config{Rules: map[string]bool{"b": true}},
+			},
+		},
+		"null lint resets rules to defaults": {
+			raw: `{"lint": null}`,
+			want: InitializeOption{
+				ProjectID:                        "p",
+				Location:                         "US",
+				SupportsAsyncVirtualTextDocument: true,
+			},
+		},
+		"null project_id keeps the previous project": {
+			raw:  `{"project_id": null}`,
+			want: prev,
+		},
 		"explicit empty project_id resets to the default project": {
 			raw: `{"project_id": ""}`,
 			want: InitializeOption{
