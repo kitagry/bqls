@@ -50,6 +50,8 @@ You can change project_id with `workspace/didChangeConfiguration`.
 vim.lsp.buf_notify(0, "workspace/didChangeConfiguration", { settings = { project_id = "ANOTHER_PROJECT_ID", location = "ANOTHER_LOCATION" } })
 ```
 
+Settings omitted from the notification keep their current values, so you can send only what changed. A `lint` setting, when sent, replaces the whole rule set (`lint = {}` restores the defaults).
+
 `bqls` also supports fetching virtual document previews (table/job info) asynchronously so the
 client isn't blocked while BigQuery is queried; see [`bqls/publishVirtualTextDocument`](./docs/api_reference.md)
 in the API reference. This is opt-in via `supports_async_virtual_text_document` in

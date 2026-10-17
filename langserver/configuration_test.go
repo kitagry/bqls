@@ -146,6 +146,10 @@ func TestMergeSettings(t *testing.T) {
 			raw:  `null`,
 			want: prev,
 		},
+		"omitted settings change nothing": {
+			raw:  ``,
+			want: prev,
+		},
 		"empty settings change nothing": {
 			raw:  `{}`,
 			want: prev,
