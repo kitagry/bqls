@@ -194,3 +194,60 @@ func TestParseIgnoreLine(t *testing.T) {
 		})
 	}
 }
+
+func TestLineStates(t *testing.T) {
+	code := lint.LineState{StartsInCode: true, EndsInCode: true}
+	tests := map[string]struct {
+		src  string
+		want []lint.LineState
+	}{
+		"plain code lines": {
+			src:  "SELECT 1\nFROM t",
+			want: []lint.LineState{code, code},
+		},
+		"line comment ends its line outside code": {
+			src:  "SELECT 1 -- note\nFROM t",
+			want: []lint.LineState{{StartsInCode: true}, code},
+		},
+		"hash comment ends its line outside code": {
+			src:  "SELECT 1 # note\nFROM t",
+			want: []lint.LineState{{StartsInCode: true}, code},
+		},
+		"CRLF line endings": {
+			src:  "SELECT '''\r\nfoo\r\nbar''' AS s\r\n",
+			want: []lint.LineState{{StartsInCode: true}, {}, {EndsInCode: true}, code},
+		},
+		"unterminated block comment ends the last line inside it": {
+			src:  "SELECT 1 /* a\nb",
+			want: []lint.LineState{{StartsInCode: true}, {}},
+		},
+		"triple-quoted string spanning lines": {
+			src:  "SELECT '''\nfoo\nbar''' AS s",
+			want: []lint.LineState{{StartsInCode: true}, {}, {EndsInCode: true}},
+		},
+		"block comment spanning lines": {
+			src:  "SELECT 1 /* a\nb */ FROM t",
+			want: []lint.LineState{{StartsInCode: true}, {EndsInCode: true}},
+		},
+		"comment markers inside a multi-line string are not comments": {
+			src:  "SELECT '''\n-- not a comment\n''' AS s",
+			want: []lint.LineState{{StartsInCode: true}, {}, {EndsInCode: true}},
+		},
+		"unterminated string ends the last line inside it": {
+			src:  "SELECT '''\nfoo",
+			want: []lint.LineState{{StartsInCode: true}, {}},
+		},
+		"escaped quote does not close a multi-line string": {
+			src:  "SELECT '''a\\'''\nb''' AS s",
+			want: []lint.LineState{{StartsInCode: true}, {EndsInCode: true}},
+		},
+	}
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			got := lint.LineStates(tt.src)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("LineStates() diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
