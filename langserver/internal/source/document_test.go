@@ -283,6 +283,33 @@ Storage info
 				lsp.RawMarkedString("name description"),
 			},
 		},
+		"hover column after statement with unfixable error": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT UNKNOWN_FUNC();\nSELECT id, |name FROM `project.dataset.table`;\nSELECT id FROM `project.dataset.table2`",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+						{Name: "name", Type: bq.StringFieldType, Description: "name description"},
+					},
+				}, nil).MinTimes(0)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table2").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table2",
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{Language: "sql", Value: "name: STRING (nullable)"},
+				lsp.RawMarkedString("name description"),
+			},
+		},
 		"hover column after SET statement": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "DECLARE x INT64;\nSET x = 1;\nIF x = 1 THEN SELECT 1; END IF;\nWITH data AS (SELECT id FROM `project.dataset.table`)\nSELECT id| FROM data",

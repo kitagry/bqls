@@ -230,10 +230,10 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 	fixedSrc, errs, fixOffsets := fixDot(src)
 
 	var node *googlesql.ASTScript
-	var rnode []*googlesql.AnalyzerOutput
+	var statements []StatementResult
 	var catalog *Catalog
 	for _retry := 0; _retry < 10; _retry++ {
-		rnode = make([]*googlesql.AnalyzerOutput, 0)
+		statements = make([]StatementResult, 0)
 		var err error
 		var fo []FixOffset
 		node, err = a.parseScript(fixedSrc)
@@ -310,6 +310,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				newFunc, err := a.createFunctionTypes(fnNode, fixedSrc, catalog)
 				if err != nil {
 					errs = append(errs, *err)
+					statements = append(statements, StatementResult{Stmt: s, Err: err})
 					continue
 				}
 				if newFunc != nil {
@@ -333,10 +334,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				output, err = a.AnalyzeStatement(fixedSrc, s, catalog)
 			}
 			if err == nil {
-				// Assignments are not statement outputs, so they never enter RNode.
-				if output != nil {
-					rnode = append(rnode, output)
-				}
+				statements = append(statements, StatementResult{Stmt: s, Output: output})
 				continue
 			}
 
@@ -404,6 +402,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 
 			if !skipError {
 				errs = append(errs, pErr)
+				statements = append(statements, StatementResult{Stmt: s, Err: &pErr})
 			}
 			if len(fo) > 0 {
 				fixOffsets = append(fixOffsets, fo...)
@@ -414,12 +413,21 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 	retry:
 	}
 
+	// Assignments are not statement outputs, so they never enter RNode.
+	rnode := make([]*googlesql.AnalyzerOutput, 0, len(statements))
+	for _, s := range statements {
+		if s.Output != nil {
+			rnode = append(rnode, s.Output)
+		}
+	}
+
 	return ParsedFile{
 		URI:        uri,
 		Src:        src,
 		FixedSrc:   fixedSrc,
 		Node:       node,
 		RNode:      rnode,
+		Statements: statements,
 		ParseTree:  bqparser.Parse(fixedSrc),
 		FixOffsets: fixOffsets,
 		Errors:     errs,

@@ -25,8 +25,14 @@ type ParsedFile struct {
 
 	// googlesql AST node
 	Node *googlesql.ASTScript
-	// index is Node's statement order
+	// RNode holds the outputs of the statements whose analysis succeeded, in
+	// Node's statement order.
 	RNode []*googlesql.AnalyzerOutput
+	// Statements holds the result of every statement analyzed in the final
+	// pass, so that a failed statement does not shift which output belongs to
+	// which statement. When the retry limit is reached, the final pass stops
+	// early and Statements covers only a prefix of the file.
+	Statements []StatementResult
 
 	ParseTree *bqparser.Node
 
@@ -44,6 +50,14 @@ func (p ParsedFile) TableMetadata(path string) (*bq.TableMetadata, bool) {
 	}
 	meta, err := p.catalog.FindTableMetadata(path)
 	return meta, err == nil
+}
+
+// StatementResult is the analysis result of a single statement. Output is nil
+// when the analysis failed or the statement produces no output, such as SET.
+type StatementResult struct {
+	Stmt   googlesql.ASTStatementNode
+	Output *googlesql.AnalyzerOutput
+	Err    *Error
 }
 
 func (p ParsedFile) Close() {}
@@ -124,23 +138,14 @@ func (p ParsedFile) fixTermOffsetForSQL(termOffset int) int {
 }
 
 func (p ParsedFile) FindTargetStatementNode(termOffset int) (googlesql.ASTStatementNode, bool) {
-	stmts := collectStatementsFromNode(p.Node)
+	stmts := collectStatements(p.Node)
 
 	if len(stmts) == 1 {
 		return stmts[0], true
 	}
 
 	for _, stmt := range stmts {
-		loc, _ := stmt.GetParseLocationRange()
-		if loc == nil {
-			continue
-		}
-		startOffset := parseLocStart(loc)
-		endOffset := parseLocEnd(loc)
-		if startOffset < 0 || endOffset < 0 {
-			continue
-		}
-		if startOffset <= termOffset && termOffset <= endOffset {
+		if containsOffset(stmt, termOffset) {
 			return stmt, true
 		}
 	}
@@ -148,42 +153,19 @@ func (p ParsedFile) FindTargetStatementNode(termOffset int) (googlesql.ASTStatem
 	return nil, false
 }
 
-func (p ParsedFile) findTargetStatementNodeIndex(termOffset int) (int, bool) {
-	stmts := collectStatementsFromNode(p.Node)
-	// Filter out statements that never produce an analyzer output so that
-	// indices stay aligned with RNode.
-	filtered := make([]googlesql.ASTStatementNode, 0, len(stmts))
-	insideScriptControl := false
-	for _, s := range stmts {
-		kind, _ := s.NodeKind()
-		// stmts is in pre-order, so the last statement containing the cursor
-		// is the innermost one.
-		if containsOffset(s, termOffset) {
-			insideScriptControl = isScriptControlStatement(kind)
-		}
-		if kind == googlesql.ASTNodeKindAstVariableDeclaration || isScriptControlStatement(kind) {
-			continue
-		}
-		filtered = append(filtered, s)
-	}
-
-	// A script statement such as SET has no analyzer output of its own, and
-	// returning another statement's output would resolve names in the wrong scope.
-	if insideScriptControl {
-		return -1, false
-	}
-
-	if len(filtered) == 1 {
-		return 0, true
-	}
-
-	for i, stmt := range filtered {
-		if containsOffset(stmt, termOffset) {
-			return i, true
+// isInsideScriptControl reports whether the innermost statement containing
+// offset is a script statement such as SET or IF.
+func (p ParsedFile) isInsideScriptControl(offset int) bool {
+	inside := false
+	// collectStatements is in pre-order, so the last statement containing the
+	// offset is the innermost one.
+	for _, s := range collectStatements(p.Node) {
+		if containsOffset(s, offset) {
+			kind, _ := s.NodeKind()
+			inside = isScriptControlStatement(kind)
 		}
 	}
-
-	return -1, false
+	return inside
 }
 
 func containsOffset(stmt googlesql.ASTStatementNode, offset int) bool {
@@ -200,16 +182,48 @@ func containsOffset(stmt googlesql.ASTStatementNode, offset int) bool {
 }
 
 func (p *ParsedFile) FindTargetAnalyzeOutput(termOffset int) (*googlesql.AnalyzerOutput, bool) {
-	index, ok := p.findTargetStatementNodeIndex(termOffset)
-	if !ok {
+	// A script statement such as SET has no analyzer output of its own, and
+	// returning another statement's output would resolve names in the wrong scope.
+	if p.isInsideScriptControl(termOffset) {
 		return nil, false
 	}
 
-	if index >= len(p.RNode) {
+	// Candidates come from the AST rather than Statements, because Statements
+	// can miss trailing statements and would make another statement look like
+	// the only candidate.
+	candidates := make([]googlesql.ASTStatementNode, 0)
+	for _, s := range collectStatements(p.Node) {
+		kind, _ := s.NodeKind()
+		if kind == googlesql.ASTNodeKindAstVariableDeclaration || isScriptControlStatement(kind) {
+			continue
+		}
+		candidates = append(candidates, s)
+	}
+
+	var target googlesql.ASTStatementNode
+	if len(candidates) == 1 {
+		target = candidates[0]
+	} else {
+		for _, s := range candidates {
+			if containsOffset(s, termOffset) {
+				target = s
+				break
+			}
+		}
+	}
+	if target == nil {
 		return nil, false
 	}
 
-	return p.RNode[index], true
+	// Each walk wraps AST nodes in new Go values, so statements are matched by
+	// their location instead of by identity.
+	start, end := locStart(target), locEnd(target)
+	for _, s := range p.Statements {
+		if locStart(s.Stmt) == start && locEnd(s.Stmt) == end {
+			return s.Output, s.Output != nil
+		}
+	}
+	return nil, false
 }
 
 func (p *ParsedFile) FindIncompleteColumnName(pos lsp.Position) string {
@@ -223,24 +237,6 @@ func (p *ParsedFile) FindIncompleteColumnName(pos lsp.Position) string {
 		}
 	}
 	return ""
-}
-
-// collectStatementsFromNode collects all statement nodes from the AST.
-func collectStatementsFromNode(node *googlesql.ASTScript) []googlesql.ASTStatementNode {
-	stmts := make([]googlesql.ASTStatementNode, 0)
-	Walk(node, func(n googlesql.ASTNode) error { //nolint
-		if n == nil {
-			return nil
-		}
-		isStmt, _ := n.IsStatement()
-		if isStmt && !isNestedDMLStatement(n) {
-			if sn, ok := n.(googlesql.ASTStatementNode); ok {
-				stmts = append(stmts, sn)
-			}
-		}
-		return nil
-	})
-	return stmts
 }
 
 type FixOffset struct {
