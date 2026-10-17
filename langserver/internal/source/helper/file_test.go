@@ -195,12 +195,12 @@ func TestBytePositionToUTF16Position(t *testing.T) {
 	}
 }
 
-func TestByteRangeToUTF16Range(t *testing.T) {
+func TestPositionConverter_RangeToUTF16(t *testing.T) {
 	src := "SELECT '😀', x\nFROM t"
 	r := lsp.Range{Start: lsp.Position{Line: 0, Character: 14}, End: lsp.Position{Line: 1, Character: 4}}
 	want := lsp.Range{Start: lsp.Position{Line: 0, Character: 12}, End: lsp.Position{Line: 1, Character: 4}}
-	if diff := cmp.Diff(want, helper.ByteRangeToUTF16Range(src, r)); diff != "" {
-		t.Errorf("ByteRangeToUTF16Range() diff (-want +got):\n%s", diff)
+	if diff := cmp.Diff(want, helper.NewPositionConverter(src).RangeToUTF16(r)); diff != "" {
+		t.Errorf("RangeToUTF16() diff (-want +got):\n%s", diff)
 	}
 }
 

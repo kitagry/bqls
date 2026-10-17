@@ -28,7 +28,7 @@ func (h *Handler) lintCodeActions(ctx context.Context, uri lsp.DocumentURI, rng 
 	conv := helper.NewPositionConverter(src)
 	var result []any
 	for i, fixes := range diags.ErrorFixes {
-		diag := convertErrorsToDiagnostics(src, diags.Errors[i:i+1])[0]
+		diag := errorsToLspDiagnostics(conv, diags.Errors[i:i+1])[0]
 		result = append(result, fixCodeActions(uri, diag, fixesToUTF16(conv, fixes), rng)...)
 	}
 	if len(diags.Lint) == 0 {
@@ -43,7 +43,7 @@ func (h *Handler) lintCodeActions(ctx context.Context, uri lsp.DocumentURI, rng 
 	}
 	ignored := make(map[ruleLine]bool)
 	for _, d := range diags.Lint {
-		lspDiag := convertLintDiagnostics(src, []lint.Diagnostic{d})[0]
+		lspDiag := lintDiagnosticsToLsp(conv, []lint.Diagnostic{d})[0]
 		if !rangesOverlap(lspDiag.Range, rng) {
 			continue
 		}
@@ -90,9 +90,12 @@ func fixesToUTF16(conv helper.PositionConverter, fixes []lint.SuggestedFix) []li
 	for i, fix := range fixes {
 		edits := make([]lsp.TextEdit, len(fix.Edits))
 		for j, e := range fix.Edits {
-			edits[j] = lsp.TextEdit{Range: conv.RangeToUTF16(e.Range), NewText: e.NewText}
+			e.Range = conv.RangeToUTF16(e.Range)
+			edits[j] = e
 		}
-		result[i] = lint.SuggestedFix{Title: fix.Title, Edits: edits}
+		// Copy the whole fix so fields added to SuggestedFix later survive.
+		result[i] = fix
+		result[i].Edits = edits
 	}
 	return result
 }
@@ -125,6 +128,9 @@ func ignoreCodeAction(uri lsp.DocumentURI, conv helper.PositionConverter, lines 
 		if len(prev.Rules) == 0 {
 			return lsp.CodeAction{}, false
 		}
+		// ParseIgnoreLine only allows spaces and tabs before the directive, so
+		// RulesEnd is ASCII-only today; convert anyway so the edit stays right
+		// if the directive syntax ever admits non-ASCII text before the rules.
 		pos := conv.ToUTF16(lsp.Position{Line: line - 1, Character: prev.RulesEnd})
 		edit = lsp.TextEdit{Range: lsp.Range{Start: pos, End: pos}, NewText: ", " + rule}
 	} else {

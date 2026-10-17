@@ -130,7 +130,3 @@ func UTF16PositionToBytePosition(src string, pos lsp.Position) lsp.Position {
 func BytePositionToUTF16Position(src string, pos lsp.Position) lsp.Position {
 	return NewPositionConverter(src).ToUTF16(pos)
 }
-
-func ByteRangeToUTF16Range(src string, r lsp.Range) lsp.Range {
-	return NewPositionConverter(src).RangeToUTF16(r)
-}

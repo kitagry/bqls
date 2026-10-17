@@ -35,7 +35,9 @@ func (c CompletionItem) ToLspCompletionItem(position lsp.Position, supportSnippe
 	// position comes from the client in UTF-16 units, so the prefix is
 	// measured in the same unit rather than in bytes.
 	startPosition := position
-	startPosition.Character -= len(utf16.Encode([]rune(c.TypedPrefix)))
+	for _, r := range c.TypedPrefix {
+		startPosition.Character -= utf16.RuneLen(r)
+	}
 	return lsp.CompletionItem{
 		InsertTextFormat: lsp.ITFSnippet,
 		Kind:             c.Kind,

@@ -329,7 +329,9 @@ func TestHandler_lintCodeActions_AfterNonASCIIText(t *testing.T) {
 	}
 }
 
-func TestHandler_handleTextDocumentCodeAction_ExtendsExistingIgnoreAfterNonASCIIText(t *testing.T) {
+// Non-ASCII text after the rule list, and on other lines, must not disturb
+// where the rule is appended.
+func TestHandler_handleTextDocumentCodeAction_ExtendsExistingIgnoreWithTrailingNonASCIIText(t *testing.T) {
 	const uri lsp.DocumentURI = "file:///a.sql"
 	const src = "SELECT '😀'\nFROM UNNEST([1]) AS x\n\t-- bqls:ignore other-rule -- あ😀\n  WHERE x = CAST(NULL AS INT64)"
 	h := newTestHandlerWithFile(t, uri, src)

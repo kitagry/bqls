@@ -20,22 +20,18 @@ func (p *Project) LookupIdent(ctx context.Context, uri lsp.DocumentURI, position
 	if err != nil {
 		return nil, err
 	}
-	return p.locationsToUTF16(uri, sql.RawText, locs), nil
+	return locationsToUTF16(uri, sql.RawText, locs), nil
 }
 
-// locationsToUTF16 converts byte-column ranges with the source of the file
-// each location points at, since a location may be in another document.
-func (p *Project) locationsToUTF16(uri lsp.DocumentURI, src string, locs []lsp.Location) []lsp.Location {
+// locationsToUTF16 converts only locations in the current document, because
+// the only other target is a table's virtual document, whose 0:0 range is the
+// same in any unit and whose text is not src.
+func locationsToUTF16(uri lsp.DocumentURI, src string, locs []lsp.Location) []lsp.Location {
+	conv := helper.NewPositionConverter(src)
 	for i, loc := range locs {
-		target := src
-		if loc.URI != uri {
-			s, ok := p.GetFile(loc.URI)
-			if !ok {
-				continue
-			}
-			target = s
+		if loc.URI == uri {
+			locs[i].Range = conv.RangeToUTF16(loc.Range)
 		}
-		locs[i].Range = helper.ByteRangeToUTF16Range(target, loc.Range)
 	}
 	return locs
 }

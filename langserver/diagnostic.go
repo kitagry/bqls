@@ -155,8 +155,11 @@ func (h *Handler) diagnose(ctx context.Context, uri lsp.DocumentURI) (map[lsp.Do
 const lintDiagnosticSource = "bqls-lint"
 
 func convertLintDiagnostics(src string, diags []lint.Diagnostic) []lsp.Diagnostic {
+	return lintDiagnosticsToLsp(helper.NewPositionConverter(src), diags)
+}
+
+func lintDiagnosticsToLsp(conv helper.PositionConverter, diags []lint.Diagnostic) []lsp.Diagnostic {
 	result := make([]lsp.Diagnostic, len(diags))
-	conv := helper.NewPositionConverter(src)
 	for i, d := range diags {
 		result[i] = lsp.Diagnostic{
 			Range:    conv.RangeToUTF16(d.Range),
@@ -206,8 +209,11 @@ func bytesConvert(bytes int64) string {
 }
 
 func convertErrorsToDiagnostics(src string, errs []file.Error) []lsp.Diagnostic {
+	return errorsToLspDiagnostics(helper.NewPositionConverter(src), errs)
+}
+
+func errorsToLspDiagnostics(conv helper.PositionConverter, errs []file.Error) []lsp.Diagnostic {
 	result := make([]lsp.Diagnostic, len(errs))
-	conv := helper.NewPositionConverter(src)
 	for i, err := range errs {
 		endPosition := err.Position
 		endPosition.Character += err.TermLength
