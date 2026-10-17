@@ -759,6 +759,54 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 	return fixedSrc, []FixOffset{fixOffset}
 }
 
+// addInformationToNotBoolClauseError fills IncompleteColumnName only when the whole
+// WHERE/ON condition is a bare path, because only then is the user plausibly mid-way
+// through typing a column name (as opposed to e.g. `WHERE 1 + 1`).
+func addInformationToNotBoolClauseError(src string, node googlesql.ASTNode, parsedErr Error) Error {
+	errOffset, ok := errorByteOffset(src, parsedErr.Position)
+	if !ok {
+		return parsedErr
+	}
+
+	// The message names the failing clause; searching by it avoids matching an outer
+	// WHERE when the error is in a JOIN ON nested inside it (and vice versa).
+	var expr googlesql.ASTExpressionNode
+	switch {
+	case strings.HasPrefix(parsedErr.Msg, "WHERE clause"):
+		if where, ok := SearchAstNode[*googlesql.ASTWhereClause](node, errOffset); ok {
+			expr, _ = where.Expression()
+		}
+	case strings.HasPrefix(parsedErr.Msg, "JOIN ON clause"):
+		if on, ok := SearchAstNode[*googlesql.ASTOnClause](node, errOffset); ok {
+			expr, _ = on.Expression()
+		}
+	}
+	pathExpr, ok := expr.(*googlesql.ASTPathExpression)
+	if !ok {
+		return parsedErr
+	}
+
+	start, end := locStart(pathExpr), locEnd(pathExpr)
+	if start != errOffset || end < start || end > len(src) {
+		return parsedErr
+	}
+	parsedErr.TermLength = end - start
+	parsedErr.IncompleteColumnName = src[start:end]
+	return parsedErr
+}
+
+// fixNotBoolClauseError replaces only the bare path itself; searching for an enclosing
+// binary expression (as fixErrorForWhereStatement does) could rewrite an outer one.
+func fixNotBoolClauseError(src string, parsedErr Error) (fixedSrc string, fixOffsets []FixOffset) {
+	start, ok := errorByteOffset(src, parsedErr.Position)
+	end := start + parsedErr.TermLength
+	if !ok || end > len(src) {
+		return src, nil
+	}
+	fixedSrc = src[:start] + "true" + src[end:]
+	return fixedSrc, []FixOffset{{Offset: start, Length: len("true") - parsedErr.TermLength}}
+}
+
 func addInformationToNotExistInStructError(src string, parsedErr Error) Error {
 	ind := strings.Index(parsedErr.Msg, "Field name ")
 	if ind == -1 {

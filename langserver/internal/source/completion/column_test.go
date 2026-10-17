@@ -901,6 +901,88 @@ func TestProject_CompleteColumns(t *testing.T) {
 				},
 			},
 		},
+		"Complete column in where clause while typing an existing column name": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT * FROM `project.dataset.table` WHERE id|",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+						{
+							Name: "id_alias",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+					TypedPrefix: "id",
+				},
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id_alias",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+					TypedPrefix: "id",
+				},
+			},
+		},
+		"Complete column in where clause while typing a column name prefix at end of script": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT * FROM `project.dataset.table` WHERE i|",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+						{
+							Name: "id_alias",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+					TypedPrefix: "i",
+				},
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id_alias",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+					TypedPrefix: "i",
+				},
+			},
+		},
 		"Complete incomplete column in order by clause": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM `project.dataset.table` ORDER BY i|",
