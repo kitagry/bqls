@@ -1528,6 +1528,166 @@ func TestProject_CompleteColumns(t *testing.T) {
 				},
 			},
 		},
+		"Complete incomplete column case-insensitively": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT I| FROM `project.dataset.table`",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+						{Name: "name", Type: bq.StringFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+					TypedPrefix: "I",
+				},
+			},
+		},
+		"Complete incomplete partition pseudo column case-insensitively": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT _part| FROM `project.dataset.table`",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+					TimePartitioning: &bq.TimePartitioning{Type: bq.DayPartitioningType},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "_PARTITIONTIME",
+					Detail:  "TIMESTAMP",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "TIMESTAMP",
+					},
+					TypedPrefix: "_part",
+				},
+				{
+					Kind:    lsp.CIKField,
+					NewText: "_PARTITIONDATE",
+					Detail:  "DATE",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "DATE",
+					},
+					TypedPrefix: "_part",
+				},
+			},
+		},
+		"Complete incomplete column with table alias case-insensitively": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT t.I| FROM `project.dataset.table` AS t",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+						{Name: "name", Type: bq.StringFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+					TypedPrefix: "I",
+				},
+			},
+		},
+		"Complete incomplete record column case-insensitively": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT record.I| FROM `project.dataset.table`",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "record",
+							Type: bq.RecordFieldType,
+							Schema: bq.Schema{
+								{Name: "id", Type: bq.IntegerFieldType},
+								{Name: "name", Type: bq.StringFieldType},
+							},
+						},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+					TypedPrefix: "I",
+				},
+			},
+		},
+		"Complete table alias case-insensitively": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT T| FROM `project.dataset.table` AS table",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKModule,
+					NewText: "table",
+					Detail:  "TABLE ALIAS",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "project.dataset.table",
+					},
+					TypedPrefix: "T",
+				},
+			},
+		},
+		"Complete with scan alias case-insensitively": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "WITH data AS (SELECT * FROM `project.dataset.table`)\nSELECT D| FROM data",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:        lsp.CIKModule,
+					NewText:     "data",
+					Detail:      "CTE",
+					TypedPrefix: "D",
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {
