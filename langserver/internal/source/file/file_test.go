@@ -1443,6 +1443,92 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 				},
 			},
 		},
+		"Report error once when a later statement triggers a declaration retry": {
+			file: "DECLARE y STRING;\n" +
+				"DECLARE x INT64;\n" +
+				"SELECT UNKNOWN_FUNC() + LENGTH(y);\n" +
+				"SELECT y;",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{
+						Line:      2,
+						Character: 7,
+					},
+				},
+			},
+		},
+		"Report errors once when a later statement triggers a fix-up retry": {
+			file: "SELECT UNKNOWN_FUNC();\n" +
+				"SELECT unknown_column;",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 7,
+					},
+				},
+				{
+					Msg: "Unrecognized name: unknown_column",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 7,
+					},
+					TermLength:           14,
+					IncompleteColumnName: "unknown_column",
+				},
+			},
+		},
+		"Keep analysis errors when a fix-up makes the source unparsable": {
+			file: "SELECT UNKNOWN_FUNC();\n" +
+				"SELECT unknown.*;",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: `Syntax error: Unexpected ";"`,
+					Position: lsp.Position{
+						Line:      1,
+						Character: 10,
+					},
+				},
+				{
+					Msg: "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 7,
+					},
+				},
+				{
+					Msg: "Unrecognized name: unknown",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 7,
+					},
+					TermLength:           7,
+					IncompleteColumnName: "unknown",
+				},
+			},
+		},
+		"Report create function error once when a later statement triggers a retry": {
+			file: "CREATE TEMP FUNCTION target_func(x INT64) AS (x * 10);\n" +
+				"DECLARE y INT64;\n" +
+				"SELECT y;",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Currently, bqls does not support function without return type.",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 0,
+					},
+					TermLength: 53,
+					Severity:   lsp.Warning,
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {

@@ -3,6 +3,7 @@ package file
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	bq "cloud.google.com/go/bigquery"
@@ -232,6 +233,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 	var node *googlesql.ASTScript
 	var statements []StatementResult
 	var catalog *Catalog
+	// Statements are re-analyzed on every retry, so only errors whose fix-up was applied
+	// (they no longer reproduce in the fixed source) survive a pass; the rest come from the final pass.
+	var fixedErrs, passErrs []statementError
 	for _retry := 0; _retry < 10; _retry++ {
 		statements = make([]StatementResult, 0)
 		var err error
@@ -268,6 +272,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 		if node == nil {
 			break
 		}
+		// Reset only once this pass re-analyzes statements; a pass that stops at a parse error
+		// must not drop the previous pass's errors.
+		passErrs = nil
 
 		catalog = a.catalog.Clone()
 
@@ -277,7 +284,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 		stmts := collectStatements(node)
 		declarationMap := make(map[string]string)
 
-		for _, s := range stmts {
+		for i, s := range stmts {
 			kind, _ := s.NodeKind()
 			if kind == googlesql.ASTNodeKindAstVariableDeclaration {
 				declNode := s.(*googlesql.ASTVariableDeclaration)
@@ -309,7 +316,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				fnNode := s.(*googlesql.ASTCreateFunctionStatement)
 				newFunc, err := a.createFunctionTypes(fnNode, fixedSrc, catalog)
 				if err != nil {
-					errs = append(errs, *err)
+					passErrs = append(passErrs, statementError{index: i, err: *err})
 					statements = append(statements, StatementResult{Stmt: s, Err: err})
 					continue
 				}
@@ -401,16 +408,28 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			}
 
 			if !skipError {
-				errs = append(errs, pErr)
 				statements = append(statements, StatementResult{Stmt: s, Err: &pErr})
 			}
 			if len(fo) > 0 {
+				if !skipError {
+					fixedErrs = append(fixedErrs, statementError{index: i, err: pErr})
+				}
 				fixOffsets = append(fixOffsets, fo...)
 				goto retry
+			}
+			if !skipError {
+				passErrs = append(passErrs, statementError{index: i, err: pErr})
 			}
 		}
 		break
 	retry:
+	}
+
+	// Ordering by statement keeps errors in source order even though fixed errors were found in earlier passes.
+	stmtErrs := append(fixedErrs, passErrs...)
+	sort.SliceStable(stmtErrs, func(i, j int) bool { return stmtErrs[i].index < stmtErrs[j].index })
+	for _, e := range stmtErrs {
+		errs = append(errs, e.err)
 	}
 
 	// Assignments are not statement outputs, so they never enter RNode.
@@ -433,6 +452,11 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 		Errors:     errs,
 		catalog:    catalog,
 	}
+}
+
+type statementError struct {
+	index int
+	err   Error
 }
 
 // collectStatements walks the ASTScript and collects all statement nodes.
