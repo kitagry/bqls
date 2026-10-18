@@ -308,7 +308,11 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 		catalog = a.catalog.Clone()
 
 		// Pre-load tables referenced in the SQL from BigQuery
-		catalog.PreloadTablesFromAST(node)
+		if err := catalog.PreloadTablesFromAST(node); err != nil {
+			// Debug, because this runs on every edit and the cause also
+			// appears in the "Table not found" diagnostic.
+			a.logger.Debugf("failed to load tables: %v", err)
+		}
 
 		stmts := collectStatements(node)
 		declarationMap := make(map[string]string)
@@ -398,6 +402,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				table := strings.TrimSpace(pErr.Msg[ind+len("Table not found: "):])
 				pErr.TermLength = len(table)
 				pErr.IncompleteColumnName = table
+				if loadErr := catalog.TableLoadError(table); loadErr != nil {
+					pErr.Msg += fmt.Sprintf(" (%v)", loadErr)
+				}
 			case isNotBoolClauseError:
 				pErr = addInformationToNotBoolClauseError(fixedSrc, s, pErr)
 			}
