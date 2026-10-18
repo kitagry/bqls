@@ -2486,6 +2486,93 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 			expectedErrs:     []file.Error{},
 			expectedRNodeLen: 2,
 		},
+		"IF condition is not BOOL": {
+			file: "IF 1  +  1 THEN\n  SELECT 1;\nEND IF;",
+			expectedErrs: []file.Error{
+				{
+					Msg:        "Cannot coerce expression 1  +  1 to type BOOL",
+					Position:   lsp.Position{Line: 0, Character: 3},
+					TermLength: 7,
+				},
+			},
+			expectedRNodeLen: 1,
+		},
+		"ELSEIF condition is not BOOL": {
+			file: "IF TRUE THEN\n  SELECT 1;\nELSEIF 'a' THEN\n  SELECT 2;\nEND IF;",
+			expectedErrs: []file.Error{
+				{
+					Msg:        "Cannot coerce expression 'a' to type BOOL",
+					Position:   lsp.Position{Line: 2, Character: 7},
+					TermLength: 3,
+				},
+			},
+			expectedRNodeLen: 2,
+		},
+		"WHILE condition is not BOOL": {
+			file: "DECLARE x INT64 DEFAULT 1;\n\tWHILE x DO\n  SELECT 1;\nEND WHILE;",
+			expectedErrs: []file.Error{
+				{
+					Msg:        "Cannot coerce expression x to type BOOL",
+					Position:   lsp.Position{Line: 1, Character: 7},
+					TermLength: 1,
+				},
+			},
+			expectedRNodeLen: 1,
+		},
+		"IF condition is not BOOL with declared variables": {
+			file: "DECLARE long_name STRING DEFAULT 'abc';\nIF long_name || long_name THEN\n  SELECT 1;\nEND IF;",
+			expectedErrs: []file.Error{
+				{
+					Msg:        "Cannot coerce expression long_name || long_name to type BOOL",
+					Position:   lsp.Position{Line: 1, Character: 3},
+					TermLength: 22,
+				},
+			},
+			expectedRNodeLen: 1,
+		},
+		"REPEAT UNTIL condition is not BOOL": {
+			file: "REPEAT\n  SELECT 1;\nUNTIL CAST(NULL AS INT64) END REPEAT;",
+			expectedErrs: []file.Error{
+				{
+					Msg:        "Cannot coerce expression CAST(NULL AS INT64) to type BOOL",
+					Position:   lsp.Position{Line: 2, Character: 6},
+					TermLength: 19,
+				},
+			},
+			expectedRNodeLen: 1,
+		},
+		"CASE WHEN condition is not BOOL": {
+			file: "CASE\n  WHEN TRUE THEN SELECT 1;\n  WHEN 1 THEN SELECT 2;\nEND CASE;",
+			expectedErrs: []file.Error{
+				{
+					Msg:        "Cannot coerce expression 1 to type BOOL",
+					Position:   lsp.Position{Line: 2, Character: 7},
+					TermLength: 1,
+				},
+			},
+			expectedRNodeLen: 2,
+		},
+		"CASE WHEN value is incompatible with CASE expression": {
+			file: "SELECT 1;\nCASE 1\n  WHEN 'a' THEN SELECT 2;\nEND CASE;",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "CASE...WHEN statement values have incompatible types",
+					Position: lsp.Position{Line: 1, Character: 0},
+				},
+			},
+			expectedRNodeLen: 2,
+		},
+		"control flow conditions coercible to BOOL": {
+			file: "DECLARE b BOOL DEFAULT TRUE;\n" +
+				"IF b THEN SELECT 1; ELSEIF NULL THEN SELECT 2; END IF;\n" +
+				"WHILE (SELECT b) DO BREAK; END WHILE;\n" +
+				"REPEAT SELECT 1; UNTIL NOT b END REPEAT;\n" +
+				"CASE WHEN b THEN SELECT 1; WHEN NULL THEN SELECT 2; END CASE;\n" +
+				"CASE 1 WHEN 1.5 THEN SELECT 1; WHEN NULL THEN SELECT 2; END CASE;\n" +
+				"CASE NULL WHEN 'a' THEN SELECT 1; END CASE;",
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 8,
+		},
 	}
 
 	for n, tt := range tests {

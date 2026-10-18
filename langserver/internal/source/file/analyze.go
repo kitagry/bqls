@@ -204,12 +204,30 @@ func (a *Analyzer) analyzeScriptStatement(rawText string, stmt googlesql.ASTStat
 	// The scope of stmt excludes the names stmt itself brings into scope, so a
 	// FOR...IN query cannot refer to its own loop variable.
 	scope := a.scopeCatalog(rawText, stmt, catalog)
-	for _, expr := range exprs {
-		masked, ok := maskOutsideNode(rawText, expr)
+	for _, e := range exprs {
+		masked, ok := maskOutsideNode(rawText, e.expr)
 		if !ok {
 			continue
 		}
-		if _, err := googlesql.AnalyzeExpression(masked, opts, scope, catalog.TypeFactory()); err != nil {
+		out, err := googlesql.AnalyzeExpression(masked, opts, scope, catalog.TypeFactory())
+		if err != nil {
+			return err
+		}
+		if !e.condition {
+			continue
+		}
+		coercible, err := isCoercibleToBool(out)
+		if err != nil {
+			return err
+		}
+		if !coercible {
+			loc, _ := e.expr.GetParseLocationRange()
+			start, end := parseLocStart(loc), parseLocEnd(loc)
+			return fmt.Errorf("Cannot coerce expression %s to type BOOL %s", rawText[start:end], zetaSQLLocation(rawText, start))
+		}
+	}
+	if caseStmt, ok := stmt.(*googlesql.ASTCaseStatement); ok {
+		if err := a.checkCaseStatementValues(rawText, caseStmt, exprs, opts, scope, catalog); err != nil {
 			return err
 		}
 	}
@@ -225,19 +243,95 @@ func (a *Analyzer) analyzeScriptStatement(rawText string, stmt googlesql.ASTStat
 	return nil
 }
 
-// scriptStatementExpressions returns the expressions that stmt itself
-// evaluates, in source order, excluding those in the statements of its body.
-func scriptStatementExpressions(stmt googlesql.ASTStatementNode) ([]googlesql.ASTExpressionNode, error) {
-	var exprs []googlesql.ASTExpressionNode
-	add := func(expr googlesql.ASTExpressionNode, err error) error {
+// isCoercibleToBool reports whether the analyzed expression can be used where
+// BigQuery requires BOOL: a BOOL expression or an untyped NULL.
+func isCoercibleToBool(out *googlesql.AnalyzerOutput) (bool, error) {
+	expr, err := out.ResolvedExpr()
+	if err != nil || expr == nil {
+		return true, err
+	}
+	typ, err := expr.Type()
+	if err != nil || typ == nil {
+		return true, err
+	}
+	isBool, err := typ.IsBool()
+	if err != nil || isBool {
+		return true, err
+	}
+	literal, ok := expr.(*googlesql.ResolvedLiteral)
+	if !ok {
+		return false, nil
+	}
+	explicit, err := literal.HasExplicitType()
+	if err != nil || explicit {
+		return false, err
+	}
+	value, err := literal.Value()
+	if err != nil || value == nil {
+		return false, err
+	}
+	return value.IsNull()
+}
+
+// checkCaseStatementValues reports an error if the WHEN values of a CASE
+// statement with an operand cannot be compared with it. exprs are the
+// expressions of stmt, which have already been analyzed on their own.
+func (a *Analyzer) checkCaseStatementValues(rawText string, stmt *googlesql.ASTCaseStatement, exprs []scriptExpression, opts *googlesql.AnalyzerOptions, scope googlesql.CatalogNode, catalog *Catalog) error {
+	operand, err := stmt.Expression()
+	if err != nil || operand == nil || len(exprs) < 2 {
+		return err
+	}
+	// Let GoogleSQL find a common supertype by resolving the equivalent CASE
+	// expression. Each operand is followed by a line break so that a trailing
+	// line comment cannot swallow the parenthesis.
+	var b strings.Builder
+	for i, e := range exprs {
+		loc, err := e.expr.GetParseLocationRange()
 		if err != nil {
 			return err
 		}
-		if expr != nil {
-			exprs = append(exprs, expr)
+		start, end := parseLocStart(loc), parseLocEnd(loc)
+		if start < 0 || end < start || end > len(rawText) {
+			return nil
 		}
-		return nil
+		text := rawText[start:end]
+		if i == 0 {
+			fmt.Fprintf(&b, "CASE (%s\n)", text)
+			continue
+		}
+		fmt.Fprintf(&b, " WHEN (%s\n) THEN NULL", text)
 	}
+	b.WriteString(" END")
+	if _, err := googlesql.AnalyzeExpression(b.String(), opts, scope, catalog.TypeFactory()); err != nil {
+		loc, _ := stmt.GetParseLocationRange()
+		return fmt.Errorf("CASE...WHEN statement values have incompatible types %s", zetaSQLLocation(rawText, parseLocStart(loc)))
+	}
+	return nil
+}
+
+// scriptExpression is an expression that a script statement evaluates.
+type scriptExpression struct {
+	expr googlesql.ASTExpressionNode
+	// condition reports whether BigQuery requires expr to be BOOL.
+	condition bool
+}
+
+// scriptStatementExpressions returns the expressions that stmt itself
+// evaluates, in source order, excluding those in the statements of its body.
+func scriptStatementExpressions(stmt googlesql.ASTStatementNode) ([]scriptExpression, error) {
+	var exprs []scriptExpression
+	adder := func(condition bool) func(googlesql.ASTExpressionNode, error) error {
+		return func(expr googlesql.ASTExpressionNode, err error) error {
+			if err != nil {
+				return err
+			}
+			if expr != nil {
+				exprs = append(exprs, scriptExpression{expr: expr, condition: condition})
+			}
+			return nil
+		}
+	}
+	add, addCondition := adder(false), adder(true)
 	switch n := stmt.(type) {
 	case *googlesql.ASTSingleAssignment:
 		return exprs, add(n.Expression())
@@ -246,7 +340,7 @@ func scriptStatementExpressions(stmt googlesql.ASTStatementNode) ([]googlesql.AS
 	case *googlesql.ASTParameterAssignment:
 		return exprs, add(n.Expression())
 	case *googlesql.ASTIfStatement:
-		if err := add(n.Condition()); err != nil {
+		if err := addCondition(n.Condition()); err != nil {
 			return nil, err
 		}
 		clauses, err := n.ElseifClauses()
@@ -262,23 +356,29 @@ func scriptStatementExpressions(stmt googlesql.ASTStatementNode) ([]googlesql.AS
 			if err != nil {
 				return nil, err
 			}
-			if err := add(clause.Condition()); err != nil {
+			if err := addCondition(clause.Condition()); err != nil {
 				return nil, err
 			}
 		}
 		return exprs, nil
 	case *googlesql.ASTWhileStatement:
 		// WHILE without a condition is LOOP.
-		return exprs, add(n.Condition())
+		return exprs, addCondition(n.Condition())
 	case *googlesql.ASTRepeatStatement:
 		until, err := n.UntilClause()
 		if err != nil || until == nil {
 			return exprs, err
 		}
-		return exprs, add(until.Condition())
+		return exprs, addCondition(until.Condition())
 	case *googlesql.ASTCaseStatement:
-		if err := add(n.Expression()); err != nil {
+		operand, err := n.Expression()
+		if err := add(operand, err); err != nil {
 			return nil, err
+		}
+		// Without an operand, CASE...WHEN takes conditions like IF.
+		addWhen := addCondition
+		if operand != nil {
+			addWhen = add
 		}
 		clauses, err := n.WhenThenClauses()
 		if err != nil || clauses == nil {
@@ -293,7 +393,7 @@ func scriptStatementExpressions(stmt googlesql.ASTStatementNode) ([]googlesql.AS
 			if err != nil {
 				return nil, err
 			}
-			if err := add(clause.Condition()); err != nil {
+			if err := addWhen(clause.Condition()); err != nil {
 				return nil, err
 			}
 		}
@@ -525,6 +625,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			isEmptyPipeAggregateError := strings.Contains(pErr.Msg, "Pipe AGGREGATE cannot have both an empty aggregate list and an empty GROUP BY")
 			isNotBoolClauseError := strings.Contains(pErr.Msg, "clause should return type BOOL")
 			isLogicalOperandError := logicalOperandErrorRegex.MatchString(pErr.Msg)
+			isNotBoolConditionError := notBoolConditionErrorRegex.MatchString(pErr.Msg)
 
 			// add information to Error
 			switch {
@@ -552,6 +653,8 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				pErr = addInformationToNotBoolClauseError(fixedSrc, s, pErr)
 			case isLogicalOperandError:
 				pErr = addInformationToLogicalOperandError(fixedSrc, s, pErr)
+			case isNotBoolConditionError:
+				pErr = addInformationToNotBoolConditionError(pErr)
 			}
 
 			// fix src
@@ -604,6 +707,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				}
 			}
 			srcErr := errorToSrc(src, errSrc, edits, pErr)
+			if isNotBoolConditionError {
+				srcErr = notBoolConditionErrorInSrc(src, srcErr)
+			}
 			if insideInsertedText(errSrc, edits, positionToByteOffset(errSrc, pErr.Position)) {
 				skipError = true
 			}
