@@ -17,10 +17,10 @@ const (
 )
 
 type Catalog struct {
-	catalog      *googlesql.SimpleCatalog
-	typeFactory  *googlesql.TypeFactory
-	langOpts     *googlesql.LanguageOptions
-	bqClient     bigquery.Client
+	catalog     *googlesql.SimpleCatalog
+	typeFactory *googlesql.TypeFactory
+	langOpts    *googlesql.LanguageOptions
+	bqClient    bigquery.Client
 	// tableMetaMap, tables and subCatalogs are keyed by lowercased names,
 	// because SimpleCatalog matches names case-insensitively and registering
 	// a name that differs only in case traps.
