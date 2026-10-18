@@ -13,7 +13,7 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/source/bqparser"
 )
 
-var lastDotRegex = regexp.MustCompile(`[\w.]+\.\s`)
+var lastDotRegex = regexp.MustCompile(`[\w.]+\.[\s;]`)
 
 var zetaSQLLocationRegex = regexp.MustCompile(`\[at (\d+):(\d+)\]`)
 
@@ -435,7 +435,7 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) 
 		}
 
 		for len(loc) == 2 {
-			// sql.Rawtext[loc[1]] is a space or end of file.
+			// sql.Rawtext[loc[1]] is a space, a semicolon, or end of file.
 			srcStart := currentOffset + loc[0]
 			targetWord := line[loc[0] : loc[1]-1]
 			line = line[:loc[0]] + "true" + line[loc[1]-1:]
