@@ -43,6 +43,7 @@ func (h *Handler) handleWorkspaceDidChangeConfiguration(ctx context.Context, con
 	if err != nil {
 		return nil, err
 	}
+	h.rediagnoseOpenFiles()
 
 	return nil, nil
 }
