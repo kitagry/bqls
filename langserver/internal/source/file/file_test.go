@@ -2499,15 +2499,23 @@ func TestParsedFile_FindTargetAnalyzeOutput(t *testing.T) {
 
 		expectedOK bool
 	}{
-		// Each retry fixes one reference to x, so the retry limit is reached
-		// before the third statement is analyzed.
-		"statement not analyzed because the retry limit is reached": {
+		// Each retry fixes one reference to x, so the retry limit grows with them.
+		"statement analyzed after many references to a declared variable": {
 			file: "DECLARE x INT64 DEFAULT 1;\nSELECT a FROM `p.d.t1`;\nSELECT b FROM `p.d.t2` WHERE b IN (x,x,x,x,x,x,x,x,x,x,x,x)",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
 				"p.d.t1": {Schema: bq.Schema{{Name: "a", Type: bq.IntegerFieldType}}},
 				"p.d.t2": {Schema: bq.Schema{{Name: "b", Type: bq.IntegerFieldType}}},
 			},
 			position:   lsp.Position{Line: 2, Character: 7},
+			expectedOK: true,
+		},
+		// The dummy for v is its own default, so the fix-ups never resolve v.
+		"statement not analyzed because the retry limit is reached": {
+			file: "DECLARE v DEFAULT v + 1;\nSELECT b, v FROM `p.d.t2`",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"p.d.t2": {Schema: bq.Schema{{Name: "b", Type: bq.IntegerFieldType}}},
+			},
+			position:   lsp.Position{Line: 1, Character: 7},
 			expectedOK: false,
 		},
 	}
@@ -2731,5 +2739,82 @@ func TestAnalyzer_ParseFileAnalyzesQueryEndingInIncompleteClause(t *testing.T) {
 				t.Errorf("the query was not analyzed: got %d analyzer outputs, want 1", len(got.RNode))
 			}
 		})
+	}
+}
+
+func TestAnalyzer_ParseFileFetchesEachTableOnceAcrossRetries(t *testing.T) {
+	tests := map[string]string{
+		"unknown column":          "SELECT unknown_col FROM `p.d.t`",
+		"declared variable":       "DECLARE v INT64;\nSELECT x FROM `p.d.t` WHERE x = v",
+		"two unknown columns":     "SELECT unknown1, unknown2 FROM `p.d.t` JOIN `p.d.u` USING (x)",
+		"unloadable table":        "DECLARE v INT64;\nSELECT * FROM `p.d.missing`;\nSELECT x FROM `p.d.t` WHERE x = v",
+		"many variable reference": "DECLARE v INT64;\nSELECT x FROM `p.d.t` WHERE x IN (v, v, v)",
+	}
+
+	for n, src := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+			meta := &bq.TableMetadata{Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}}}
+			for _, table := range []string{"t", "u"} {
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "p", "d", table).Return(meta, nil).MaxTimes(1)
+			}
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "p", "d", "missing").Return(nil, errors.New("not found")).MaxTimes(1)
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", src)
+			got.Close()
+		})
+	}
+}
+
+func TestAnalyzer_ParseFileAnalyzesStatementsAfterManyVariableReferences(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+	bqClient.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+	bqClient.EXPECT().GetTableMetadata(gomock.Any(), "p", "d", "t1").
+		Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "a", Type: bq.IntegerFieldType}}}, nil).AnyTimes()
+	bqClient.EXPECT().GetTableMetadata(gomock.Any(), "p", "d", "t2").
+		Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "b", Type: bq.IntegerFieldType}}}, nil).AnyTimes()
+
+	src := "DECLARE x INT64 DEFAULT 1;\n" +
+		"SELECT a FROM `p.d.t1`;\n" +
+		"SELECT b FROM `p.d.t2` WHERE b IN (x, x, x, x, x, x, x, x, x, x, x, x);\n" +
+		"SELECT unknown_col FROM `p.d.t2`;"
+	got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", src)
+	defer got.Close()
+
+	// The unknown column is replaced with a literal, so every query is analyzed.
+	if len(got.RNode) != 3 {
+		t.Errorf("got %d analyzer outputs, want 3", len(got.RNode))
+	}
+	want := []file.Error{{Msg: "Unrecognized name: unknown_col", Position: lsp.Position{Line: 3, Character: 7}, TermLength: 11, IncompleteColumnName: "unknown_col"}}
+	if diff := cmp.Diff(want, got.Errors); diff != "" {
+		t.Errorf("ParseFile errors diff (-want, +got)\n%s", diff)
+	}
+}
+
+func TestAnalyzer_ParseFileReportsUnfinishedFixUps(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+	bqClient.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+	bqClient.EXPECT().GetTableMetadata(gomock.Any(), "p", "d", "t").
+		Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "b", Type: bq.IntegerFieldType}}}, nil).AnyTimes()
+
+	// The dummy for v is its own default, so substituting it never resolves v.
+	src := "DECLARE v DEFAULT v + 1;\n" +
+		"SELECT v;\n" +
+		"SELECT unknown_col FROM `p.d.t`;"
+	got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", src)
+	defer got.Close()
+
+	if len(got.Errors) != 2 {
+		t.Fatalf("got errors %v, want a warning for the second statement and an error for the third", got.Errors)
+	}
+	if got.Errors[0].Severity != lsp.Warning || got.Errors[0].Position.Line != 1 {
+		t.Errorf("got %+v, want a warning on line 1", got.Errors[0])
+	}
+	if got.Errors[1].Msg != "Unrecognized name: unknown_col" || got.Errors[1].Position.Line != 2 {
+		t.Errorf("got %+v, want the unknown column error on line 2", got.Errors[1])
 	}
 }
