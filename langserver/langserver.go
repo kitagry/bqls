@@ -32,6 +32,9 @@ type Handler struct {
 
 	bqClient bigquery.Client
 	project  *source.Project
+	// newBQClient creates the client for a (re)built project; nil means
+	// bigquery.New. Tests replace it to avoid real credentials.
+	newBQClient func(ctx context.Context, projectID, location string) (bigquery.Client, error)
 
 	diagnosticRequest          chan lsp.DocumentURI
 	dryrunRequest              chan lsp.DocumentURI
@@ -91,18 +94,35 @@ func newHandler(logger *logrus.Logger, version string) *Handler {
 }
 
 func (h *Handler) setupByInitializeParams() error {
-	bqClient, err := bigquery.New(
+	newBQClient := h.newBQClient
+	if newBQClient == nil {
+		newBQClient = func(ctx context.Context, projectID, location string) (bigquery.Client, error) {
+			return bigquery.New(ctx, projectID, location, true, h.logger)
+		}
+	}
+	bqClient, err := newBQClient(
 		context.Background(),
 		h.initializeParams.InitializationOptions.ProjectID,
 		h.initializeParams.InitializationOptions.Location,
-		true,
-		h.logger,
 	)
 	if err != nil {
 		return err
 	}
 
 	p := source.NewProject(context.Background(), h.initializeParams.RootPath, bqClient, h.logger)
+	if h.project != nil {
+		// The client keeps these documents open and won't resend them, so a
+		// rebuilt project must start with them.
+		for _, uri := range h.project.OpenFiles() {
+			text, ok := h.project.GetFile(uri)
+			if !ok {
+				continue
+			}
+			if err := p.UpdateFile(uri, text, 0); err != nil {
+				return err
+			}
+		}
+	}
 
 	h.bqClient = bqClient
 	h.project = p

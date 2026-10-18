@@ -1,12 +1,14 @@
 package langserver
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/golang/mock/gomock"
 	"github.com/google/go-cmp/cmp"
+	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/bigquery/mock_bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lint"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
@@ -231,6 +233,51 @@ func TestHandler_handleWorkspaceDidChangeConfiguration_PartialLintOnlyKeepsProje
 	want := InitializeOption{ProjectID: "p", Location: "US", Lint: lint.Config{Rules: map[string]bool{"null-comparison": false}}}
 	if diff := cmp.Diff(want, h.initializeParams.InitializationOptions); diff != "" {
 		t.Errorf("InitializationOptions diff (-want +got):\n%s", diff)
+	}
+
+	select {
+	case got := <-h.diagnosticRequest:
+		if got != uri {
+			t.Errorf("diagnostics requested for %s, want %s", got, uri)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("diagnostics were not re-requested for the open document")
+	}
+}
+
+func TestHandler_handleWorkspaceDidChangeConfiguration_RebuildKeepsOpenDocuments(t *testing.T) {
+	const uri lsp.DocumentURI = "file:///a.sql"
+	const src = "SELECT 1"
+	h := newTestHandlerWithFile(t, uri, src)
+	h.diagnosticRequest = make(chan lsp.DocumentURI, 3)
+	h.initializeParams.InitializationOptions = InitializeOption{ProjectID: "p", Location: "US"}
+	project := h.project
+
+	ctrl := gomock.NewController(t)
+	var gotProjectID, gotLocation string
+	h.newBQClient = func(_ context.Context, projectID, location string) (bigquery.Client, error) {
+		gotProjectID, gotLocation = projectID, location
+		return mock_bigquery.NewMockClient(ctrl), nil
+	}
+
+	params := json.RawMessage(`{"settings": {"project_id": "q"}}`)
+	_, err := h.handleWorkspaceDidChangeConfiguration(t.Context(), nil, &jsonrpc2.Request{Params: &params})
+	if err != nil {
+		t.Fatalf("handleWorkspaceDidChangeConfiguration() error = %v", err)
+	}
+
+	if h.project == project {
+		t.Fatal("project was kept, want it rebuilt when project_id changes")
+	}
+	if gotProjectID != "q" || gotLocation != "US" {
+		t.Errorf("BigQuery client created for (%q, %q), want (%q, %q)", gotProjectID, gotLocation, "q", "US")
+	}
+	got, ok := h.project.GetFile(uri)
+	if !ok {
+		t.Fatalf("open document %s was dropped by the rebuild", uri)
+	}
+	if got != src {
+		t.Errorf("GetFile(%s) = %q, want %q", uri, got, src)
 	}
 
 	select {
