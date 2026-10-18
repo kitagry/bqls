@@ -17,6 +17,8 @@ var lastDotRegex = regexp.MustCompile(`[\w.]+\.\s`)
 
 var zetaSQLLocationRegex = regexp.MustCompile(`\[at (\d+):(\d+)\]`)
 
+var logicalOperandErrorRegex = regexp.MustCompile(`^No matching signature for operator (AND|OR|NOT)\n(?s:.*?)Argument (\d+): Unable to coerce type \S+ to expected type BOOL`)
+
 type ParsedFile struct {
 	URI lsp.DocumentURI
 	Src string
@@ -958,6 +960,71 @@ func addInformationToNotBoolClauseError(src string, node googlesql.ASTNode, pars
 	if start != errOffset || end < start || end > len(src) {
 		return parsedErr
 	}
+	parsedErr.TermLength = end - start
+	parsedErr.IncompleteColumnName = src[start:end]
+	return parsedErr
+}
+
+// addInformationToLogicalOperandError fills IncompleteColumnName when the operand of
+// AND/OR/NOT that failed to coerce to BOOL is a bare path inside WHERE/ON, for the same
+// reason as addInformationToNotBoolClauseError. GoogleSQL reports the error at the start
+// of the whole operator expression, so the position is moved to the operand.
+func addInformationToLogicalOperandError(src string, node googlesql.ASTNode, parsedErr Error) Error {
+	m := logicalOperandErrorRegex.FindStringSubmatch(parsedErr.Msg)
+	if m == nil {
+		return parsedErr
+	}
+	operator := m[1]
+	argIndex, err := strconv.Atoi(m[2])
+	if err != nil || argIndex < 1 {
+		return parsedErr
+	}
+
+	errOffset, ok := errorByteOffset(src, parsedErr.Position)
+	if !ok {
+		return parsedErr
+	}
+	_, inWhere := SearchAstNode[*googlesql.ASTWhereClause](node, errOffset)
+	_, inOn := SearchAstNode[*googlesql.ASTOnClause](node, errOffset)
+	if !inWhere && !inOn {
+		return parsedErr
+	}
+
+	var operand googlesql.ASTExpressionNode
+	Walk(node, func(n googlesql.ASTNode) error { //nolint
+		if locStart(n) != errOffset {
+			return nil
+		}
+		switch n := n.(type) {
+		case *googlesql.ASTAndExpr:
+			if operator == "AND" {
+				operand, _ = n.Conjuncts(int32(argIndex - 1))
+			}
+		case *googlesql.ASTOrExpr:
+			if operator == "OR" {
+				operand, _ = n.Disjuncts(int32(argIndex - 1))
+			}
+		case *googlesql.ASTUnaryExpression:
+			if op, _ := n.Op(); operator == "NOT" && op == googlesql.ASTUnaryExpressionEnums_OpNot {
+				operand, _ = n.Operand()
+			}
+		}
+		return nil
+	})
+	pathExpr, ok := operand.(*googlesql.ASTPathExpression)
+	if !ok {
+		return parsedErr
+	}
+
+	start, end := locStart(pathExpr), locEnd(pathExpr)
+	if start < 0 || end < start || end > len(src) {
+		return parsedErr
+	}
+	pos, ok := byteOffsetToPosition(src, start)
+	if !ok {
+		return parsedErr
+	}
+	parsedErr.Position = pos
 	parsedErr.TermLength = end - start
 	parsedErr.IncompleteColumnName = src[start:end]
 	return parsedErr

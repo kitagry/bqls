@@ -198,6 +198,106 @@ func TestProject_ParseFile(t *testing.T) {
 				},
 			},
 		},
+		"parse non-bool column as an AND operand in where clause": {
+			file: "SELECT * FROM `project.dataset.table` WHERE id = 1 AND name",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+						{Name: "name", Type: bq.StringFieldType},
+					},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg: "No matching signature for operator AND\n" +
+						"  Argument types: BOOL, STRING\n" +
+						"  Signature: BOOL AND ([BOOL, ...])\n" +
+						"    Argument 2: Unable to coerce type STRING to expected type BOOL",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 55,
+					},
+					TermLength:           4,
+					IncompleteColumnName: "name",
+				},
+			},
+		},
+		"parse non-bool column as an OR operand in where clause": {
+			file: "SELECT * FROM `project.dataset.table` WHERE name OR id = 1",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+						{Name: "name", Type: bq.StringFieldType},
+					},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg: "No matching signature for operator OR\n" +
+						"  Argument types: STRING, BOOL\n" +
+						"  Signature: BOOL OR ([BOOL, ...])\n" +
+						"    Argument 1: Unable to coerce type STRING to expected type BOOL",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 44,
+					},
+					TermLength:           4,
+					IncompleteColumnName: "name",
+				},
+			},
+		},
+		"parse non-bool column as a NOT operand in where clause": {
+			file: "SELECT * FROM `project.dataset.table` WHERE NOT name",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+						{Name: "name", Type: bq.StringFieldType},
+					},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg: "No matching signature for operator NOT\n" +
+						"  Argument types: STRING\n" +
+						"  Signature: NOT (BOOL)\n" +
+						"    Argument 1: Unable to coerce type STRING to expected type BOOL",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 48,
+					},
+					TermLength:           4,
+					IncompleteColumnName: "name",
+				},
+			},
+		},
+		"parse non-bool column as an AND operand in join on clause": {
+			file: "SELECT * FROM `project.dataset.table` t1 JOIN `project.dataset.table` t2 ON t1.id = t2.id AND t1.name",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+						{Name: "name", Type: bq.StringFieldType},
+					},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg: "No matching signature for operator AND\n" +
+						"  Argument types: BOOL, STRING\n" +
+						"  Signature: BOOL AND ([BOOL, ...])\n" +
+						"    Argument 2: Unable to coerce type STRING to expected type BOOL",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 94,
+					},
+					TermLength:           7,
+					IncompleteColumnName: "t1.name",
+				},
+			},
+		},
 		"parse SELECT list must not be empty error file": {
 			file: "SELECT FROM `project.dataset.table`",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{

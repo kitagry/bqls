@@ -406,6 +406,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			isProcedureNotFoundError := strings.Contains(pErr.Msg, "Procedure not found: ")
 			isEmptyPipeAggregateError := strings.Contains(pErr.Msg, "Pipe AGGREGATE cannot have both an empty aggregate list and an empty GROUP BY")
 			isNotBoolClauseError := strings.Contains(pErr.Msg, "clause should return type BOOL")
+			isLogicalOperandError := logicalOperandErrorRegex.MatchString(pErr.Msg)
 
 			// add information to Error
 			switch {
@@ -431,6 +432,8 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				}
 			case isNotBoolClauseError:
 				pErr = addInformationToNotBoolClauseError(fixedSrc, s, pErr)
+			case isLogicalOperandError:
+				pErr = addInformationToLogicalOperandError(fixedSrc, s, pErr)
 			}
 
 			// fix src
@@ -465,7 +468,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			}
 
 			// A partially typed name that already matches a non-BOOL column is not "Unrecognized".
-			if isNotBoolClauseError && pErr.IncompleteColumnName != "" {
+			if (isNotBoolClauseError || isLogicalOperandError) && pErr.IncompleteColumnName != "" {
 				fixedSrc, fo = fixNotBoolClauseError(fixedSrc, pErr)
 			}
 
