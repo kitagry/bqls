@@ -34,6 +34,10 @@ func TestInNull(t *testing.T) {
 			src:  "SELECT x FROM UNNEST([1]) AS x WHERE x IN (CAST(NULL AS INT64))",
 			want: []lint.Diagnostic{{Rule: "in-null", Range: rng(0, 37, 0, 63), Message: inMsg, Severity: lint.SeverityWarning}},
 		},
+		"IN with a SAFE_CAST NULL": {
+			src:  "SELECT x FROM UNNEST([1]) AS x WHERE x IN (SAFE_CAST(NULL AS INT64))",
+			want: []lint.Diagnostic{{Rule: "in-null", Range: rng(0, 37, 0, 68), Message: inMsg, Severity: lint.SeverityWarning}},
+		},
 		"IN with a parenthesized NULL": {
 			src:  "SELECT x FROM UNNEST([1]) AS x WHERE x IN ((NULL))",
 			want: []lint.Diagnostic{{Rule: "in-null", Range: rng(0, 37, 0, 50), Message: inMsg, Severity: lint.SeverityWarning}},
