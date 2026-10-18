@@ -23,10 +23,16 @@ func (c *completor) completeTablePath(ctx context.Context, parsedFile file.Parse
 	// cursor is on table name
 	tablePathNode, ok := file.SearchAstNode[*googlesql.ASTTablePathExpression](parsedFile.Node, termOffset)
 	if !ok {
-		return nil, nil
+		tablePath, ok := findTablePathEndingWithDot(parsedFile, position, termOffset)
+		if !ok {
+			return nil, nil
+		}
+		return c.completeTablePathFromPath(ctx, tablePath)
 	}
 	loc, _ := tablePathNode.GetParseLocationRange()
-	if file.ParseLocEnd(loc) == termOffset {
+	// The cursor right after the closing backquote is outside of the table path.
+	// An unquoted path has no closing quote, so the cursor at its end is still on it.
+	if file.ParseLocEnd(loc) == termOffset && termOffset > 0 && parsedFile.FixedSrc[termOffset-1] == '`' {
 		return nil, nil
 	}
 
@@ -35,6 +41,36 @@ func (c *completor) completeTablePath(ctx context.Context, parsedFile file.Parse
 		return nil, nil
 	}
 
+	return c.completeTablePathFromPath(ctx, tablePath)
+}
+
+// findTablePathEndingWithDot finds an unquoted table path that ends with a dot,
+// such as `FROM dataset.`. The fix-up for `alias.` rewrites it to `FROM true`,
+// so no table path node is left in the AST.
+func findTablePathEndingWithDot(parsedFile file.ParsedFile, position lsp.Position, termOffset int) (string, bool) {
+	const replaced = "true"
+
+	tablePath := parsedFile.FindIncompleteColumnName(position)
+	if !strings.HasSuffix(tablePath, ".") {
+		return "", false
+	}
+
+	if termOffset > len(parsedFile.FixedSrc) || !strings.HasSuffix(parsedFile.FixedSrc[:termOffset], replaced) {
+		return "", false
+	}
+	words := strings.Fields(parsedFile.FixedSrc[:termOffset-len(replaced)])
+	if len(words) == 0 {
+		return "", false
+	}
+	lastWord := words[len(words)-1]
+	if !strings.EqualFold(lastWord, "FROM") && !strings.EqualFold(lastWord, "JOIN") {
+		return "", false
+	}
+
+	return tablePath, true
+}
+
+func (c *completor) completeTablePathFromPath(ctx context.Context, tablePath string) ([]CompletionItem, error) {
 	splittedTablePath := strings.Split(tablePath, ".")
 
 	// for `project.dataset.table` completion
