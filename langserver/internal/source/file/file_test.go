@@ -2597,6 +2597,18 @@ func TestAnalyzer_ParseFileWithIncompleteQueryReportsOnlyUserError(t *testing.T)
 			file:    "CREATE TEMP FUNCTION f() AS (",
 			wantErr: file.Error{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Character: 29}},
 		},
+		"GROUP BY in a subquery": {
+			file:    "SELECT 1 FROM (SELECT id FROM `project.dataset.table` GROUP BY",
+			wantErr: file.Error{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Character: 62}},
+		},
+		"ORDER in a window": {
+			file:    "SELECT ROW_NUMBER() OVER (ORDER",
+			wantErr: file.Error{Msg: "Syntax error: Expected @ for hint or keyword BY but got end of script", Position: lsp.Position{Character: 31}},
+		},
+		"UNION ALL in a subquery": {
+			file:    "SELECT 1 FROM (SELECT 1 UNION ALL",
+			wantErr: file.Error{Msg: `Syntax error: Expected "(" or keyword SELECT or keyword TABLE but got end of script`, Position: lsp.Position{Character: 33}},
+		},
 	}
 
 	for n, tt := range tests {
@@ -2673,5 +2685,51 @@ func TestParsedFile_ToLspRangeKeepsLeadingWhitespaceOfDeletedClause(t *testing.T
 	wantRange := lsp.Range{Start: pos, End: lsp.Position{Line: 2, Character: len("  SELECT id")}}
 	if diff := cmp.Diff(wantRange, rng); !ok || diff != "" {
 		t.Errorf("ToLspRange diff (-want, +got)\n%s", diff)
+	}
+}
+
+func TestAnalyzer_ParseFileAnalyzesQueryEndingInIncompleteClause(t *testing.T) {
+	tests := map[string]struct {
+		file    string
+		wantErr file.Error
+	}{
+		"ORDER": {
+			file:    "SELECT id FROM `project.dataset.table` ORDER",
+			wantErr: file.Error{Msg: "Syntax error: Expected @ for hint or keyword BY but got end of script", Position: lsp.Position{Character: 44}},
+		},
+		"lowercase group by": {
+			file:    "select id from `project.dataset.table` group by",
+			wantErr: file.Error{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Character: 47}},
+		},
+		"UNION ALL": {
+			file:    "SELECT id FROM `project.dataset.table` UNION ALL",
+			wantErr: file.Error{Msg: `Syntax error: Expected "(" or keyword SELECT or keyword TABLE but got end of script`, Position: lsp.Position{Character: 48}},
+		},
+		"UNION before a line comment": {
+			file:    "SELECT id FROM `project.dataset.table` UNION -- c",
+			wantErr: file.Error{Msg: "Syntax error: Expected keyword ALL or keyword DISTINCT but got end of script", Position: lsp.Position{Character: 49}},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetDefaultProject().Return("project").AnyTimes()
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+				Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}},
+			}, nil).AnyTimes()
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if diff := cmp.Diff([]file.Error{tt.wantErr}, got.Errors); diff != "" {
+				t.Errorf("ParseFile errors diff (-want, +got)\n%s", diff)
+			}
+			if len(got.RNode) != 1 {
+				t.Errorf("the query was not analyzed: got %d analyzer outputs, want 1", len(got.RNode))
+			}
+		})
 	}
 }

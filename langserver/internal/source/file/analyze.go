@@ -3,6 +3,7 @@ package file
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -283,15 +284,23 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 					// No keyword-based fix worked; try inserting SELECT 1 (handles WITH-clause-only SQL).
 					fixedSrc, pErr, fo = fixOnlyWithClauseSyntaxError(fixedSrc, pErr)
 				}
+			} else if strings.HasSuffix(pErr.Msg, "but got end of script") {
+				// e.g. ORDER without BY, or a set operation without its query.
+				fixedSrc, pErr, fo = fixUnexpectedEndOfScript(fixedSrc, pErr)
 			}
-			if strings.Contains(pErr.Msg, `Syntax error: Expected "(" or "," or keyword SELECT but got end of script`) {
+			if len(fo) == 0 && strings.Contains(pErr.Msg, `Syntax error: Expected "(" or "," or keyword SELECT but got end of script`) {
 				fixedSrc, pErr, fo = fixOnlyWithClauseSyntaxError(fixedSrc, pErr)
 			}
 			if len(fo) == 0 {
 				fixedSrc, fo = fixIncompletePipeOperator(fixedSrc, pErr)
 			}
-			if !insideInsertedText(passSrc, edits, positionToByteOffset(passSrc, pErr.Position)) {
-				errs = append(errs, errorToSrc(src, passSrc, edits, pErr))
+			srcErr := errorToSrc(src, passSrc, edits, pErr)
+			// An error where one is already reported is left by a fix-up that deleted
+			// what the user has not finished, such as "(SELECT 1 UNION ALL" becoming
+			// "(SELECT 1" without its closing parenthesis.
+			reported := slices.ContainsFunc(errs, func(e Error) bool { return e.Position == srcErr.Position })
+			if !reported && !insideInsertedText(passSrc, edits, positionToByteOffset(passSrc, pErr.Position)) {
+				errs = append(errs, srcErr)
 			}
 			if len(fo) > 0 {
 				fixOffsets = append(fixOffsets, fo...)

@@ -762,3 +762,65 @@ func TestInsideInsertedText(t *testing.T) {
 		}
 	})
 }
+
+func TestFixUnexpectedEndOfScript_IncompleteClauseAndSetOperation(t *testing.T) {
+	tests := map[string]struct {
+		src     string
+		wantSrc string
+	}{
+		"ORDER without BY": {
+			src:     "SELECT 1 FROM t ORDER",
+			wantSrc: "SELECT 1 FROM t",
+		},
+		"GROUP without BY": {
+			src:     "SELECT 1 FROM t GROUP",
+			wantSrc: "SELECT 1 FROM t",
+		},
+		"lowercase group by": {
+			src:     "select * from t group by",
+			wantSrc: "select * from t",
+		},
+		"lowercase order by across lines": {
+			src:     "select * from t order\n  by",
+			wantSrc: "select * from t",
+		},
+		"lowercase where": {
+			src:     "select * from t where",
+			wantSrc: "select * from t where 1=1",
+		},
+		"UNION ALL": {
+			src:     "SELECT 1 UNION ALL",
+			wantSrc: "SELECT 1",
+		},
+		"lowercase union distinct": {
+			src:     "SELECT 1 union distinct",
+			wantSrc: "SELECT 1",
+		},
+		"UNION without ALL or DISTINCT": {
+			src:     "SELECT 1 UNION",
+			wantSrc: "SELECT 1",
+		},
+		"INTERSECT DISTINCT": {
+			src:     "SELECT 1 INTERSECT DISTINCT",
+			wantSrc: "SELECT 1",
+		},
+		"EXCEPT DISTINCT before a line comment": {
+			src:     "SELECT 1 EXCEPT DISTINCT -- c",
+			wantSrc: "SELECT 1-- c",
+		},
+		"keyword as the end of another word": {
+			src:     "SELECT factor",
+			wantSrc: "SELECT factor",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			errPos, _ := byteOffsetToPosition(tt.src, len(tt.src))
+			gotSrc, _, _ := fixUnexpectedEndOfScript(tt.src, Error{Position: errPos})
+			if gotSrc != tt.wantSrc {
+				t.Errorf("fixed source = %q, want %q", gotSrc, tt.wantSrc)
+			}
+		})
+	}
+}
