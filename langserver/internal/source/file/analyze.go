@@ -175,30 +175,25 @@ func (a *Analyzer) AnalyzeStatement(rawText string, stmt googlesql.ASTStatementN
 	return googlesql.AnalyzeStatementFromParserAST(stmt, opts, rawText, a.scopeCatalog(rawText, stmt, catalog), catalog.TypeFactory())
 }
 
-// analyzeAssignmentExpression analyzes the right-hand side of a SET statement,
-// which the resolver cannot analyze as a statement.
-func (a *Analyzer) analyzeAssignmentExpression(rawText string, stmt googlesql.ASTStatementNode, catalog *Catalog) error {
-	var expr googlesql.ASTExpressionNode
-	var err error
-	switch n := stmt.(type) {
-	case *googlesql.ASTSingleAssignment:
-		expr, err = n.Expression()
-	case *googlesql.ASTAssignmentFromStruct:
-		expr, err = n.StructExpression()
-	case *googlesql.ASTParameterAssignment:
-		expr, err = n.Expression()
-	default:
-		return nil
-	}
-	if err != nil || expr == nil {
-		return err
-	}
-	loc, err := expr.GetParseLocationRange()
+// analyzeScriptStatement analyzes the expressions and the query of a script
+// control statement or a SET statement, which the resolver cannot analyze as
+// a statement. The statements in its body are analyzed on their own.
+func (a *Analyzer) analyzeScriptStatement(rawText string, stmt googlesql.ASTStatementNode, catalog *Catalog) error {
+	exprs, err := scriptStatementExpressions(stmt)
 	if err != nil {
 		return err
 	}
-	start, end := parseLocStart(loc), parseLocEnd(loc)
-	if start < 0 || end < start || end > len(rawText) {
+	var query googlesql.ASTNode
+	if loop, ok := stmt.(*googlesql.ASTForInStatement); ok {
+		q, err := loop.Query()
+		if err != nil {
+			return err
+		}
+		if q != nil {
+			query = q
+		}
+	}
+	if len(exprs) == 0 && query == nil {
 		return nil
 	}
 
@@ -206,8 +201,121 @@ func (a *Analyzer) analyzeAssignmentExpression(rawText string, stmt googlesql.AS
 	if err != nil {
 		return err
 	}
-	_, err = googlesql.AnalyzeExpression(maskOutside(rawText, start, end), opts, a.scopeCatalog(rawText, stmt, catalog), catalog.TypeFactory())
-	return err
+	// The scope of stmt excludes the names stmt itself brings into scope, so a
+	// FOR...IN query cannot refer to its own loop variable.
+	scope := a.scopeCatalog(rawText, stmt, catalog)
+	for _, expr := range exprs {
+		masked, ok := maskOutsideNode(rawText, expr)
+		if !ok {
+			continue
+		}
+		if _, err := googlesql.AnalyzeExpression(masked, opts, scope, catalog.TypeFactory()); err != nil {
+			return err
+		}
+	}
+	if query != nil {
+		masked, ok := maskOutsideNode(rawText, query)
+		if !ok {
+			return nil
+		}
+		if _, err := googlesql.AnalyzeStatement(masked, opts, scope, catalog.TypeFactory()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// scriptStatementExpressions returns the expressions that stmt itself
+// evaluates, in source order, excluding those in the statements of its body.
+func scriptStatementExpressions(stmt googlesql.ASTStatementNode) ([]googlesql.ASTExpressionNode, error) {
+	var exprs []googlesql.ASTExpressionNode
+	add := func(expr googlesql.ASTExpressionNode, err error) error {
+		if err != nil {
+			return err
+		}
+		if expr != nil {
+			exprs = append(exprs, expr)
+		}
+		return nil
+	}
+	switch n := stmt.(type) {
+	case *googlesql.ASTSingleAssignment:
+		return exprs, add(n.Expression())
+	case *googlesql.ASTAssignmentFromStruct:
+		return exprs, add(n.StructExpression())
+	case *googlesql.ASTParameterAssignment:
+		return exprs, add(n.Expression())
+	case *googlesql.ASTIfStatement:
+		if err := add(n.Condition()); err != nil {
+			return nil, err
+		}
+		clauses, err := n.ElseifClauses()
+		if err != nil || clauses == nil {
+			return exprs, err
+		}
+		num, err := clauses.NumChildren()
+		if err != nil {
+			return nil, err
+		}
+		for i := int32(0); i < num; i++ {
+			clause, err := clauses.ElseifClauses(i)
+			if err != nil {
+				return nil, err
+			}
+			if err := add(clause.Condition()); err != nil {
+				return nil, err
+			}
+		}
+		return exprs, nil
+	case *googlesql.ASTWhileStatement:
+		// WHILE without a condition is LOOP.
+		return exprs, add(n.Condition())
+	case *googlesql.ASTRepeatStatement:
+		until, err := n.UntilClause()
+		if err != nil || until == nil {
+			return exprs, err
+		}
+		return exprs, add(until.Condition())
+	case *googlesql.ASTCaseStatement:
+		if err := add(n.Expression()); err != nil {
+			return nil, err
+		}
+		clauses, err := n.WhenThenClauses()
+		if err != nil || clauses == nil {
+			return exprs, err
+		}
+		num, err := clauses.NumChildren()
+		if err != nil {
+			return nil, err
+		}
+		for i := int32(0); i < num; i++ {
+			clause, err := clauses.WhenThenClauses(i)
+			if err != nil {
+				return nil, err
+			}
+			if err := add(clause.Condition()); err != nil {
+				return nil, err
+			}
+		}
+		return exprs, nil
+	case *googlesql.ASTRaiseStatement:
+		return exprs, add(n.Message())
+	}
+	return nil, nil
+}
+
+// maskOutsideNode masks rawText outside node, reporting false if node's
+// location does not lie within rawText.
+func maskOutsideNode(rawText string, node googlesql.ASTNode) (string, bool) {
+	loc, err := node.GetParseLocationRange()
+	if err != nil {
+		return "", false
+	}
+	start, end := parseLocStart(loc), parseLocEnd(loc)
+	if start < 0 || end < start || end > len(rawText) {
+		return "", false
+	}
+	return maskOutside(rawText, start, end), true
 }
 
 // maskOutside blanks everything except rawText[start:end]. Each character
@@ -355,10 +463,6 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				continue
 			}
 
-			if isScriptControlStatement(kind) && !isAssignmentStatement(kind) {
-				continue
-			}
-
 			if kind == googlesql.ASTNodeKindAstCreateFunctionStatement {
 				fnNode := s.(*googlesql.ASTCreateFunctionStatement)
 				newFunc, err := a.createFunctionTypes(fnNode, fixedSrc, catalog)
@@ -383,8 +487,8 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 
 			var output *googlesql.AnalyzerOutput
 			var err error
-			if isAssignmentStatement(kind) {
-				err = a.analyzeAssignmentExpression(fixedSrc, s, catalog)
+			if isScriptControlStatement(kind) {
+				err = a.analyzeScriptStatement(fixedSrc, s, catalog)
 			} else {
 				output, err = a.AnalyzeStatement(fixedSrc, s, catalog)
 			}
