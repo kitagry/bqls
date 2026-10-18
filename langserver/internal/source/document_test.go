@@ -107,6 +107,27 @@ Storage info
 				lsp.RawMarkedString("| Name | Type | Mode | Description |\n| --- | --- | --- | --- |\n| name | STRING | NULLABLE |  |\n"),
 			},
 		},
+		"hover INFORMATION_SCHEMA view": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT job_id FROM |`region-us`.INFORMATION_SCHEMA.JOBS",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+				bqClient.EXPECT().DryRunSchema(gomock.Any(), "SELECT * FROM `p`.`region-us`.`INFORMATION_SCHEMA`.`JOBS`").Return(bq.Schema{
+					{
+						Name: "job_id",
+						Type: bq.StringFieldType,
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				lsp.RawMarkedString("Table: p.region-us.INFORMATION_SCHEMA.JOBS\n"),
+				lsp.RawMarkedString("| Name | Type | Mode | Description |\n| --- | --- | --- | --- |\n| job_id | STRING | NULLABLE |  |\n"),
+			},
+		},
 		"hover default project table": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM |`dataset.table`",
