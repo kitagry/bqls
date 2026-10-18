@@ -118,6 +118,34 @@ func TestProject_ParseFile(t *testing.T) {
 				},
 			},
 		},
+		"report error after a rewritten WHERE condition in the original source": {
+			file: "SELECT * FROM `project.dataset.table` WHERE idx; SELECT idy FROM `project.dataset.table`",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Unrecognized name: idx; Did you mean id?",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 44,
+					},
+					TermLength:           3,
+					IncompleteColumnName: "idx",
+				},
+				{
+					Msg: "Unrecognized name: idy; Did you mean id?",
+					Position: lsp.Position{
+						Line:      0,
+						Character: 56,
+					},
+					TermLength:           3,
+					IncompleteColumnName: "idy",
+				},
+			},
+		},
 		"parse non-bool column in where clause": {
 			file: "SELECT * FROM `project.dataset.table` WHERE id",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{
@@ -1123,12 +1151,66 @@ func TestAnalyzer_NotBoolClauseRewritesOnlyBarePath(t *testing.T) {
 			if got.FixedSrc != tt.expectedFixedSrc {
 				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
 			}
-			if diff := cmp.Diff(tt.expectedFixOffsets, got.FixOffsets); diff != "" {
+			if diff := cmp.Diff(tt.expectedFixOffsets, got.FixOffsets, cmpopts.IgnoreUnexported(file.FixOffset{})); diff != "" {
 				t.Errorf("FixOffsets diff (-expect, +got)\n%s", diff)
 			}
 			if len(got.RNode) == 0 {
 				t.Errorf("failed to analyze")
 			}
+		})
+	}
+}
+
+func TestAnalyzer_ParseFileKeepsTermBeforeDeletedTrailingClause(t *testing.T) {
+	tests := map[string]struct {
+		file         string
+		wantMsg      string
+		wantPosition lsp.Position
+		wantLength   int
+	}{
+		"WHERE condition before a trailing AND": {
+			file:         "SELECT * FROM `project.dataset.table` WHERE idq AND",
+			wantMsg:      "Unrecognized name: idq; Did you mean id?",
+			wantPosition: lsp.Position{Line: 0, Character: 44},
+			wantLength:   3,
+		},
+		"table before a trailing GROUP BY": {
+			file:         "SELECT id FROM unknown_table GROUP BY",
+			wantMsg:      "Table not found: unknown_table",
+			wantPosition: lsp.Position{Line: 0, Character: 15},
+			wantLength:   len("unknown_table"),
+		},
+		"pipe WHERE condition before a trailing pipe ORDER BY": {
+			file:         "FROM `project.dataset.table` |> WHERE idx |> ORDER BY",
+			wantMsg:      "Unrecognized name: idx; Did you mean id?",
+			wantPosition: lsp.Position{Line: 0, Character: 38},
+			wantLength:   3,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetDefaultProject().Return("project").AnyTimes()
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+				Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}},
+			}, nil).AnyTimes()
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).AnyTimes()
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
+			for _, e := range got.Errors {
+				if e.Msg != tt.wantMsg {
+					continue
+				}
+				if e.Position != tt.wantPosition || e.TermLength != tt.wantLength {
+					t.Errorf("error at %+v with length %d, want %+v with length %d", e.Position, e.TermLength, tt.wantPosition, tt.wantLength)
+				}
+				return
+			}
+			t.Errorf("no error %q in %+v", tt.wantMsg, got.Errors)
 		})
 	}
 }
@@ -1510,7 +1592,7 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 					Msg: `Syntax error: Unexpected ";"`,
 					Position: lsp.Position{
 						Line:      1,
-						Character: 10,
+						Character: 16,
 					},
 				},
 				{
@@ -1528,6 +1610,117 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 					},
 					TermLength:           7,
 					IncompleteColumnName: "unknown",
+				},
+			},
+		},
+		"Report error position in the original source after a variable longer than its dummy value": {
+			file: "DECLARE yyyyyy INT64;\n" +
+				"DECLARE x INT64;\n" +
+				"SELECT yyyyyy + UNKNOWN_FUNC();",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{
+						Line:      2,
+						Character: 16,
+					},
+				},
+			},
+		},
+		"Report error position in the original source after a variable shorter than its dummy value": {
+			file: "DECLARE y STRING;\n" +
+				"DECLARE x INT64;\n" +
+				"SELECT LENGTH(y) + UNKNOWN_FUNC();\n" +
+				"SELECT y;",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{
+						Line:      2,
+						Character: 19,
+					},
+				},
+			},
+		},
+		"Keep error position on a line after a replaced variable": {
+			file: "DECLARE yyyyyy INT64;\n" +
+				"SELECT yyyyyy;\n" +
+				"SELECT UNKNOWN_FUNC();",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{
+						Line:      2,
+						Character: 7,
+					},
+				},
+			},
+		},
+		"Report errors from different passes in the original source": {
+			// The WHERE error is found before yyyyyy, earlier on the line, is
+			// replaced; UNKNOWN_FUNC is found only after that.
+			file: "DECLARE yyyyyy INT64;\n" +
+				"SELECT yyyyyy, UNKNOWN_FUNC() FROM `project.dataset.table` WHERE idx",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Unrecognized name: idx; Did you mean id?",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 65,
+					},
+					TermLength:           3,
+					IncompleteColumnName: "idx",
+				},
+				{
+					Msg: "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 15,
+					},
+				},
+			},
+		},
+		"Report error at a variable whose dummy value equals its tail": {
+			file: "DECLARE v1 INT64;\n" +
+				"SELECT 1 FROM `project.dataset.table` WHERE v1",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg: "WHERE clause should return type BOOL, but returns INT64",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 44,
+					},
+				},
+			},
+		},
+		"Report error at a variable whose tail repeats its dummy value": {
+			file: "DECLARE v11 INT64;\n" +
+				"SELECT 1 FROM `project.dataset.table` WHERE v11",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg: "WHERE clause should return type BOOL, but returns INT64",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 44,
+					},
 				},
 			},
 		},
@@ -1812,7 +2005,7 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 			file: "DECLARE x INT64;\nSET x = ",
 			expectedErrs: []file.Error{
 				{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Line: 1, Character: 7}},
-				{Msg: "Syntax error: Unexpected keyword SELECT", Position: lsp.Position{Line: 1, Character: 8}},
+				{Msg: "Syntax error: Unexpected keyword SELECT", Position: lsp.Position{Line: 1, Character: 7}},
 			},
 			expectedRNodeLen: 0,
 		},
@@ -1820,7 +2013,7 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 			file: "DECLARE x INT64;\nSET x =",
 			expectedErrs: []file.Error{
 				{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Line: 1, Character: 7}},
-				{Msg: "Syntax error: Unexpected keyword SELECT", Position: lsp.Position{Line: 1, Character: 8}},
+				{Msg: "Syntax error: Unexpected keyword SELECT", Position: lsp.Position{Line: 1, Character: 7}},
 			},
 			expectedRNodeLen: 0,
 		},
@@ -1835,7 +2028,7 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 			file: "DECLARE x INT64;\nSET x = (SELECT ",
 			expectedErrs: []file.Error{
 				{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Line: 1, Character: 15}},
-				{Msg: "Syntax error: Unexpected keyword SELECT", Position: lsp.Position{Line: 1, Character: 16}},
+				{Msg: "Syntax error: Unexpected keyword SELECT", Position: lsp.Position{Line: 1, Character: 15}},
 			},
 			expectedRNodeLen: 0,
 		},
@@ -1843,7 +2036,7 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 			file: "DECLARE a INT64;\nDECLARE b INT64;\nSET (a, b) = ",
 			expectedErrs: []file.Error{
 				{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Line: 2, Character: 12}},
-				{Msg: "Syntax error: Unexpected keyword SELECT", Position: lsp.Position{Line: 2, Character: 13}},
+				{Msg: "Syntax error: Unexpected keyword SELECT", Position: lsp.Position{Line: 2, Character: 12}},
 			},
 			expectedRNodeLen: 0,
 		},
@@ -1851,7 +2044,7 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 			file: "SET @p = ",
 			expectedErrs: []file.Error{
 				{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Line: 0, Character: 8}},
-				{Msg: "Syntax error: Unexpected keyword SELECT", Position: lsp.Position{Line: 0, Character: 9}},
+				{Msg: "Syntax error: Unexpected keyword SELECT", Position: lsp.Position{Line: 0, Character: 8}},
 			},
 			expectedRNodeLen: 0,
 		},

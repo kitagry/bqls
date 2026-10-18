@@ -37,7 +37,8 @@ type ParsedFile struct {
 	ParseTree *bqparser.Node
 
 	FixOffsets []FixOffset
-	Errors     []Error
+	// Errors are positioned in Src, unlike the offsets of the nodes.
+	Errors []Error
 
 	catalog *Catalog
 }
@@ -242,6 +243,68 @@ func (p *ParsedFile) FindIncompleteColumnName(pos lsp.Position) string {
 type FixOffset struct {
 	Offset int
 	Length int
+
+	// edits is exactly what the fix-up rewrote. Offset and Length cannot be
+	// inverted exactly, because fix-ups anchor Offset at either the start or
+	// the end of what they rewrote, and the rewritten text cannot be recovered
+	// by diffing either, since a replacement may repeat the text around it.
+	edits []sourceEdit
+}
+
+// sourceEdit is one rewrite of the source: the bytes [start, start+oldLen)
+// were replaced with newLen bytes.
+type sourceEdit struct {
+	start  int
+	oldLen int
+	newLen int
+}
+
+// toSrcOffset maps a byte offset in the text after edits back to the text
+// before them. Edits build on each other, so they are undone in reverse.
+// At a deletion, the offset maps after the deleted text, as the start of
+// whatever follows it.
+func toSrcOffset(edits []sourceEdit, offset int) int {
+	return undoEdits(edits, offset, false)
+}
+
+// toSrcEnd is toSrcOffset for the end of a term. At a deletion, the end maps
+// before the deleted text, so that the term does not swallow it.
+func toSrcEnd(edits []sourceEdit, offset int) int {
+	return undoEdits(edits, offset, true)
+}
+
+func undoEdits(edits []sourceEdit, offset int, isEnd bool) int {
+	for i := len(edits) - 1; i >= 0; i-- {
+		e := edits[i]
+		end := e.start + e.newLen
+		switch {
+		case offset > end, offset == end && !(isEnd && e.newLen == 0):
+			offset += e.oldLen - e.newLen
+		case offset > e.start+e.oldLen:
+			// Inside text a fix-up added; there is no original counterpart.
+			offset = e.start + e.oldLen
+		}
+	}
+	return offset
+}
+
+// errorToSrc converts err, whose position is in errSrc (src after edits), to
+// a position in src.
+func errorToSrc(src, errSrc string, edits []sourceEdit, err Error) Error {
+	start, ok := errorByteOffset(errSrc, err.Position)
+	if !ok {
+		return err
+	}
+	srcStart := toSrcOffset(edits, start)
+	pos, ok := byteOffsetToPosition(src, srcStart)
+	if !ok {
+		return err
+	}
+	if err.TermLength > 0 {
+		err.TermLength = toSrcEnd(edits, start+err.TermLength) - srcStart
+	}
+	err.Position = pos
+	return err
 }
 
 type Error struct {
@@ -311,6 +374,9 @@ func zetaSQLColumnToByteOffset(src string, line, col int) int {
 func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) {
 	fixedBuilder := strings.Builder{}
 	currentOffset := 0
+	// currentOffset counts the rewritten text, so the growth so far is subtracted
+	// to locate a word in src.
+	growth := 0
 	errs = make([]Error, 0, 1)
 	fixOffsets = make([]FixOffset, 0, 1)
 	for line := range strings.SplitSeq(src, "\n") {
@@ -337,7 +403,7 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) 
 			srcStart := currentOffset + loc[0]
 			targetWord := line[loc[0] : loc[1]-1]
 			line = line[:loc[0]] + "true" + line[loc[1]-1:]
-			pos, _ := byteOffsetToPosition(src, srcStart)
+			pos, _ := byteOffsetToPosition(src, srcStart-growth)
 			errs = append(errs, Error{
 				Msg:                  fmt.Sprintf("Unrecognized name: %s", targetWord),
 				Position:             pos,
@@ -347,7 +413,9 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) 
 			fixOffsets = append(fixOffsets, FixOffset{
 				Offset: srcStart + len(targetWord),
 				Length: len("true") - len(targetWord),
+				edits:  []sourceEdit{{start: srcStart, oldLen: len(targetWord), newLen: len("true")}},
 			})
+			growth += len("true") - len(targetWord)
 
 			oldLoc := loc
 			ind -= len(targetWord) - len("true")
@@ -382,6 +450,7 @@ func fixSelectListMustNotBeEmptyStatement(src string, parsedErr Error) (fixedSrc
 		{
 			Offset: errOffset,
 			Length: len("1 "),
+			edits:  []sourceEdit{{start: errOffset, newLen: len("1 ")}},
 		},
 	}
 }
@@ -429,6 +498,7 @@ func fixOnlyWithClauseSyntaxError(src string, parsedErr Error) (fixedSrc string,
 		{
 			Offset: errOffset,
 			Length: len(" SELECT 1 "),
+			edits:  []sourceEdit{{start: errOffset, newLen: len(" SELECT 1 ")}},
 		},
 	}
 }
@@ -498,6 +568,7 @@ func fixIncompletePipeOperator(src string, parsedErr Error) (fixedSrc string, fi
 		{
 			Offset: deleteEnd,
 			Length: pipeOffset - deleteEnd,
+			edits:  []sourceEdit{{start: pipeOffset, oldLen: deleteEnd - pipeOffset}},
 		},
 	}
 }
@@ -619,10 +690,18 @@ func fixUnexpectedEndOfScriptWithDeletion(src string, parsedErr Error, targetUne
 	if trimmed := strings.TrimSuffix(fixedSrc, "|>"); trimmed != fixedSrc {
 		fixedSrc = strings.TrimRightFunc(trimmed, unicode.IsSpace)
 	}
+	// TrimSpace also drops leading whitespace, which is its own rewrite.
+	leading := targetOffset - len(strings.TrimLeftFunc(src[:targetOffset], unicode.IsSpace))
+	var edits []sourceEdit
+	if leading > 0 {
+		edits = append(edits, sourceEdit{start: 0, oldLen: leading})
+	}
+	edits = append(edits, sourceEdit{start: len(fixedSrc), oldLen: len(src) - leading - len(fixedSrc)})
 	return fixedSrc, parsedErr, []FixOffset{
 		{
 			Offset: errOffset,
 			Length: -(errOffset - len(fixedSrc)),
+			edits:  edits,
 		},
 	}
 }
@@ -659,6 +738,7 @@ func fixUnexpectedEndOfScriptWithCondition(src string, parsedErr Error, targetUn
 		{
 			Offset: errOffset,
 			Length: len(insertStr),
+			edits:  []sourceEdit{{start: errOffset, newLen: len(insertStr)}},
 		},
 	}
 }
@@ -692,6 +772,7 @@ func fixDeclarationError(src string, parsedErr Error, defaultVal string) (fixedS
 	fixOffset := FixOffset{
 		Offset: errOffset,
 		Length: -parsedErr.TermLength + len(defaultVal),
+		edits:  []sourceEdit{{start: replaceOffset, oldLen: len(parsedErr.IncompleteColumnName), newLen: len(defaultVal)}},
 	}
 
 	return fixedSrc, []FixOffset{fixOffset}
@@ -722,6 +803,7 @@ func fixErrorToExpression(src string, parsedErr Error, expr string) (fixedSrc st
 	fixOffset := FixOffset{
 		Offset: errOffset,
 		Length: -len(parsedErr.IncompleteColumnName) + len(expr),
+		edits:  []sourceEdit{{start: replaceOffset, oldLen: len(parsedErr.IncompleteColumnName), newLen: len(expr)}},
 	}
 
 	return fixedSrc, []FixOffset{fixOffset}
@@ -751,6 +833,7 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 			length := endOffset - startOffset
 			fixedSrc = src[:startOffset] + "true" + src[endOffset:]
 			fixOffset.Length = len("true") - length
+			fixOffset.edits = []sourceEdit{{start: startOffset, oldLen: length, newLen: len("true")}}
 			usedBinaryExpr = true
 		}
 	}
@@ -763,6 +846,7 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 		}
 		fixedSrc = src[:incompleteOffset] + "true" + src[incompleteOffset+replacedLength:]
 		fixOffset.Length = len("true") - replacedLength
+		fixOffset.edits = []sourceEdit{{start: incompleteOffset, oldLen: replacedLength, newLen: len("true")}}
 	}
 
 	return fixedSrc, []FixOffset{fixOffset}
@@ -813,7 +897,11 @@ func fixNotBoolClauseError(src string, parsedErr Error) (fixedSrc string, fixOff
 		return src, nil
 	}
 	fixedSrc = src[:start] + "true" + src[end:]
-	return fixedSrc, []FixOffset{{Offset: start, Length: len("true") - parsedErr.TermLength}}
+	return fixedSrc, []FixOffset{{
+		Offset: start,
+		Length: len("true") - parsedErr.TermLength,
+		edits:  []sourceEdit{{start: start, oldLen: parsedErr.TermLength, newLen: len("true")}},
+	}}
 }
 
 func addInformationToNotExistInStructError(src string, parsedErr Error) Error {

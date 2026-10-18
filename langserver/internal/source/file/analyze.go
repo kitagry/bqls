@@ -253,6 +253,9 @@ func (a *Analyzer) parseScript(src string) (*googlesql.ASTScript, error) {
 
 func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 	fixedSrc, errs, fixOffsets := fixDot(src)
+	// Errors are reported against src, but the analysis sees fixedSrc. Each error is
+	// converted when it is recorded, because later fix-ups move the text it points at.
+	edits := editsOf(fixOffsets)
 
 	var node *googlesql.ASTScript
 	var statements []StatementResult
@@ -264,6 +267,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 		statements = make([]StatementResult, 0)
 		var err error
 		var fo []FixOffset
+		passSrc := fixedSrc
 		node, err = a.parseScript(fixedSrc)
 		if err != nil {
 			pErr := parseZetaSQLError(fixedSrc, err)
@@ -286,9 +290,10 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			if len(fo) == 0 {
 				fixedSrc, fo = fixIncompletePipeOperator(fixedSrc, pErr)
 			}
-			errs = append(errs, pErr)
+			errs = append(errs, errorToSrc(src, passSrc, edits, pErr))
 			if len(fo) > 0 {
 				fixOffsets = append(fixOffsets, fo...)
+				edits = append(edits, editsOf(fo)...)
 				continue
 			}
 		}
@@ -340,8 +345,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				fnNode := s.(*googlesql.ASTCreateFunctionStatement)
 				newFunc, err := a.createFunctionTypes(fnNode, fixedSrc, catalog)
 				if err != nil {
-					passErrs = append(passErrs, statementError{index: i, err: *err})
-					statements = append(statements, StatementResult{Stmt: s, Err: err})
+					srcErr := errorToSrc(src, fixedSrc, edits, *err)
+					passErrs = append(passErrs, statementError{index: i, err: srcErr})
+					statements = append(statements, StatementResult{Stmt: s, Err: &srcErr})
 					continue
 				}
 				if newFunc != nil {
@@ -369,6 +375,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				continue
 			}
 
+			errSrc := fixedSrc
 			pErr := parseZetaSQLError(fixedSrc, err)
 
 			isUnrecognizedNameError := strings.Contains(pErr.Msg, "Unrecognized name: ")
@@ -431,18 +438,20 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				fixedSrc, fo = fixNotBoolClauseError(fixedSrc, pErr)
 			}
 
+			srcErr := errorToSrc(src, errSrc, edits, pErr)
 			if !skipError {
-				statements = append(statements, StatementResult{Stmt: s, Err: &pErr})
+				statements = append(statements, StatementResult{Stmt: s, Err: &srcErr})
 			}
 			if len(fo) > 0 {
 				if !skipError {
-					fixedErrs = append(fixedErrs, statementError{index: i, err: pErr})
+					fixedErrs = append(fixedErrs, statementError{index: i, err: srcErr})
 				}
 				fixOffsets = append(fixOffsets, fo...)
+				edits = append(edits, editsOf(fo)...)
 				goto retry
 			}
 			if !skipError {
-				passErrs = append(passErrs, statementError{index: i, err: pErr})
+				passErrs = append(passErrs, statementError{index: i, err: srcErr})
 			}
 		}
 		break
@@ -476,6 +485,14 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 		Errors:     errs,
 		catalog:    catalog,
 	}
+}
+
+func editsOf(fixOffsets []FixOffset) []sourceEdit {
+	var edits []sourceEdit
+	for _, fo := range fixOffsets {
+		edits = append(edits, fo.edits...)
+	}
+	return edits
 }
 
 type statementError struct {
