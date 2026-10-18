@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	bq "cloud.google.com/go/bigquery"
+	googlesql "github.com/goccy/go-googlesql"
 	"github.com/golang/mock/gomock"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -2058,7 +2059,6 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 			file: "DECLARE x INT64;\nSET x = ",
 			expectedErrs: []file.Error{
 				{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Line: 1, Character: 7}},
-				{Msg: "Syntax error: Unexpected keyword SELECT", Position: lsp.Position{Line: 1, Character: 7}},
 			},
 			expectedRNodeLen: 0,
 		},
@@ -2066,7 +2066,6 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 			file: "DECLARE x INT64;\nSET x =",
 			expectedErrs: []file.Error{
 				{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Line: 1, Character: 7}},
-				{Msg: "Syntax error: Unexpected keyword SELECT", Position: lsp.Position{Line: 1, Character: 7}},
 			},
 			expectedRNodeLen: 0,
 		},
@@ -2081,7 +2080,6 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 			file: "DECLARE x INT64;\nSET x = (SELECT ",
 			expectedErrs: []file.Error{
 				{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Line: 1, Character: 15}},
-				{Msg: "Syntax error: Unexpected keyword SELECT", Position: lsp.Position{Line: 1, Character: 15}},
 			},
 			expectedRNodeLen: 0,
 		},
@@ -2089,7 +2087,6 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 			file: "DECLARE a INT64;\nDECLARE b INT64;\nSET (a, b) = ",
 			expectedErrs: []file.Error{
 				{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Line: 2, Character: 12}},
-				{Msg: "Syntax error: Unexpected keyword SELECT", Position: lsp.Position{Line: 2, Character: 12}},
 			},
 			expectedRNodeLen: 0,
 		},
@@ -2097,7 +2094,6 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 			file: "SET @p = ",
 			expectedErrs: []file.Error{
 				{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Line: 0, Character: 8}},
-				{Msg: "Syntax error: Unexpected keyword SELECT", Position: lsp.Position{Line: 0, Character: 8}},
 			},
 			expectedRNodeLen: 0,
 		},
@@ -2322,5 +2318,145 @@ func TestParsedFile_FindTargetAnalyzeOutput(t *testing.T) {
 				t.Errorf("FindTargetAnalyzeOutput ok = %v, want %v", ok, tt.expectedOK)
 			}
 		})
+	}
+}
+
+func TestAnalyzer_ParseFileWithIncompleteQueryReportsOnlyUserError(t *testing.T) {
+	tests := map[string]struct {
+		file    string
+		wantErr file.Error
+	}{
+		"WHERE before a line comment": {
+			file:    "SELECT id FROM `project.dataset.table` WHERE -- a b",
+			wantErr: file.Error{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Character: 51}},
+		},
+		"GROUP BY before a line comment": {
+			file:    "SELECT id FROM `project.dataset.table` GROUP BY -- c",
+			wantErr: file.Error{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Character: 52}},
+		},
+		"WITH clause before a line comment": {
+			file:    "WITH t AS (SELECT 1) -- c",
+			wantErr: file.Error{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Character: 25}},
+		},
+		"expression before a line comment": {
+			file:    "SELECT 1 + -- c",
+			wantErr: file.Error{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Character: 15}},
+		},
+		"SET without expression": {
+			file:    "DECLARE x INT64;\nSET x =",
+			wantErr: file.Error{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Line: 1, Character: 7}},
+		},
+		"binary operator": {
+			file:    "SELECT 1 +",
+			wantErr: file.Error{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Character: 10}},
+		},
+		"CASE": {
+			file:    "SELECT CASE",
+			wantErr: file.Error{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Character: 11}},
+		},
+		"ARRAY type": {
+			file:    "SELECT ARRAY<",
+			wantErr: file.Error{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Character: 13}},
+		},
+		"DECLARE DEFAULT": {
+			file:    "DECLARE x DEFAULT",
+			wantErr: file.Error{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Character: 17}},
+		},
+		"IF THEN": {
+			file:    "IF TRUE THEN",
+			wantErr: file.Error{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Character: 12}},
+		},
+		"SET parenthesis": {
+			file:    "DECLARE x INT64;\nSET x = (",
+			wantErr: file.Error{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Line: 1, Character: 9}},
+		},
+		"IN parenthesis": {
+			file:    "SELECT 1 IN (",
+			wantErr: file.Error{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Character: 13}},
+		},
+		"SET parenthesis before a line comment": {
+			file:    "DECLARE x INT64;\nSET x = ( -- c",
+			wantErr: file.Error{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Line: 1, Character: 14}},
+		},
+		"function body": {
+			file:    "CREATE TEMP FUNCTION f() AS (",
+			wantErr: file.Error{Msg: "Syntax error: Unexpected end of script", Position: lsp.Position{Character: 29}},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetDefaultProject().Return("project").AnyTimes()
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+				Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}},
+			}, nil).AnyTimes()
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
+
+			want := []file.Error{}
+			if tt.wantErr.Msg != "" {
+				want = []file.Error{tt.wantErr}
+			}
+			if diff := cmp.Diff(want, got.Errors, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("ParseFile errors diff (-want, +got)\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestParsedFile_ExtractSQLOfExpressionStartingAtDeclaredVariable(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+	bqClient.EXPECT().GetDefaultProject().Return("project").AnyTimes()
+	analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+	src := "DECLARE yyyyyy INT64;\nSELECT yyyyyy + 1"
+	got := analyzer.ParseFile("uri", src)
+	defer got.Close()
+
+	pos := lsp.Position{Line: 1, Character: len("SELECT ")}
+	binExpr, ok := file.SearchAstNode[*googlesql.ASTBinaryExpression](got.Node, got.TermOffset(pos))
+	if !ok {
+		t.Fatalf("no binary expression at %+v in %q", pos, got.FixedSrc)
+	}
+	loc, _ := binExpr.GetParseLocationRange()
+
+	sql, ok := got.ExtractSQL(loc)
+	if !ok || sql != "yyyyyy + 1" {
+		t.Errorf("ExtractSQL = %q, %v, want %q", sql, ok, "yyyyyy + 1")
+	}
+	rng, ok := got.ToLspRange(loc)
+	wantRange := lsp.Range{Start: pos, End: lsp.Position{Line: 1, Character: len("SELECT yyyyyy + 1")}}
+	if diff := cmp.Diff(wantRange, rng); !ok || diff != "" {
+		t.Errorf("ToLspRange diff (-want, +got)\n%s", diff)
+	}
+}
+
+func TestParsedFile_ToLspRangeKeepsLeadingWhitespaceOfDeletedClause(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+	bqClient.EXPECT().GetDefaultProject().Return("project").AnyTimes()
+	bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+		Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}},
+	}, nil).AnyTimes()
+	analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+	got := analyzer.ParseFile("uri", "\n\n  SELECT id FROM `project.dataset.table` GROUP BY")
+	defer got.Close()
+
+	pos := lsp.Position{Line: 2, Character: len("  SELECT ")}
+	path, ok := file.SearchAstNode[*googlesql.ASTPathExpression](got.Node, got.TermOffset(pos))
+	if !ok {
+		t.Fatalf("no path expression at %+v in %q", pos, got.FixedSrc)
+	}
+	loc, _ := path.GetParseLocationRange()
+	rng, ok := got.ToLspRange(loc)
+	wantRange := lsp.Range{Start: pos, End: lsp.Position{Line: 2, Character: len("  SELECT id")}}
+	if diff := cmp.Diff(wantRange, rng); !ok || diff != "" {
+		t.Errorf("ToLspRange diff (-want, +got)\n%s", diff)
 	}
 }
