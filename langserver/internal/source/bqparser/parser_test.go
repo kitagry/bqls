@@ -175,6 +175,14 @@ func TestParse_StatementEnd(t *testing.T) {
 			sql:  "SELECT CASE WHEN a THEN 1 ELSE 2 END AS b FROM t",
 			want: []string{"SELECT CASE WHEN a THEN 1 ELSE 2 END AS b FROM t"},
 		},
+		"FROM-first statement": {
+			sql:  "FROM t |> WHERE x = 1;\nFROM u",
+			want: []string{"FROM t |> WHERE x = 1", "FROM u"},
+		},
+		"FROM of another statement is not a statement start": {
+			sql:  "DELETE FROM t WHERE true",
+			want: nil,
+		},
 	}
 
 	for name, tt := range tests {
@@ -187,6 +195,67 @@ func TestParse_StatementEnd(t *testing.T) {
 			}
 			if diff := cmp.Diff(tt.want, got); diff != "" {
 				t.Errorf("select_statement ranges mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestLastPipeOperatorEnd(t *testing.T) {
+	tests := map[string]struct {
+		src    string
+		want   uint
+		wantOk bool
+	}{
+		"right after pipe operator": {
+			src:    "FROM t |> ",
+			want:   9,
+			wantOk: true,
+		},
+		"pipe operator without spaces": {
+			src:    "FROM t|>W",
+			want:   8,
+			wantOk: true,
+		},
+		"last pipe operator": {
+			src:    "FROM t |> WHERE x = 1 |> SEL",
+			want:   24,
+			wantOk: true,
+		},
+		"no pipe operator": {
+			src:    "SELECT * FROM t ",
+			wantOk: false,
+		},
+		"pipe operator in a closed subquery": {
+			src:    "SELECT * FROM (FROM t |> WHERE x = 1) ",
+			wantOk: false,
+		},
+		"pipe operator in the current subquery": {
+			src:    "SELECT * FROM (FROM t |> ",
+			want:   24,
+			wantOk: true,
+		},
+		"pipe operator in a previous statement": {
+			src:    "FROM t |> WHERE x = 1;\nSELECT ",
+			wantOk: false,
+		},
+		"pipe operator in a string": {
+			src:    "SELECT '|>' ",
+			wantOk: false,
+		},
+		"pipe operator in a comment": {
+			src:    "SELECT 1 -- |>\n",
+			wantOk: false,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, ok := bqparser.LastPipeOperatorEnd(tt.src)
+			if ok != tt.wantOk {
+				t.Fatalf("ok: got %v, want %v", ok, tt.wantOk)
+			}
+			if got != tt.want {
+				t.Errorf("got %d, want %d", got, tt.want)
 			}
 		})
 	}

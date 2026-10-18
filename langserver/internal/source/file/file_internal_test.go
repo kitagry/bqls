@@ -151,6 +151,11 @@ func TestFixFunctions_KeepSourceWhenTermOverflowsSource(t *testing.T) {
 	}
 }
 
+// addInformationToNotExistInStructErrorWithoutAST checks the text-based fallback used for path expressions.
+func addInformationToNotExistInStructErrorWithoutAST(src string, parsedErr Error) Error {
+	return addInformationToNotExistInStructError(src, nil, parsedErr)
+}
+
 func TestAddInformationFunctions_KeepErrorWhenOutOfRange(t *testing.T) {
 	const src = "SELECT x"
 	tests := map[string]struct {
@@ -158,7 +163,7 @@ func TestAddInformationFunctions_KeepErrorWhenOutOfRange(t *testing.T) {
 		parsedErr Error
 	}{
 		"addInformationToNotExistInStructError": {
-			add:       addInformationToNotExistInStructError,
+			add:       addInformationToNotExistInStructErrorWithoutAST,
 			parsedErr: Error{Msg: "Field name too_long_name does not exist in STRUCT", Position: lsp.Position{Line: 0, Character: 7}},
 		},
 		"addInformationToNotFoundInsideTableError": {
@@ -185,13 +190,13 @@ func TestAddInformationFunctions_StopAtAnyWhitespace(t *testing.T) {
 		want      string
 	}{
 		"addInformationToNotExistInStructError after tab": {
-			add:       addInformationToNotExistInStructError,
+			add:       addInformationToNotExistInStructErrorWithoutAST,
 			src:       "SELECT 'a',\ts.zz, id FROM t",
 			parsedErr: Error{Msg: "Field name zz does not exist in STRUCT<id INT64>", Position: lsp.Position{Line: 0, Character: 14}},
 			want:      "s.zz",
 		},
 		"addInformationToNotExistInStructError after newline": {
-			add:       addInformationToNotExistInStructError,
+			add:       addInformationToNotExistInStructErrorWithoutAST,
 			src:       "SELECT id,\n  'a',\ns.zz FROM t",
 			parsedErr: Error{Msg: "Field name zz does not exist in STRUCT<id INT64>", Position: lsp.Position{Line: 2, Character: 2}},
 			want:      "s.zz",
@@ -259,7 +264,7 @@ func TestAddInformationFunctions_NameAtEndOfMessage(t *testing.T) {
 		parsedErr Error
 	}{
 		"addInformationToNotExistInStructError": {
-			add:       addInformationToNotExistInStructError,
+			add:       addInformationToNotExistInStructErrorWithoutAST,
 			parsedErr: Error{Msg: "Field name zz", Position: lsp.Position{Line: 0, Character: 9}},
 		},
 		"addInformationToNotFoundInsideTableError": {

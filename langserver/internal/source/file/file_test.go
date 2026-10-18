@@ -1194,6 +1194,62 @@ func TestAnalyzer_ParseFileWithUnknownFieldOfDeclaredStruct(t *testing.T) {
 	}
 }
 
+func TestAnalyzer_ParseFileWithUnknownFieldOfStructExpressionContainingWhitespace(t *testing.T) {
+	tests := map[string]struct {
+		file string
+		want []file.Error
+	}{
+		"CAST": {
+			file: "SELECT CAST(NULL AS STRUCT<a INT64>).b",
+			want: []file.Error{{
+				Msg:                  "Field name b does not exist in STRUCT<a INT64>",
+				Position:             lsp.Position{Line: 0, Character: 37},
+				TermLength:           1,
+				IncompleteColumnName: "CAST(NULL AS STRUCT<a INT64>).b",
+			}},
+		},
+		"STRUCT constructor": {
+			file: "SELECT STRUCT(1 AS a).b",
+			want: []file.Error{{
+				Msg:                  "Field name b does not exist in STRUCT<a INT64>",
+				Position:             lsp.Position{Line: 0, Character: 22},
+				TermLength:           1,
+				IncompleteColumnName: "STRUCT(1 AS a).b",
+			}},
+		},
+		"later errors are still reported": {
+			file: "SELECT STRUCT(1 AS a).b, unknown_column",
+			want: []file.Error{
+				{
+					Msg:                  "Field name b does not exist in STRUCT<a INT64>",
+					Position:             lsp.Position{Line: 0, Character: 22},
+					TermLength:           1,
+					IncompleteColumnName: "STRUCT(1 AS a).b",
+				},
+				{
+					Msg:                  "Unrecognized name: unknown_column",
+					Position:             lsp.Position{Line: 0, Character: 25},
+					TermLength:           14,
+					IncompleteColumnName: "unknown_column",
+				},
+			},
+		},
+	}
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
+			if diff := cmp.Diff(tt.want, got.Errors); diff != "" {
+				t.Errorf("errors diff (-want +got)\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestAnalyzer_SnapshotParameterPreservesTypeErrors(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	bqClient := mock_bigquery.NewMockClient(ctrl)
