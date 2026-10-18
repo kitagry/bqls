@@ -2201,6 +2201,137 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 			},
 			expectedRNodeLen: 0,
 		},
+		"IF condition with unknown function": {
+			file: "IF UNKNOWN_FUNC() THEN\n  SELECT 1;\nEND IF;",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 0, Character: 3},
+				},
+			},
+			expectedRNodeLen: 1,
+		},
+		"ELSEIF condition with unknown function": {
+			file: "IF TRUE THEN\n  SELECT 1;\nELSEIF UNKNOWN_FUNC() THEN\n  SELECT 2;\nEND IF;",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 2, Character: 7},
+				},
+			},
+			expectedRNodeLen: 2,
+		},
+		"WHILE condition with unknown column": {
+			file: "WHILE unknown_column > 0 DO\n  SELECT 1;\nEND WHILE;",
+			expectedErrs: []file.Error{
+				{
+					Msg:                  "Unrecognized name: unknown_column",
+					Position:             lsp.Position{Line: 0, Character: 6},
+					TermLength:           14,
+					IncompleteColumnName: "unknown_column",
+				},
+			},
+			expectedRNodeLen: 1,
+		},
+		"REPEAT UNTIL condition with unknown function": {
+			file: "REPEAT\n  SELECT 1;\nUNTIL UNKNOWN_FUNC() END REPEAT;",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 2, Character: 6},
+				},
+			},
+			expectedRNodeLen: 1,
+		},
+		"CASE expression with unknown function": {
+			file: "CASE UNKNOWN_FUNC()\n  WHEN 1 THEN SELECT 1;\nEND CASE;",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 0, Character: 5},
+				},
+			},
+			expectedRNodeLen: 1,
+		},
+		"CASE WHEN condition with unknown function": {
+			file: "CASE\n  WHEN UNKNOWN_FUNC() THEN SELECT 1;\nEND CASE;",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 1, Character: 7},
+				},
+			},
+			expectedRNodeLen: 1,
+		},
+		"RAISE message with unknown function": {
+			file: "RAISE USING MESSAGE = UNKNOWN_FUNC();",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 0, Character: 22},
+				},
+			},
+			expectedRNodeLen: 0,
+		},
+		"FOR query with unknown function": {
+			file: "FOR r IN (SELECT UNKNOWN_FUNC() AS a) DO\n  SELECT 1;\nEND FOR;",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Function not found: UNKNOWN_FUNC",
+					Position: lsp.Position{Line: 0, Character: 17},
+				},
+			},
+			expectedRNodeLen: 1,
+		},
+		"FOR query with unknown column": {
+			file: "FOR r IN (SELECT unknown_column FROM `project.dataset.table`) DO\n  SELECT 1;\nEND FOR;",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}},
+				},
+			},
+			expectedErrs: []file.Error{
+				{
+					Msg:                  "Unrecognized name: unknown_column",
+					Position:             lsp.Position{Line: 0, Character: 17},
+					TermLength:           14,
+					IncompleteColumnName: "unknown_column",
+				},
+			},
+			expectedRNodeLen: 1,
+		},
+		"control flow conditions referencing declared variable": {
+			file: "DECLARE x INT64 DEFAULT 1;\n" +
+				"IF x > 0 THEN SELECT 1; ELSEIF x < 0 THEN SELECT 2; END IF;\n" +
+				"WHILE x > 0 DO BREAK; END WHILE;\n" +
+				"REPEAT SELECT 1; UNTIL x > 0 END REPEAT;\n" +
+				"CASE x WHEN 1 THEN SELECT 1; END CASE;\n" +
+				"RAISE USING MESSAGE = CAST(x AS STRING);",
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 4,
+		},
+		"IF condition referencing FOR loop variable": {
+			file:             "FOR r IN (SELECT 1 AS a) DO\n  IF r.a > 0 THEN\n    SELECT 1;\n  END IF;\nEND FOR;",
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 1,
+		},
+		"IF condition referencing unknown field of FOR loop variable": {
+			file: "FOR r IN (SELECT 1 AS a) DO\n  IF r.b > 0 THEN\n    SELECT 1;\n  END IF;\nEND FOR;",
+			expectedErrs: []file.Error{
+				{
+					Msg:                  "Field name b does not exist in STRUCT<a INT64>",
+					Position:             lsp.Position{Line: 1, Character: 7},
+					TermLength:           1,
+					IncompleteColumnName: "r.b",
+				},
+			},
+			expectedRNodeLen: 1,
+		},
+		"WHILE condition referencing procedure parameter": {
+			file:             "CREATE PROCEDURE p.d.proc(n INT64)\nBEGIN\n  WHILE n > 0 DO\n    SELECT n;\n  END WHILE;\nEND;",
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 2,
+		},
 	}
 
 	for n, tt := range tests {

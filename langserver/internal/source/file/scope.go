@@ -141,20 +141,16 @@ func (a *Analyzer) loopVariableType(rawText string, loop *googlesql.ASTForInStat
 	if err != nil {
 		return nil, err
 	}
-	loc, err := query.GetParseLocationRange()
-	if err != nil {
-		return nil, err
-	}
-	start, end := parseLocStart(loc), parseLocEnd(loc)
-	if start < 0 || end < start || end > len(rawText) {
-		return nil, fmt.Errorf("invalid FOR...IN query location: [%d, %d)", start, end)
+	masked, ok := maskOutsideNode(rawText, query)
+	if !ok {
+		return nil, fmt.Errorf("invalid FOR...IN query location")
 	}
 
 	opts, err := a.newAnalyzerOptions(catalog.langOpts, catalog.TypeFactory())
 	if err != nil {
 		return nil, err
 	}
-	output, err := googlesql.AnalyzeStatement(maskOutside(rawText, start, end), opts, current, catalog.TypeFactory())
+	output, err := googlesql.AnalyzeStatement(masked, opts, current, catalog.TypeFactory())
 	if err != nil {
 		return nil, err
 	}
