@@ -43,6 +43,7 @@ const (
 	tokRParen            // )
 	tokComma             // ,
 	tokSemicolon         // ;
+	tokPipe              // |>
 	tokEOF
 )
 
@@ -100,6 +101,12 @@ func tokenize(sql string) []token {
 			continue
 		}
 
+		if strings.HasPrefix(sql[i:], "|>") {
+			tokens = append(tokens, token{kind: tokPipe, text: "|>", start: uint(i), end: uint(i + 2)})
+			i += 2
+			continue
+		}
+
 		switch sql[i] {
 		case '(':
 			tokens = append(tokens, token{kind: tokLParen, text: "(", start: uint(i), end: uint(i + 1)})
@@ -115,7 +122,7 @@ func tokenize(sql string) []token {
 			i++
 		default:
 			start := i
-			for i < n && !isSpace(sql[i]) && sql[i] != '(' && sql[i] != ')' && sql[i] != ',' && sql[i] != ';' && sql[i] != '\'' && sql[i] != '"' && sql[i] != '`' {
+			for i < n && !isSpace(sql[i]) && sql[i] != '(' && sql[i] != ')' && sql[i] != ',' && sql[i] != ';' && sql[i] != '\'' && sql[i] != '"' && sql[i] != '`' && !strings.HasPrefix(sql[i:], "|>") {
 				i++
 			}
 			if i > start {
@@ -180,6 +187,12 @@ func (p *parser) parseTopLevelStatement() *Node {
 		return p.parseCTEStatement()
 	case "SELECT":
 		return p.parseSelectStatement()
+	case "FROM":
+		// FROM also appears inside other statements such as DELETE FROM, so it
+		// only starts a pipe query at the beginning of a statement.
+		if p.pos == 0 || p.tokens[p.pos-1].kind == tokSemicolon {
+			return p.parseSelectStatement()
+		}
 	}
 	return nil
 }
@@ -373,6 +386,33 @@ func (p *parser) parseSelectStatement() *Node {
 		return nil
 	}
 	return stmt
+}
+
+// LastPipeOperatorEnd returns the end offset of the last pipe operator "|>" in
+// src that belongs to the query open at the end of src, that is, the pipe
+// operator is in the same statement and at the same parenthesis depth.
+func LastPipeOperatorEnd(src string) (uint, bool) {
+	// lastPipes[d] is the end of the last pipe operator at depth d, or -1.
+	lastPipes := []int{-1}
+	for _, t := range tokenize(src) {
+		switch t.kind {
+		case tokLParen:
+			lastPipes = append(lastPipes, -1)
+		case tokRParen:
+			if len(lastPipes) > 1 {
+				lastPipes = lastPipes[:len(lastPipes)-1]
+			}
+		case tokSemicolon:
+			lastPipes = []int{-1}
+		case tokPipe:
+			lastPipes[len(lastPipes)-1] = int(t.end)
+		}
+	}
+	last := lastPipes[len(lastPipes)-1]
+	if last < 0 {
+		return 0, false
+	}
+	return uint(last), true
 }
 
 // FromClauseHasJoinWithoutOn reports whether fromClause contains a JOIN keyword

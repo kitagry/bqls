@@ -16,6 +16,11 @@ func (c *completor) completeKeyword(ctx context.Context, parsedFile file.ParsedF
 
 	rootNode := parsedFile.ParseTree
 
+	// A fix-up deletes an incomplete pipe operator, so Src is checked.
+	if items, ok := completeInPipeOperator(parsedFile.Src, uint(parsedFile.SrcOffset(position))); ok {
+		return items
+	}
+
 	// Check if the program node has no children (empty file)
 	if rootNode.ChildCount() == 0 {
 		return completeFromEmptyProgram()
@@ -166,6 +171,11 @@ func completeFromCursorPosition(rootNode *bqparser.Node, parsedFile file.ParsedF
 			return createOnKeywordCompletionItem("")
 		}
 
+		// A FROM-first query continues with JOIN or a pipe operator, not with clauses.
+		if !hasClause(selectStmt, "select_clause") {
+			return createJoinKeywordCompletionItems("")
+		}
+
 		// Otherwise suggest JOIN, WHERE, GROUP BY, QUALIFY, ORDER BY, LIMIT
 		result = append(result, createJoinKeywordCompletionItems("")...)
 		if !clausesAfter["where_clause"] {
@@ -198,6 +208,84 @@ func completeFromCursorPosition(rootNode *bqparser.Node, parsedFile file.ParsedF
 		// No clause found before cursor - suggest SELECT and WITH
 		return completeFromEmptyProgram()
 	}
+}
+
+// completeInPipeOperator handles keyword completion when the cursor is in a
+// pipe operator. It returns false when the cursor is not after a pipe operator.
+func completeInPipeOperator(src string, cursorOffset uint) ([]CompletionItem, bool) {
+	if int(cursorOffset) > len(src) {
+		return nil, false
+	}
+	pipeEnd, ok := bqparser.LastPipeOperatorEnd(src[:cursorOffset])
+	if !ok {
+		return nil, false
+	}
+
+	typed := strings.TrimLeft(src[pipeEnd:cursorOffset], " \t\r\n")
+	if typed == "" || isIdentifier(typed) {
+		return createPipeOperatorKeywordCompletionItems(typed), true
+	}
+	if hasOrderOrGroupBeforeCursor(src, cursorOffset) {
+		return createByKeywordCompletionItem(""), true
+	}
+	// The cursor is in the arguments of the pipe operator, where no keyword
+	// completion is supported.
+	return []CompletionItem{}, true
+}
+
+func isIdentifier(s string) bool {
+	for _, r := range s {
+		isAlnum := ('a' <= r && r <= 'z') || ('A' <= r && r <= 'Z') || ('0' <= r && r <= '9')
+		if r != '_' && !isAlnum {
+			return false
+		}
+	}
+	return s != ""
+}
+
+// pipeOperators are the pipe operators listed in BigQuery's pipe syntax reference.
+// https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax
+var pipeOperators = []struct {
+	newText     string
+	snippetText string
+	doc         string
+}{
+	{newText: "SELECT ", doc: "The SELECT pipe operator produces a new table with the listed columns."},
+	{newText: "EXTEND ", doc: "The EXTEND pipe operator adds computed columns to the input table."},
+	{newText: "SET ", doc: "The SET pipe operator replaces the values of columns in the input table."},
+	{newText: "DROP ", doc: "The DROP pipe operator removes columns from the input table."},
+	{newText: "RENAME ", doc: "The RENAME pipe operator renames columns in the input table."},
+	{newText: "AS ", doc: "The AS pipe operator introduces a table alias for the input table."},
+	{newText: "WHERE ", doc: "The WHERE pipe operator filters the rows of the input table."},
+	{newText: "AGGREGATE ", doc: "The AGGREGATE pipe operator aggregates the input table, optionally grouping by columns."},
+	{newText: "DISTINCT", doc: "The DISTINCT pipe operator removes duplicate rows from the input table."},
+	{newText: "ORDER BY ", doc: "The ORDER BY pipe operator sorts the input table."},
+	{newText: "LIMIT ", doc: "The LIMIT pipe operator limits the number of rows of the input table."},
+	{newText: "CALL ", doc: "The CALL pipe operator calls a table-valued function with the input table as the first argument."},
+	{newText: "WINDOW ", doc: "The WINDOW pipe operator adds columns computed by window functions."},
+	{newText: "TABLESAMPLE ", snippetText: "TABLESAMPLE SYSTEM (${1:percent} PERCENT)", doc: "The TABLESAMPLE pipe operator returns a random sample of the input table."},
+	{newText: "PIVOT ", snippetText: "PIVOT (${1:aggregate} FOR ${2:column} IN (${3:values}))", doc: "The PIVOT pipe operator rotates rows into columns."},
+	{newText: "UNPIVOT ", snippetText: "UNPIVOT (${1:value} FOR ${2:name} IN (${3:columns}))", doc: "The UNPIVOT pipe operator rotates columns into rows."},
+	{newText: "WITH ", snippetText: "WITH ${1:name} AS (${2:query})", doc: "The WITH pipe operator defines common table expressions for the following pipe operators."},
+}
+
+func createPipeOperatorKeywordCompletionItems(typedPrefix string) []CompletionItem {
+	result := make([]CompletionItem, 0, len(pipeOperators))
+	for _, op := range pipeOperators {
+		result = append(result, CompletionItem{
+			Kind:        lsp.CIKKeyword,
+			NewText:     op.newText,
+			SnippetText: op.snippetText,
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: op.doc,
+			},
+			TypedPrefix: typedPrefix,
+		})
+	}
+	result = append(result, createJoinKeywordCompletionItems(typedPrefix)...)
+	result = append(result, createSetOperationKeywordCompletionItems(typedPrefix)...)
+	return result
 }
 
 // hasClause checks if the select statement has a specific clause
