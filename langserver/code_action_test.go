@@ -414,6 +414,16 @@ func TestHandler_lintCodeActions_IgnoreAroundMultiLineLiterals(t *testing.T) {
 			line: 1,
 			want: insertAt(1, 0, "-- bqls:ignore null-comparison\n"),
 		},
+		"directive above a CRLF line ends with CRLF": {
+			src:  "SELECT x\r\nFROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64)\r\nLIMIT 1",
+			line: 1,
+			want: insertAt(1, 0, "-- bqls:ignore null-comparison\r\n"),
+		},
+		"directive above the last line of a CRLF file ends with CRLF": {
+			src:  "SELECT x\r\nFROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64)",
+			line: 1,
+			want: insertAt(1, 0, "-- bqls:ignore null-comparison\r\n"),
+		},
 		"line starting inside a multi-line string gets a trailing directive": {
 			src:  "SELECT x, '''\nfoo''' AS s FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64)",
 			line: 1,

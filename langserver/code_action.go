@@ -140,7 +140,7 @@ func ignoreCodeAction(uri lsp.DocumentURI, conv helper.PositionConverter, lines 
 			indent = text[:len(text)-len(strings.TrimLeft(text, " \t"))]
 		}
 		pos := lsp.Position{Line: line}
-		edit = lsp.TextEdit{Range: lsp.Range{Start: pos, End: pos}, NewText: fmt.Sprintf("%s-- bqls:ignore %s\n", indent, rule)}
+		edit = lsp.TextEdit{Range: lsp.Range{Start: pos, End: pos}, NewText: fmt.Sprintf("%s-- bqls:ignore %s%s", indent, rule, lineEnding(lines, line))}
 	}
 	return lsp.CodeAction{
 		Title:       fmt.Sprintf("Ignore %s on this line", rule),
@@ -148,6 +148,20 @@ func ignoreCodeAction(uri lsp.DocumentURI, conv helper.PositionConverter, lines 
 		Diagnostics: []lsp.Diagnostic{diag},
 		Edit:        &lsp.WorkspaceEdit{Changes: map[string][]lsp.TextEdit{string(uri): {edit}}},
 	}, true
+}
+
+// lineEnding returns the ending of line, or of the line before it when line
+// is the last one and has none, so an inserted line keeps CRLF files uniform.
+func lineEnding(lines []string, line int) string {
+	for _, l := range []int{line, line - 1} {
+		if l >= 0 && l < len(lines)-1 {
+			if strings.HasSuffix(lines[l], "\r") {
+				return "\r\n"
+			}
+			return "\n"
+		}
+	}
+	return "\n"
 }
 
 // previousIgnoreLine skips a line that begins inside a string or comment,
