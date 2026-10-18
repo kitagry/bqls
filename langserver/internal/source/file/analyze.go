@@ -531,7 +531,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			case isUnrecognizedNameError:
 				pErr = addInformationToUnrecognizedNameError(fixedSrc, pErr)
 			case isNotExistInStructError:
-				pErr = addInformationToNotExistInStructError(fixedSrc, pErr)
+				pErr = addInformationToNotExistInStructError(fixedSrc, s, pErr)
 			case isNotFoundInsideError:
 				pErr = addInformationToNotFoundInsideTableError(fixedSrc, pErr)
 			case isTableNotFoundError:

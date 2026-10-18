@@ -1094,7 +1094,7 @@ func fixNotBoolClauseError(src string, parsedErr Error) (fixedSrc string, fixOff
 	}}
 }
 
-func addInformationToNotExistInStructError(src string, parsedErr Error) Error {
+func addInformationToNotExistInStructError(src string, node googlesql.ASTNode, parsedErr Error) Error {
 	ind := strings.Index(parsedErr.Msg, "Field name ")
 	if ind == -1 {
 		return parsedErr
@@ -1112,6 +1112,13 @@ func addInformationToNotExistInStructError(src string, parsedErr Error) Error {
 	parsedErr.TermLength = len(notExistColumn)
 
 	firstIndex := strings.LastIndexFunc(src[:errOffset], unicode.IsSpace) + 1
+	// A field access on a non-path expression, e.g. `STRUCT(1 AS a).b`, may contain
+	// whitespace, so the text after the last whitespace would be only part of it.
+	if dot, ok := SearchAstNode[*googlesql.ASTDotIdentifier](node, errOffset); ok {
+		if start := locStart(dot); start >= 0 && start < firstIndex {
+			firstIndex = start
+		}
+	}
 	parsedErr.IncompleteColumnName = src[firstIndex : errOffset+len(notExistColumn)]
 	return parsedErr
 }
