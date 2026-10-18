@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	googlesql "github.com/goccy/go-googlesql"
 	"github.com/google/go-cmp/cmp"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 )
@@ -419,6 +420,46 @@ func TestFixIncompletePipeOperator(t *testing.T) {
 			}
 			if diff := cmp.Diff(tt.wantFixOffsets, gotFixOffsets); diff != "" {
 				t.Errorf("fix offsets diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestNewLanguageOptions_PipeFeatures(t *testing.T) {
+	tests := map[string]struct {
+		feature googlesql.LanguageFeature
+		want    bool
+	}{
+		"pipes":                            {feature: googlesql.LanguageFeatureFeaturePipes, want: true},
+		"pipe WITH":                        {feature: googlesql.LanguageFeatureFeaturePipeWith, want: true},
+		"pipe named windows":               {feature: googlesql.LanguageFeatureFeaturePipeNamedWindows, want: true},
+		"pipe STATIC_DESCRIBE":             {feature: googlesql.LanguageFeatureFeaturePipeStaticDescribe, want: false},
+		"pipe ASSERT":                      {feature: googlesql.LanguageFeatureFeaturePipeAssert, want: false},
+		"pipe LOG":                         {feature: googlesql.LanguageFeatureFeaturePipeLog, want: false},
+		"pipe IF":                          {feature: googlesql.LanguageFeatureFeaturePipeIf, want: false},
+		"pipe FORK":                        {feature: googlesql.LanguageFeatureFeaturePipeFork, want: false},
+		"pipe TEE":                         {feature: googlesql.LanguageFeatureFeaturePipeTee, want: false},
+		"pipe EXPORT DATA":                 {feature: googlesql.LanguageFeatureFeaturePipeExportData, want: false},
+		"pipe CREATE TABLE":                {feature: googlesql.LanguageFeatureFeaturePipeCreateTable, want: false},
+		"pipe INSERT":                      {feature: googlesql.LanguageFeatureFeaturePipeInsert, want: false},
+		"pipe RECURSIVE UNION":             {feature: googlesql.LanguageFeatureFeaturePipeRecursiveUnion, want: false},
+		"pipe DESCRIBE":                    {feature: googlesql.LanguageFeatureFeaturePipeDescribe, want: false},
+		"pipe CALL with INPUT TABLE":       {feature: googlesql.LanguageFeatureFeaturePipeCallInputTable, want: false},
+		"pipe AGGREGATE with differential": {feature: googlesql.LanguageFeatureFeaturePipeAggregateWithDifferentialPrivacy, want: false},
+	}
+
+	langOpt, err := newLanguageOptions()
+	if err != nil {
+		t.Fatalf("newLanguageOptions: %v", err)
+	}
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			got, err := langOpt.LanguageFeatureEnabled(tt.feature)
+			if err != nil {
+				t.Fatalf("LanguageFeatureEnabled: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("LanguageFeatureEnabled(%v) = %v, want %v", tt.feature, got, tt.want)
 			}
 		})
 	}
