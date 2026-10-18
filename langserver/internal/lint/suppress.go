@@ -71,6 +71,14 @@ func LineStates(src string) []LineState {
 	return scan(src, func(comment) {})
 }
 
+// HasComment reports whether src contains a comment. Comment markers inside
+// string literals and quoted identifiers are not comments.
+func HasComment(src string) bool {
+	found := false
+	scan(src, func(comment) { found = true })
+	return found
+}
+
 type comment struct {
 	body      string
 	startLine int
