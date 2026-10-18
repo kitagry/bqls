@@ -2228,6 +2228,85 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 	}
 }
 
+func TestAnalyzer_ParseFileWithTablesCreatedInScript(t *testing.T) {
+	tests := map[string]struct {
+		file         string
+		expectedErrs []file.Error
+	}{
+		"temp table created by CTAS": {
+			file:         "CREATE TEMP TABLE tt AS SELECT 1 AS a;\nSELECT a FROM tt;",
+			expectedErrs: []file.Error{},
+		},
+		"temp table with column definitions": {
+			file:         "CREATE TEMP TABLE tt (a INT64, b STRING);\nSELECT a, b FROM tt;",
+			expectedErrs: []file.Error{},
+		},
+		"temp table keeps column types": {
+			file: "CREATE TEMP TABLE tt AS SELECT 1 AS a;\nSELECT a.x FROM tt;",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Cannot access field x on a value with type INT64",
+					Position: lsp.Position{Line: 1, Character: 9},
+				},
+			},
+		},
+		"temp table is not visible before it is created": {
+			file: "SELECT a FROM tt;\nCREATE TEMP TABLE tt AS SELECT 1 AS a;",
+			expectedErrs: []file.Error{
+				{
+					Msg:                  "Table not found: tt",
+					Position:             lsp.Position{Line: 0, Character: 14},
+					TermLength:           2,
+					IncompleteColumnName: "tt",
+				},
+			},
+		},
+		"INSERT into temp table": {
+			file:         "CREATE TEMP TABLE tt (a INT64);\nINSERT INTO tt (a) VALUES (1);",
+			expectedErrs: []file.Error{},
+		},
+		"temp table created in a block is visible after it": {
+			file:         "BEGIN\n  CREATE TEMP TABLE tt AS SELECT 1 AS a;\nEND;\nSELECT a FROM tt;",
+			expectedErrs: []file.Error{},
+		},
+		"recreated temp table replaces its columns": {
+			file:         "CREATE TEMP TABLE tt AS SELECT 1 AS a;\nCREATE OR REPLACE TEMP TABLE tt AS SELECT 'x' AS b;\nSELECT b FROM tt;",
+			expectedErrs: []file.Error{},
+		},
+		"qualified table created in script": {
+			file:         "CREATE TABLE `p.d.created` AS SELECT 1 AS a;\nSELECT a FROM `p.d.created`;\nSELECT a FROM p.d.created;\nSELECT a FROM d.created;",
+			expectedErrs: []file.Error{},
+		},
+		"replaced table has the new columns": {
+			file:         "CREATE OR REPLACE TABLE p.d.existing AS SELECT 'x' AS name;\nSELECT name FROM p.d.existing;",
+			expectedErrs: []file.Error{},
+		},
+		"CREATE TABLE IF NOT EXISTS keeps an existing table": {
+			file:         "CREATE TABLE IF NOT EXISTS p.d.existing (name STRING);\nSELECT id FROM p.d.existing;",
+			expectedErrs: []file.Error{},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "p", "d", "existing").Return(&bq.TableMetadata{
+				Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}},
+			}, nil).AnyTimes()
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, &googleapi.Error{Code: 404, Message: "Not found"}).AnyTimes()
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
+			if diff := cmp.Diff(tt.expectedErrs, got.Errors, cmpopts.IgnoreUnexported()); diff != "" {
+				t.Errorf("ParseFile result diff (-expect, +got)\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestAnalyzer_ParseFile_StatementResults(t *testing.T) {
 	type statementResult struct {
 		hasOutput bool

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -26,16 +27,26 @@ type Catalog struct {
 	// a name that differs only in case traps.
 	tableMetaMap map[string]*bq.TableMetadata
 	tables       map[string]*googlesql.SimpleTable // key: "project.dataset.table"
-	// registered holds the identifier splits a table is already registered
-	// under, because registering one twice traps in SimpleCatalog, which
-	// matches names case-insensitively.
-	registered map[string]bool // key: splitKey
+	names        *tableNames
 	// loadErrs keeps why a table could not be registered, because the analyzer
 	// only reports "Table not found", which hides auth or network problems.
 	loadErrs map[string]error // key: lowercased "project.dataset.table"
 	mu       *sync.Mutex
-	// subCatalogs tracks nested sub-catalogs for non-backtick path resolution.
-	subCatalogs map[string]*googlesql.SimpleCatalog // key: splitKey of the catalog path
+	// scriptTables holds the tables created by the statements analyzed so far,
+	// in creation order. They are registered in their own catalog layered over
+	// the base catalog, rebuilt on every creation, because CREATE OR REPLACE
+	// replaces a table and SimpleCatalog cannot remove one.
+	scriptTables []scriptTable
+	// scriptNames keeps the layer's catalogs referenced from Go for as long as
+	// scriptNode uses them.
+	scriptNames *tableNames
+	scriptNode  googlesql.CatalogNode
+}
+
+type scriptTable struct {
+	key   string
+	paths [][]string
+	table *googlesql.SimpleTable
 }
 
 func NewCatalog(bqClient bigquery.Client) *Catalog {
@@ -58,10 +69,9 @@ func NewCatalog(bqClient bigquery.Client) *Catalog {
 		bqClient:     bqClient,
 		tableMetaMap: make(map[string]*bq.TableMetadata),
 		tables:       make(map[string]*googlesql.SimpleTable),
-		registered:   make(map[string]bool),
+		names:        newTableNames(cat),
 		loadErrs:     make(map[string]error),
 		mu:           &sync.Mutex{},
-		subCatalogs:  make(map[string]*googlesql.SimpleCatalog),
 	}
 }
 
@@ -89,16 +99,26 @@ func (c *Catalog) Clone() *Catalog {
 		bqClient:     c.bqClient,
 		tableMetaMap: make(map[string]*bq.TableMetadata),
 		tables:       make(map[string]*googlesql.SimpleTable),
-		registered:   make(map[string]bool),
+		names:        newTableNames(cat),
 		loadErrs:     make(map[string]error),
 		mu:           &sync.Mutex{},
-		subCatalogs:  make(map[string]*googlesql.SimpleCatalog),
 	}
 }
 
 // CatalogNode returns the underlying SimpleCatalog which implements CatalogNode.
 func (c *Catalog) CatalogNode() *googlesql.SimpleCatalog {
 	return c.catalog
+}
+
+// node returns the catalog that statements are analyzed against: the tables
+// created by the script so far over the base catalog.
+func (c *Catalog) node() googlesql.CatalogNode {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.scriptNode == nil {
+		return c.catalog
+	}
+	return c.scriptNode
 }
 
 // TypeFactory returns the TypeFactory for creating types.
@@ -132,12 +152,12 @@ func (c *Catalog) EnsureTable(path []string) error {
 	}
 	// Registered even when the table is already loaded, because it may have
 	// been loaded through another name, e.g. its 3-part name.
-	if err := c.registerAllSplits(ref.path(), table); err != nil {
+	if err := c.names.registerAllSplits(ref.path(), table); err != nil {
 		c.loadErrs[key] = err
 		return err
 	}
 	if ref.defaulted && ref.project != "" {
-		if err := c.registerAllSplits(ref.rest, table); err != nil {
+		if err := c.names.registerAllSplits(ref.rest, table); err != nil {
 			c.loadErrs[key] = err
 			return err
 		}
@@ -164,12 +184,102 @@ func (c *Catalog) TableLoadError(name string) error {
 	return err
 }
 
+// addScriptTable makes a table created by a statement of the script
+// resolvable by the later statements, replacing a table of the same name.
+func (c *Catalog) addScriptTable(namePath []string, columnNames []string, columnTypes []googlesql.Googlesql_TypeNode) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	paths := c.scriptTablePaths(namePath)
+	tableName := strings.Join(paths[0], ".")
+	table, err := googlesql.NewSimpleTable(tableName, 0)
+	if err != nil {
+		return fmt.Errorf("failed to create table: %w", err)
+	}
+	for i, name := range columnNames {
+		if err := addColumn(table, tableName, name, columnTypes[i], false, true); err != nil {
+			return err
+		}
+	}
+
+	key := strings.ToLower(tableName)
+	tables := slices.DeleteFunc(slices.Clone(c.scriptTables), func(t scriptTable) bool { return t.key == key })
+	tables = append(tables, scriptTable{key: key, paths: paths, table: table})
+
+	root, err := googlesql.NewSimpleCatalog("", c.typeFactory)
+	if err != nil {
+		return err
+	}
+	names := newTableNames(root)
+	for _, t := range tables {
+		for _, path := range t.paths {
+			if err := names.registerAllSplits(path, t.table); err != nil {
+				return err
+			}
+		}
+	}
+	node, err := googlesql.NewMultiCatalogCreate("", []googlesql.CatalogNode{root, c.catalog})
+	if err != nil {
+		return err
+	}
+	c.scriptTables, c.scriptNames, c.scriptNode = tables, names, node
+	return nil
+}
+
+// hasTable reports whether the table is loaded from BigQuery or created by the
+// script.
+func (c *Catalog) hasTable(namePath []string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	key := strings.ToLower(strings.Join(c.scriptTablePaths(namePath)[0], "."))
+	if _, ok := c.tables[key]; ok {
+		return true
+	}
+	return slices.ContainsFunc(c.scriptTables, func(t scriptTable) bool { return t.key == key })
+}
+
+// scriptTablePaths returns the paths a created table resolves by, the full
+// path first. A temporary table is named by a single identifier.
+func (c *Catalog) scriptTablePaths(namePath []string) [][]string {
+	ref, err := c.parseTablePath(namePath)
+	if err != nil || ref.informationSchema {
+		return [][]string{namePath}
+	}
+	paths := [][]string{ref.path()}
+	// Also checked when the project is written, because a table created as
+	// project.dataset.table is then referred to as dataset.table.
+	if ref.project != "" && ref.project == c.bqClient.GetDefaultProject() {
+		paths = append(paths, ref.rest)
+	}
+	return paths
+}
+
+// tableNames registers tables in a catalog under their paths.
+type tableNames struct {
+	root *googlesql.SimpleCatalog
+	// registered holds the identifier splits a table is already registered
+	// under, because registering one twice traps in SimpleCatalog, which
+	// matches names case-insensitively.
+	registered map[string]bool // key: splitKey
+	// subCatalogs tracks nested sub-catalogs for non-backtick path resolution.
+	subCatalogs map[string]*googlesql.SimpleCatalog // key: splitKey of the catalog path
+}
+
+func newTableNames(root *googlesql.SimpleCatalog) *tableNames {
+	return &tableNames{
+		root:        root,
+		registered:  make(map[string]bool),
+		subCatalogs: make(map[string]*googlesql.SimpleCatalog),
+	}
+}
+
 // registerAllSplits makes the table resolvable however its path is quoted,
 // e.g. p.d.t, `p.d.t`, `p.d`.t and p.`d.t`, because the analyzer looks a
 // table up by the identifiers as written. The same table object is registered
 // so that its name stays the full path, which hover, completion and lint rely
 // on.
-func (c *Catalog) registerAllSplits(path []string, table *googlesql.SimpleTable) error {
+func (n *tableNames) registerAllSplits(path []string, table *googlesql.SimpleTable) error {
 	for mask := 0; mask < 1<<(len(path)-1); mask++ {
 		// Bit i joins path[i] and path[i+1] into one identifier.
 		groups := []string{path[0]}
@@ -181,12 +291,12 @@ func (c *Catalog) registerAllSplits(path []string, table *googlesql.SimpleTable)
 			}
 		}
 		key := splitKey(groups)
-		if c.registered[key] {
+		if n.registered[key] {
 			continue
 		}
-		parent := c.catalog
+		parent := n.root
 		for i, name := range groups[:len(groups)-1] {
-			sub, err := c.getOrCreateSubCatalog(parent, groups[:i+1], name)
+			sub, err := n.getOrCreateSubCatalog(parent, groups[:i+1], name)
 			if err != nil {
 				return fmt.Errorf("failed to create sub-catalog(%s): %w", name, err)
 			}
@@ -196,7 +306,7 @@ func (c *Catalog) registerAllSplits(path []string, table *googlesql.SimpleTable)
 		if err := parent.AddTable2(name, table); err != nil {
 			return fmt.Errorf("failed to add table as %s: %w", name, err)
 		}
-		c.registered[key] = true
+		n.registered[key] = true
 	}
 	return nil
 }
@@ -289,16 +399,16 @@ func addColumn(table *googlesql.SimpleTable, tableName, name string, typ googles
 // which is reached by catalogPath. A project and a default-project dataset of
 // the same name share one, because the root cannot hold two sub-catalogs with
 // one name.
-func (c *Catalog) getOrCreateSubCatalog(parent *googlesql.SimpleCatalog, catalogPath []string, name string) (*googlesql.SimpleCatalog, error) {
+func (n *tableNames) getOrCreateSubCatalog(parent *googlesql.SimpleCatalog, catalogPath []string, name string) (*googlesql.SimpleCatalog, error) {
 	key := splitKey(catalogPath)
-	if sub, ok := c.subCatalogs[key]; ok {
+	if sub, ok := n.subCatalogs[key]; ok {
 		return sub, nil
 	}
 	sub, err := parent.MakeOwnedSimpleCatalog(name)
 	if err != nil {
 		return nil, err
 	}
-	c.subCatalogs[key] = sub
+	n.subCatalogs[key] = sub
 	return sub, nil
 }
 

@@ -377,6 +377,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				output, err = a.AnalyzeStatement(fixedSrc, s, catalog)
 			}
 			if err == nil {
+				if output != nil {
+					a.registerCreatedTable(output, catalog)
+				}
 				statements = append(statements, StatementResult{Stmt: s, Output: output})
 				continue
 			}
@@ -732,7 +735,7 @@ func (a *Analyzer) analyzeExpressionTypeName(sql string, catalog *Catalog) (stri
 	if err != nil {
 		return "", err
 	}
-	out, err := googlesql.AnalyzeExpression(sql, opts, catalog.CatalogNode(), catalog.TypeFactory())
+	out, err := googlesql.AnalyzeExpression(sql, opts, catalog.node(), catalog.TypeFactory())
 	if err != nil {
 		return "", err
 	}
