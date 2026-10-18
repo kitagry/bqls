@@ -38,10 +38,11 @@ func Parse(sql string) *Node {
 type tokKind int
 
 const (
-	tokWord   tokKind = iota
-	tokLParen         // (
-	tokRParen         // )
-	tokComma          // ,
+	tokWord      tokKind = iota
+	tokLParen            // (
+	tokRParen            // )
+	tokComma             // ,
+	tokSemicolon         // ;
 	tokEOF
 )
 
@@ -109,9 +110,12 @@ func tokenize(sql string) []token {
 		case ',':
 			tokens = append(tokens, token{kind: tokComma, text: ",", start: uint(i), end: uint(i + 1)})
 			i++
+		case ';':
+			tokens = append(tokens, token{kind: tokSemicolon, text: ";", start: uint(i), end: uint(i + 1)})
+			i++
 		default:
 			start := i
-			for i < n && !isSpace(sql[i]) && sql[i] != '(' && sql[i] != ')' && sql[i] != ',' && sql[i] != '\'' && sql[i] != '"' && sql[i] != '`' {
+			for i < n && !isSpace(sql[i]) && sql[i] != '(' && sql[i] != ')' && sql[i] != ',' && sql[i] != ';' && sql[i] != '\'' && sql[i] != '"' && sql[i] != '`' {
 				i++
 			}
 			if i > start {
@@ -288,7 +292,8 @@ func clauseKeyword(t, next token) (string, int) {
 	return "", 0
 }
 
-// parseSelectStatement parses from the current SELECT keyword until EOF or an unmatched ')'.
+// parseSelectStatement parses from the current SELECT keyword until EOF, ';', an unmatched ')',
+// or an END that closes a script block (e.g. END IF, END FOR).
 func (p *parser) parseSelectStatement() *Node {
 	startTok := p.peek()
 	if startTok.kind == tokEOF {
@@ -298,6 +303,7 @@ func (p *parser) parseSelectStatement() *Node {
 	stmt := &Node{kind: "select_statement", startByte: startTok.start}
 	var currentClause *Node
 	depth := 0
+	caseDepth := 0
 
 	flushClause := func(end uint) {
 		if currentClause != nil {
@@ -315,6 +321,20 @@ func (p *parser) parseSelectStatement() *Node {
 		// unmatched ')' signals end of this select (CTE body or subquery)
 		if t.kind == tokRParen && depth == 0 {
 			break
+		}
+		if t.kind == tokSemicolon {
+			break
+		}
+		if depth == 0 && t.kind == tokWord {
+			word := strings.ToUpper(t.text)
+			if word == "END" && caseDepth == 0 {
+				break
+			}
+			if word == "CASE" {
+				caseDepth++
+			} else if word == "END" {
+				caseDepth--
+			}
 		}
 		if t.kind == tokLParen {
 			depth++

@@ -3,6 +3,7 @@ package bqparser_test
 import (
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/kitagry/bqls/langserver/internal/source/bqparser"
 )
 
@@ -144,6 +145,50 @@ func TestParse_Subquery_DoesNotLeakClauses(t *testing.T) {
 	}
 	if whereCount != 1 {
 		t.Errorf("expected 1 where_clause in outer statement, got %d", whereCount)
+	}
+}
+
+// TestParse_StatementEnd verifies that a select_statement ends at ';' or at the
+// END of a script block, so that statements in a script are not merged.
+func TestParse_StatementEnd(t *testing.T) {
+	tests := map[string]struct {
+		sql  string
+		want []string
+	}{
+		"semicolon": {
+			sql:  "SELECT STRUCT(1 AS a).;",
+			want: []string{"SELECT STRUCT(1 AS a)."},
+		},
+		"multiple statements": {
+			sql:  "SELECT 1; SELECT 2 FROM t;",
+			want: []string{"SELECT 1", "SELECT 2 FROM t"},
+		},
+		"IF block": {
+			sql:  "IF true THEN\n  SELECT 1;\nEND IF;",
+			want: []string{"SELECT 1"},
+		},
+		"END of FOR block without semicolon": {
+			sql:  "FOR r IN (SELECT 1 AS a) DO\n  SELECT r.a\nEND FOR;",
+			want: []string{"SELECT 1 AS a", "SELECT r.a"},
+		},
+		"CASE END is not a block end": {
+			sql:  "SELECT CASE WHEN a THEN 1 ELSE 2 END AS b FROM t",
+			want: []string{"SELECT CASE WHEN a THEN 1 ELSE 2 END AS b FROM t"},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			root := bqparser.Parse(tt.sql)
+			var got []string
+			for i := uint(0); i < root.NamedChildCount(); i++ {
+				stmt := root.NamedChild(i)
+				got = append(got, tt.sql[stmt.StartByte():stmt.EndByte()])
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("select_statement ranges mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 
