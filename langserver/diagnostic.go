@@ -142,7 +142,9 @@ func (h *Handler) showMessage(ctx context.Context, level lsp.MessageType, messag
 func (h *Handler) diagnose(ctx context.Context, uri lsp.DocumentURI) (map[lsp.DocumentURI][]lsp.Diagnostic, error) {
 	result := make(map[lsp.DocumentURI][]lsp.Diagnostic)
 
-	diags, ok := h.project.Diagnose(ctx, uri, h.lintConfig())
+	p, release := h.acquireProject()
+	defer release()
+	diags, ok := p.Diagnose(ctx, uri, h.lintConfig())
 	if !ok {
 		return result, nil
 	}
@@ -172,7 +174,9 @@ func lintDiagnosticsToLsp(conv helper.PositionConverter, diags []lint.Diagnostic
 }
 
 func (h *Handler) dryrun(ctx context.Context, uri lsp.DocumentURI) (errs map[lsp.DocumentURI][]lsp.Diagnostic, totalProcessed string, err error) {
-	js, err := h.project.Dryrun(ctx, uri)
+	p, release := h.acquireProject()
+	js, err := p.Dryrun(ctx, uri)
+	release()
 	if err != nil {
 		return nil, "", err
 	}

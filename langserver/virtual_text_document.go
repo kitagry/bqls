@@ -53,12 +53,12 @@ type virtualTextDocumentDetails struct {
 	fetchPreview func(context.Context) (*bigquery.RowIterator, error)
 }
 
-func (h *Handler) resolveVirtualTextDocumentDetails(ctx context.Context, workDoneToken lsp.ProgressToken, info lsp.VirtualTextDocumentInfo) (virtualTextDocumentDetails, error) {
+func (h *Handler) resolveVirtualTextDocumentDetails(ctx context.Context, p *source.Project, workDoneToken lsp.ProgressToken, info lsp.VirtualTextDocumentInfo) (virtualTextDocumentDetails, error) {
 	if info.TableID != "" {
 		h.workDoneProgressReport(ctx, workDoneToken, lsp.WorkDoneProgressReport{
 			Message: "Fetching table info...",
 		})
-		contents, schema, fetchPreview, err := h.project.GetTableDetails(ctx, info.ProjectID, info.DatasetID, info.TableID)
+		contents, schema, fetchPreview, err := p.GetTableDetails(ctx, info.ProjectID, info.DatasetID, info.TableID)
 		if err != nil {
 			return virtualTextDocumentDetails{}, err
 		}
@@ -69,7 +69,7 @@ func (h *Handler) resolveVirtualTextDocumentDetails(ctx context.Context, workDon
 		h.workDoneProgressReport(ctx, workDoneToken, lsp.WorkDoneProgressReport{
 			Message: "Fetching job info...",
 		})
-		contents, fetchPreview, err := h.project.GetJobDetails(ctx, info.ProjectID, info.JobID, info.Location)
+		contents, fetchPreview, err := p.GetJobDetails(ctx, info.ProjectID, info.JobID, info.Location)
 		if err != nil {
 			return virtualTextDocumentDetails{}, err
 		}
@@ -96,7 +96,9 @@ func (h *Handler) resolveVirtualTextDocumentPreview(ctx context.Context, details
 }
 
 func (h *Handler) resolveVirtualTextDocument(ctx context.Context, workDoneToken lsp.ProgressToken, info lsp.VirtualTextDocumentInfo) (lsp.VirtualTextDocument, error) {
-	details, err := h.resolveVirtualTextDocumentDetails(ctx, workDoneToken, info)
+	p, release := h.acquireProject()
+	defer release()
+	details, err := h.resolveVirtualTextDocumentDetails(ctx, p, workDoneToken, info)
 	if err != nil {
 		return lsp.VirtualTextDocument{}, err
 	}

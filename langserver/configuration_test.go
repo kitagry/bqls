@@ -248,7 +248,10 @@ func TestHandler_handleWorkspaceDidChangeConfiguration_PartialLintOnlyKeepsProje
 func TestHandler_handleWorkspaceDidChangeConfiguration_RebuildKeepsOpenDocuments(t *testing.T) {
 	const uri lsp.DocumentURI = "file:///a.sql"
 	const src = "SELECT 1"
-	h := newTestHandlerWithFile(t, uri, src)
+	h, _ := newRebuildableHandler(t)
+	if err := h.project.UpdateFile(uri, src, 1); err != nil {
+		t.Fatal(err)
+	}
 	h.diagnosticRequest = make(chan lsp.DocumentURI, 3)
 	h.initializeParams.InitializationOptions = InitializeOption{ProjectID: "p", Location: "US"}
 	project := h.project
@@ -288,4 +291,91 @@ func TestHandler_handleWorkspaceDidChangeConfiguration_RebuildKeepsOpenDocuments
 	case <-time.After(5 * time.Second):
 		t.Fatal("diagnostics were not re-requested for the open document")
 	}
+}
+
+// newRebuildableHandler returns a handler whose current project uses a mock
+// client that signals on the returned channel when it is closed.
+func newRebuildableHandler(t *testing.T) (*Handler, <-chan struct{}) {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	oldClient := mock_bigquery.NewMockClient(ctrl)
+	closed := make(chan struct{})
+	oldClient.EXPECT().Close().DoAndReturn(func() error {
+		close(closed)
+		return nil
+	})
+	h := newHandler(logrus.New(), "test")
+	h.project = source.NewProjectWithBQClient("/", oldClient, logrus.New())
+	h.bqClient = oldClient
+	h.newBQClient = func(context.Context, string, string) (bigquery.Client, error) {
+		return mock_bigquery.NewMockClient(ctrl), nil
+	}
+	// The previous project is closed asynchronously, so wait for it before
+	// the mock controller verifies its expectations.
+	t.Cleanup(func() {
+		select {
+		case <-closed:
+		case <-time.After(5 * time.Second):
+		}
+	})
+	return h, closed
+}
+
+func TestHandler_setupByInitializeParams_ClosesPreviousProject(t *testing.T) {
+	h, closed := newRebuildableHandler(t)
+
+	if err := h.setupByInitializeParams(); err != nil {
+		t.Fatalf("setupByInitializeParams() error = %v", err)
+	}
+
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("previous project was not closed after the rebuild")
+	}
+}
+
+func TestHandler_setupByInitializeParams_ClosesPreviousProjectAfterInFlightUse(t *testing.T) {
+	h, closed := newRebuildableHandler(t)
+	_, release := h.acquireProject()
+
+	if err := h.setupByInitializeParams(); err != nil {
+		t.Fatalf("setupByInitializeParams() error = %v", err)
+	}
+
+	select {
+	case <-closed:
+		t.Fatal("previous project was closed while still in use")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	release()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("previous project was not closed after its last user released it")
+	}
+}
+
+func TestHandler_diagnose_ConcurrentWithRebuild(t *testing.T) {
+	const uri lsp.DocumentURI = "file:///a.sql"
+	h, _ := newRebuildableHandler(t)
+	if err := h.project.UpdateFile(uri, "SELECT 1", 1); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 100 {
+			if _, err := h.diagnose(t.Context(), uri); err != nil {
+				t.Errorf("diagnose() error = %v", err)
+				return
+			}
+		}
+	}()
+	if err := h.setupByInitializeParams(); err != nil {
+		t.Fatalf("setupByInitializeParams() error = %v", err)
+	}
+	<-done
 }
