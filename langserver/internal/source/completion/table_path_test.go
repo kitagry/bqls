@@ -147,6 +147,122 @@ func TestProject_CompleteTablePath(t *testing.T) {
 				},
 			},
 		},
+		"list table of default project after unquoted dataset": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT long FROM dataset.|",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+
+				bqClient.EXPECT().ListDatasets(gomock.Any(), "dataset").Return([]*bq.Dataset{}, nil)
+				bqClient.EXPECT().ListTables(gomock.Any(), "project", "dataset").Return([]*bq.Table{
+					{
+						ProjectID: "project",
+						DatasetID: "dataset",
+						TableID:   "table",
+					},
+				}, nil)
+				bqClient.EXPECT().GetDefaultProject().Return("project").MinTimes(0)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
+				return bqClient
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKModule,
+					NewText: "table",
+					Detail:  "TABLE",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "project.dataset.table",
+					},
+				},
+			},
+		},
+		"list table of default project after unquoted dataset with incomplete table": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT long FROM dataset.t|",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+
+				bqClient.EXPECT().ListDatasets(gomock.Any(), "dataset").Return([]*bq.Dataset{}, nil)
+				bqClient.EXPECT().ListTables(gomock.Any(), "project", "dataset").Return([]*bq.Table{
+					{
+						ProjectID: "project",
+						DatasetID: "dataset",
+						TableID:   "table",
+					},
+					{
+						ProjectID: "project",
+						DatasetID: "dataset",
+						TableID:   "other",
+					},
+				}, nil)
+				bqClient.EXPECT().GetDefaultProject().Return("project").MinTimes(0)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
+				return bqClient
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKModule,
+					NewText: "table",
+					Detail:  "TABLE",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "project.dataset.table",
+					},
+					TypedPrefix: "t",
+				},
+			},
+		},
+		"list table of default project after unquoted dataset in JOIN": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT * FROM `project.dataset.table` JOIN dataset.| USING (id)",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+
+				bqClient.EXPECT().ListDatasets(gomock.Any(), "dataset").Return([]*bq.Dataset{}, nil)
+				bqClient.EXPECT().ListTables(gomock.Any(), "project", "dataset").Return([]*bq.Table{
+					{
+						ProjectID: "project",
+						DatasetID: "dataset",
+						TableID:   "table",
+					},
+				}, nil)
+				bqClient.EXPECT().GetDefaultProject().Return("project").MinTimes(0)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
+				return bqClient
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKModule,
+					NewText: "table",
+					Detail:  "TABLE",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "project.dataset.table",
+					},
+				},
+			},
+		},
+		"do not complete table path after table alias in select list": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT t.| FROM `project.dataset.table` AS t",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+
+				bqClient.EXPECT().GetDefaultProject().Return("project").MinTimes(0)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
+				return bqClient
+			},
+			expectCompletionItems: nil,
+		},
 		"complete projectID": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM `p|`",
