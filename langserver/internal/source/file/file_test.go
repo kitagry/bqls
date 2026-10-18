@@ -955,6 +955,30 @@ func TestProject_ParseFile(t *testing.T) {
 				},
 			},
 		},
+		"pipe operator after WITH clause": {
+			file: "WITH data AS (SELECT 1 AS x) |> WHERE x = 1",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Syntax error: A pipe operator cannot follow the WITH clause before the main query; The main query usually starts with SELECT or FROM here",
+					Position: lsp.Position{Line: 0, Character: 29},
+				},
+			},
+		},
+		"unknown column in pipe operator after WITH clause": {
+			file: "WITH data AS (SELECT 1 AS x) |> WHERE y = 1",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Syntax error: A pipe operator cannot follow the WITH clause before the main query; The main query usually starts with SELECT or FROM here",
+					Position: lsp.Position{Line: 0, Character: 29},
+				},
+				{
+					Msg:                  "Unrecognized name: y",
+					Position:             lsp.Position{Line: 0, Character: 38},
+					TermLength:           1,
+					IncompleteColumnName: "y",
+				},
+			},
+		},
 		"pipe AGGREGATE without aggregations": {
 			file: "FROM `project.dataset.table` |> AGGREGATE ",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{

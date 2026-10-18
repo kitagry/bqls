@@ -471,6 +471,62 @@ func TestFixIncompletePipeOperator(t *testing.T) {
 	}
 }
 
+func TestFixPipeOperatorAfterWithClause(t *testing.T) {
+	tests := map[string]struct {
+		src            string
+		errPosition    lsp.Position
+		wantSrc        string
+		wantFixOffsets []FixOffset
+	}{
+		"pipe operator after WITH clause": {
+			src:            "WITH a AS (SELECT 1) |> SELECT ",
+			errPosition:    lsp.Position{Line: 0, Character: 21},
+			wantSrc:        "WITH a AS (SELECT 1) FROM a |> SELECT ",
+			wantFixOffsets: []FixOffset{{Offset: 21, Length: 7, edits: []sourceEdit{{start: 21, newLen: 7}}}},
+		},
+		"last CTE is read": {
+			src:            "WITH a AS (SELECT 1), b AS (SELECT (1) AS x) |> WHERE x = 1",
+			errPosition:    lsp.Position{Line: 0, Character: 45},
+			wantSrc:        "WITH a AS (SELECT 1), b AS (SELECT (1) AS x) FROM b |> WHERE x = 1",
+			wantFixOffsets: []FixOffset{{Offset: 45, Length: 7, edits: []sourceEdit{{start: 45, newLen: 7}}}},
+		},
+		"quoted CTE name with parenthesis in a string and a comment": {
+			src:            "WITH `a b` AS (SELECT ')' AS x) -- )\n|> SELECT x",
+			errPosition:    lsp.Position{Line: 1, Character: 0},
+			wantSrc:        "WITH `a b` AS (SELECT ')' AS x) -- )\nFROM `a b` |> SELECT x",
+			wantFixOffsets: []FixOffset{{Offset: 37, Length: 11, edits: []sourceEdit{{start: 37, newLen: 11}}}},
+		},
+		"WITH clause in a subquery": {
+			src:            "SELECT * FROM (WITH a AS (SELECT 1) |> SELECT )",
+			errPosition:    lsp.Position{Line: 0, Character: 36},
+			wantSrc:        "SELECT * FROM (WITH a AS (SELECT 1) FROM a |> SELECT )",
+			wantFixOffsets: []FixOffset{{Offset: 36, Length: 7, edits: []sourceEdit{{start: 36, newLen: 7}}}},
+		},
+		"error not at a pipe operator": {
+			src:         "WITH a AS (SELECT 1) |> SELECT ",
+			errPosition: lsp.Position{Line: 0, Character: 0},
+			wantSrc:     "WITH a AS (SELECT 1) |> SELECT ",
+		},
+		"no CTE before the pipe operator": {
+			src:         "WITH |> SELECT ",
+			errPosition: lsp.Position{Line: 0, Character: 5},
+			wantSrc:     "WITH |> SELECT ",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			gotSrc, gotFixOffsets := fixPipeOperatorAfterWithClause(tt.src, Error{Position: tt.errPosition})
+			if gotSrc != tt.wantSrc {
+				t.Errorf("fixed source = %q, want %q", gotSrc, tt.wantSrc)
+			}
+			if diff := cmp.Diff(tt.wantFixOffsets, gotFixOffsets, cmp.AllowUnexported(FixOffset{}, sourceEdit{})); diff != "" {
+				t.Errorf("fix offsets diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestNewLanguageOptions_PipeFeatures(t *testing.T) {
 	tests := map[string]struct {
 		feature googlesql.LanguageFeature

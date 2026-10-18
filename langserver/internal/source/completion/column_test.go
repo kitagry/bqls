@@ -142,6 +142,62 @@ func TestProject_CompleteColumns(t *testing.T) {
 				},
 			},
 		},
+		"Select columns in pipe SELECT directly after WITH clause": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "WITH data AS (SELECT * FROM `project.dataset.table`) |> SELECT |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INT64",
+					},
+				},
+				{
+					Kind:    lsp.CIKModule,
+					NewText: "data",
+					Detail:  "CTE",
+				},
+			},
+		},
+		"Select columns of the last CTE in pipe WHERE directly after WITH clause": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "WITH a AS (SELECT 1 AS x), data AS (SELECT * FROM `project.dataset.table`) |> WHERE |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INT64",
+					},
+				},
+				{
+					Kind:    lsp.CIKModule,
+					NewText: "data",
+					Detail:  "CTE",
+				},
+			},
+		},
 		"Select columns in pipe SELECT": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "FROM `project.dataset.table` |> SELECT |",
