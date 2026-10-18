@@ -28,7 +28,7 @@ func (a *Analyzer) scopeCatalog(rawText string, stmt googlesql.ASTNode, catalog 
 	// Outer scopes come first so that an inner loop's query can refer to outer
 	// names, and an inner name shadows an outer one of the same name because
 	// MultiCatalog resolves names from the front.
-	var current googlesql.CatalogNode = catalog.CatalogNode()
+	current := catalog.node()
 	for i := len(scopes) - 1; i >= 0; i-- {
 		var names []string
 		var types []googlesql.Googlesql_TypeNode

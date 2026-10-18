@@ -28,6 +28,8 @@ type cache struct {
 	db                     *database
 	tableMetadataCacheLock sync.Mutex
 	tableMetadataCache     map[string]*bigquery.TableMetadata
+	routineMetadataLock    sync.Mutex
+	routineMetadataCache   map[string]*bigquery.RoutineMetadata
 	dryRunSchemaCacheLock  sync.Mutex
 	dryRunSchemaCache      map[string]bigquery.Schema
 
@@ -52,6 +54,7 @@ func newCache(bqClient Client) (*cache, error) {
 		db:                     db,
 		tableMetadataCacheLock: sync.Mutex{},
 		tableMetadataCache:     make(map[string]*bigquery.TableMetadata),
+		routineMetadataCache:   make(map[string]*bigquery.RoutineMetadata),
 		dryRunSchemaCache:      make(map[string]bigquery.Schema),
 		onceListProjects:       &sync.Once{},
 		onceListDatasets:       make(map[string]*sync.Once),
@@ -206,6 +209,26 @@ func (c *cache) GetTableMetadata(ctx context.Context, projectID, datasetID, tabl
 
 	if result != nil {
 		c.tableMetadataCache[cacheKey] = result
+	}
+	return result, nil
+}
+
+func (c *cache) GetRoutineMetadata(ctx context.Context, projectID, datasetID, routineID string) (*bigquery.RoutineMetadata, error) {
+	cacheKey := fmt.Sprintf("%s:%s:%s", projectID, datasetID, routineID)
+	c.routineMetadataLock.Lock()
+	defer c.routineMetadataLock.Unlock()
+	cache, ok := c.routineMetadataCache[cacheKey]
+	if ok {
+		return cache, nil
+	}
+
+	result, err := c.Client.GetRoutineMetadata(ctx, projectID, datasetID, routineID)
+	if err != nil {
+		return nil, err
+	}
+
+	if result != nil {
+		c.routineMetadataCache[cacheKey] = result
 	}
 	return result, nil
 }

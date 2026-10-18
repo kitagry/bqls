@@ -315,6 +315,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			// appears in the "Table not found" diagnostic.
 			a.logger.Debugf("failed to load tables: %v", err)
 		}
+		if err := catalog.PreloadProceduresFromAST(node); err != nil {
+			a.logger.Debugf("failed to load procedures: %v", err)
+		}
 
 		stmts := collectStatements(node)
 		declarationMap := make(map[string]string)
@@ -377,6 +380,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				output, err = a.AnalyzeStatement(fixedSrc, s, catalog)
 			}
 			if err == nil {
+				if output != nil {
+					a.registerCreatedObject(output, catalog)
+				}
 				statements = append(statements, StatementResult{Stmt: s, Output: output})
 				continue
 			}
@@ -388,6 +394,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			isNotExistInStructError := strings.Contains(pErr.Msg, "does not exist in STRUCT")
 			isNotFoundInsideError := strings.Contains(pErr.Msg, "not found inside")
 			isTableNotFoundError := strings.Contains(pErr.Msg, "Table not found: ")
+			isProcedureNotFoundError := strings.Contains(pErr.Msg, "Procedure not found: ")
 			isEmptyPipeAggregateError := strings.Contains(pErr.Msg, "Pipe AGGREGATE cannot have both an empty aggregate list and an empty GROUP BY")
 			isNotBoolClauseError := strings.Contains(pErr.Msg, "clause should return type BOOL")
 
@@ -405,6 +412,12 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				pErr.TermLength = len(table)
 				pErr.IncompleteColumnName = table
 				if loadErr := catalog.TableLoadError(table); loadErr != nil {
+					pErr.Msg += fmt.Sprintf(" (%v)", loadErr)
+				}
+			case isProcedureNotFoundError:
+				ind := strings.Index(pErr.Msg, "Procedure not found: ")
+				procedure := strings.TrimSpace(pErr.Msg[ind+len("Procedure not found: "):])
+				if loadErr := catalog.ProcedureLoadError(procedure); loadErr != nil {
 					pErr.Msg += fmt.Sprintf(" (%v)", loadErr)
 				}
 			case isNotBoolClauseError:
@@ -732,7 +745,7 @@ func (a *Analyzer) analyzeExpressionTypeName(sql string, catalog *Catalog) (stri
 	if err != nil {
 		return "", err
 	}
-	out, err := googlesql.AnalyzeExpression(sql, opts, catalog.CatalogNode(), catalog.TypeFactory())
+	out, err := googlesql.AnalyzeExpression(sql, opts, catalog.node(), catalog.TypeFactory())
 	if err != nil {
 		return "", err
 	}

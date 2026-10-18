@@ -47,6 +47,9 @@ type Client interface {
 	// GetTableMetadata returns the metadata of the specified table.
 	GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.TableMetadata, error)
 
+	// GetRoutineMetadata returns the metadata of the specified routine, e.g. a procedure.
+	GetRoutineMetadata(ctx context.Context, projectID, datasetID, routineID string) (*bigquery.RoutineMetadata, error)
+
 	// DryRunSchema returns the result schema of the query from a dry run. It
 	// covers what GetTableMetadata cannot fetch, e.g. INFORMATION_SCHEMA views.
 	DryRunSchema(ctx context.Context, query string) (bigquery.Schema, error)
@@ -215,6 +218,15 @@ func (c *client) GetDatasetMetadata(ctx context.Context, projectID, datasetID st
 
 func (c *client) GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.TableMetadata, error) {
 	md, err := c.bqClient.DatasetInProject(projectID, datasetID).Table(tableID).Metadata(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("fail to get metadata: %w", err)
+	}
+
+	return md, nil
+}
+
+func (c *client) GetRoutineMetadata(ctx context.Context, projectID, datasetID, routineID string) (*bigquery.RoutineMetadata, error) {
+	md, err := c.bqClient.DatasetInProject(projectID, datasetID).Routine(routineID).Metadata(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("fail to get metadata: %w", err)
 	}
