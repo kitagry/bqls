@@ -484,3 +484,45 @@ func TestRun_PartitionFilterOnDatasetQualifiedTable(t *testing.T) {
 		t.Errorf("run result diff (-want +got):\n%s", diff)
 	}
 }
+
+// INFORMATION_SCHEMA views have no table metadata, so their schema comes from a
+// dry run, which should also run once per view per run.
+func TestRun_InformationSchemaDryRunOncePerView(t *testing.T) {
+	t.Chdir(t.TempDir())
+	const src = "SELECT job_id FROM `region-us`.INFORMATION_SCHEMA.JOBS\n"
+	writeFiles(t, map[string]string{"a.sql": src, "b.sql": src})
+
+	ctrl := gomock.NewController(t)
+	c := mock_bigquery.NewMockClient(ctrl)
+	c.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+	c.EXPECT().Close().Return(nil).AnyTimes()
+	c.EXPECT().DryRunSchema(gomock.Any(), "SELECT * FROM `p`.`region-us`.`INFORMATION_SCHEMA`.`JOBS`").
+		Return(bq.Schema{{Name: "job_id", Type: bq.StringFieldType}}, nil).Times(1)
+	factory := func(context.Context, string, string) (bigquery.Client, error) { return c, nil }
+
+	got := runWith(t, factory, "", "a.sql", "b.sql")
+	if diff := cmp.Diff(result{}, got, cmp.AllowUnexported(result{})); diff != "" {
+		t.Errorf("run result diff (-want +got):\n%s", diff)
+	}
+}
+
+func TestRun_InformationSchemaDryRunRuntimeFailure(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeFiles(t, map[string]string{"a.sql": "SELECT job_id FROM `region-us`.INFORMATION_SCHEMA.JOBS\n"})
+
+	ctrl := gomock.NewController(t)
+	c := mock_bigquery.NewMockClient(ctrl)
+	c.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+	c.EXPECT().Close().Return(nil).AnyTimes()
+	c.EXPECT().DryRunSchema(gomock.Any(), gomock.Any()).
+		Return(nil, &googleapi.Error{Code: 403, Message: "Access Denied: Project p"}).AnyTimes()
+	factory := func(context.Context, string, string) (bigquery.Client, error) { return c, nil }
+
+	got := runWith(t, factory, "", "a.sql")
+	if got.code != 2 {
+		t.Errorf("exit code = %d, want 2 (stdout: %s, stderr: %s)", got.code, got.stdout, got.stderr)
+	}
+	if strings.Count(got.stderr, "Access Denied: Project p") != 1 {
+		t.Errorf("stderr = %q, want it to contain the failure exactly once", got.stderr)
+	}
+}

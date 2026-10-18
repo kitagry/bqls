@@ -589,14 +589,11 @@ func (a *Analyzer) GetTableMetadataFromPath(ctx context.Context, path string) (*
 		}
 	}
 
-	switch len(splitNode) {
-	case 3:
-		return a.bqClient.GetTableMetadata(ctx, splitNode[0], splitNode[1], splitNode[2])
-	case 2:
-		return a.bqClient.GetTableMetadata(ctx, a.bqClient.GetDefaultProject(), splitNode[0], splitNode[1])
-	default:
+	ref, err := parseTablePath(splitNode, a.bqClient.GetDefaultProject)
+	if err != nil {
 		return nil, fmt.Errorf("invalid path: %s", path)
 	}
+	return fetchTableMetadata(ctx, a.bqClient, ref)
 }
 
 func (a *Analyzer) createFunctionTypes(node *googlesql.ASTCreateFunctionStatement, sourceFile string, catalog *Catalog) (*googlesql.Function, *Error) {

@@ -26,24 +26,16 @@ type Catalog struct {
 	// a name that differs only in case traps.
 	tableMetaMap map[string]*bq.TableMetadata
 	tables       map[string]*googlesql.SimpleTable // key: "project.dataset.table"
-	// aliases holds lowercased "dataset.table" names already registered, because
-	// registering one twice traps in SimpleCatalog, which matches names
-	// case-insensitively.
-	aliases map[string]aliasState
+	// registered holds the identifier splits a table is already registered
+	// under, because registering one twice traps in SimpleCatalog, which
+	// matches names case-insensitively.
+	registered map[string]bool // key: splitKey
 	// loadErrs keeps why a table could not be registered, because the analyzer
 	// only reports "Table not found", which hides auth or network problems.
 	loadErrs map[string]error // key: lowercased "project.dataset.table"
 	mu       *sync.Mutex
 	// subCatalogs tracks nested sub-catalogs for non-backtick path resolution.
-	subCatalogs map[string]*googlesql.SimpleCatalog // key: "project", "project.dataset" or a default-project "dataset"
-}
-
-// aliasState tracks the two registrations of a "dataset.table" alias
-// separately, so that a retry after a partial failure does not register the
-// succeeded one again.
-type aliasState struct {
-	backticked bool
-	unquoted   bool
+	subCatalogs map[string]*googlesql.SimpleCatalog // key: splitKey of the catalog path
 }
 
 func NewCatalog(bqClient bigquery.Client) *Catalog {
@@ -66,7 +58,7 @@ func NewCatalog(bqClient bigquery.Client) *Catalog {
 		bqClient:     bqClient,
 		tableMetaMap: make(map[string]*bq.TableMetadata),
 		tables:       make(map[string]*googlesql.SimpleTable),
-		aliases:      make(map[string]aliasState),
+		registered:   make(map[string]bool),
 		loadErrs:     make(map[string]error),
 		mu:           &sync.Mutex{},
 		subCatalogs:  make(map[string]*googlesql.SimpleCatalog),
@@ -97,7 +89,7 @@ func (c *Catalog) Clone() *Catalog {
 		bqClient:     c.bqClient,
 		tableMetaMap: make(map[string]*bq.TableMetadata),
 		tables:       make(map[string]*googlesql.SimpleTable),
-		aliases:      make(map[string]aliasState),
+		registered:   make(map[string]bool),
 		loadErrs:     make(map[string]error),
 		mu:           &sync.Mutex{},
 		subCatalogs:  make(map[string]*googlesql.SimpleCatalog),
@@ -123,25 +115,29 @@ func (c *Catalog) EnsureTable(path []string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	projectID, datasetID, tableID, defaulted, err := c.pathToProjectTable(path)
+	ref, err := c.parseTablePath(path)
 	if err != nil {
 		return err
 	}
-	key := strings.ToLower(fmt.Sprintf("%s.%s.%s", projectID, datasetID, tableID))
+	key := ref.key()
 	// A different casing of a loaded table resolves to the same catalog entry,
 	// so it is reused even though BigQuery may hold it as a separate table.
 	table, ok := c.tables[key]
 	if !ok {
-		table, err = c.addTable(path)
+		table, err = c.addTable(ref, isWildCardTable(path))
 		if err != nil {
 			c.loadErrs[key] = err
 			return err
 		}
 	}
-	// Checked even when the table is already loaded, because it may have been
-	// loaded through its 3-part name first.
-	if defaulted && projectID != "" {
-		if err := c.addDatasetQualifiedAlias(table, datasetID, tableID); err != nil {
+	// Registered even when the table is already loaded, because it may have
+	// been loaded through another name, e.g. its 3-part name.
+	if err := c.registerAllSplits(ref.path(), table); err != nil {
+		c.loadErrs[key] = err
+		return err
+	}
+	if ref.defaulted && ref.project != "" {
+		if err := c.registerAllSplits(ref.rest, table); err != nil {
 			c.loadErrs[key] = err
 			return err
 		}
@@ -157,63 +153,67 @@ func (c *Catalog) TableLoadError(name string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	path := strings.Split(strings.ReplaceAll(name, "`", ""), ".")
-	projectID, datasetID, tableID, _, err := c.pathToProjectTable(path)
+	ref, err := c.parseTablePath([]string{strings.ReplaceAll(name, "`", "")})
 	if err != nil {
 		return nil
 	}
-	err = c.loadErrs[strings.ToLower(fmt.Sprintf("%s.%s.%s", projectID, datasetID, tableID))]
+	err = c.loadErrs[ref.key()]
 	if err == nil || !bigquery.IsRuntimeFailure(err) {
 		return nil
 	}
 	return err
 }
 
-// addDatasetQualifiedAlias makes the table resolvable as "dataset.table" for
-// the default project. The same table object is registered so that its name
-// stays "project.dataset.table", which hover, completion and lint rely on.
-func (c *Catalog) addDatasetQualifiedAlias(table *googlesql.SimpleTable, datasetID, tableID string) error {
-	key := strings.ToLower(datasetID + "." + tableID)
-	state := c.aliases[key]
-
-	// Backticked `dataset.table` is looked up as a single name.
-	if !state.backticked {
-		if err := c.catalog.AddTable2(datasetID+"."+tableID, table); err != nil {
-			return fmt.Errorf("failed to add table as %s.%s: %w", datasetID, tableID, err)
+// registerAllSplits makes the table resolvable however its path is quoted,
+// e.g. p.d.t, `p.d.t`, `p.d`.t and p.`d.t`, because the analyzer looks a
+// table up by the identifiers as written. The same table object is registered
+// so that its name stays the full path, which hover, completion and lint rely
+// on.
+func (c *Catalog) registerAllSplits(path []string, table *googlesql.SimpleTable) error {
+	for mask := 0; mask < 1<<(len(path)-1); mask++ {
+		// Bit i joins path[i] and path[i+1] into one identifier.
+		groups := []string{path[0]}
+		for i, part := range path[1:] {
+			if mask&(1<<i) != 0 {
+				groups[len(groups)-1] += "." + part
+			} else {
+				groups = append(groups, part)
+			}
 		}
-		state.backticked = true
-		c.aliases[key] = state
-	}
-
-	// Unquoted dataset.table → root["dataset"]["table"]. The cache key is shared
-	// with a project of the same name, because the root cannot hold two
-	// sub-catalogs with one name.
-	if !state.unquoted {
-		datasetCat, err := c.getOrCreateSubCatalog(c.catalog, datasetID)
-		if err != nil {
-			return fmt.Errorf("failed to create sub-catalog(%s): %w", datasetID, err)
+		key := splitKey(groups)
+		if c.registered[key] {
+			continue
 		}
-		if err := datasetCat.AddTable2(tableID, table); err != nil {
-			return fmt.Errorf("failed to add table to sub-catalog(%s): %w", datasetID, err)
+		parent := c.catalog
+		for i, name := range groups[:len(groups)-1] {
+			sub, err := c.getOrCreateSubCatalog(parent, groups[:i+1], name)
+			if err != nil {
+				return fmt.Errorf("failed to create sub-catalog(%s): %w", name, err)
+			}
+			parent = sub
 		}
-		state.unquoted = true
-		c.aliases[key] = state
+		name := groups[len(groups)-1]
+		if err := parent.AddTable2(name, table); err != nil {
+			return fmt.Errorf("failed to add table as %s: %w", name, err)
+		}
+		c.registered[key] = true
 	}
 	return nil
 }
 
-func (c *Catalog) addTable(path []string) (*googlesql.SimpleTable, error) {
-	projectID, datasetID, tableID, _, err := c.pathToProjectTable(path)
-	if err != nil {
-		return nil, err
-	}
+// splitKey joins identifiers with NUL, which no identifier contains, so that
+// `a.b`.c and a.`b.c` get different keys.
+func splitKey(groups []string) string {
+	return strings.ToLower(strings.Join(groups, "\x00"))
+}
 
-	metadata, err := c.bqClient.GetTableMetadata(context.Background(), projectID, datasetID, tableID)
+func (c *Catalog) addTable(ref tableRef, isWildCard bool) (*googlesql.SimpleTable, error) {
+	metadata, err := fetchTableMetadata(context.Background(), c.bqClient, ref)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load table metadata: %w", err)
 	}
 
-	tableName := fmt.Sprintf("%s.%s.%s", projectID, datasetID, tableID)
+	tableName := strings.Join(ref.path(), ".")
 
 	table, err := googlesql.NewSimpleTable(tableName, 0)
 	if err != nil {
@@ -256,7 +256,7 @@ func (c *Catalog) addTable(path []string) (*googlesql.SimpleTable, error) {
 		}
 	}
 
-	if isWildCardTable(path) {
+	if isWildCard {
 		strType, err := c.typeFactory.GetString()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get STRING type: %w", err)
@@ -268,28 +268,7 @@ func (c *Catalog) addTable(path []string) (*googlesql.SimpleTable, error) {
 		}
 	}
 
-	// Registered in nested sub-catalogs for non-backtick 3-part path resolution:
-	// project.dataset.table → root["project"]["dataset"]["table"]. Done before
-	// the root registration so that a failure leaves nothing behind and a retry
-	// hits the same error instead of a duplicate-name one.
-	projectCat, err := c.getOrCreateSubCatalog(c.catalog, projectID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create sub-catalog(%s): %w", projectID, err)
-	}
-	datasetKey := projectID + "." + datasetID
-	datasetCat, err := c.getOrCreateSubCatalog(projectCat, datasetKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create sub-catalog(%s): %w", datasetKey, err)
-	}
-	if err := datasetCat.AddTable2(tableID, table); err != nil {
-		return nil, fmt.Errorf("failed to add table to sub-catalog(%s): %w", datasetKey, err)
-	}
-
-	if err := c.catalog.AddTable(table); err != nil {
-		return nil, fmt.Errorf("failed to add table to catalog: %w", err)
-	}
-
-	key := strings.ToLower(tableName)
+	key := ref.key()
 	c.tableMetaMap[key] = metadata
 	c.tables[key] = table
 	return table, nil
@@ -306,33 +285,85 @@ func addColumn(table *googlesql.SimpleTable, tableName, name string, typ googles
 	return nil
 }
 
-func (c *Catalog) getOrCreateSubCatalog(parent *googlesql.SimpleCatalog, key string) (*googlesql.SimpleCatalog, error) {
-	if sub, ok := c.subCatalogs[strings.ToLower(key)]; ok {
+// getOrCreateSubCatalog returns the sub-catalog named name under parent,
+// which is reached by catalogPath. A project and a default-project dataset of
+// the same name share one, because the root cannot hold two sub-catalogs with
+// one name.
+func (c *Catalog) getOrCreateSubCatalog(parent *googlesql.SimpleCatalog, catalogPath []string, name string) (*googlesql.SimpleCatalog, error) {
+	key := splitKey(catalogPath)
+	if sub, ok := c.subCatalogs[key]; ok {
 		return sub, nil
-	}
-	// Extract the local name (last segment of the key).
-	name := key
-	if idx := strings.LastIndex(key, "."); idx >= 0 {
-		name = key[idx+1:]
 	}
 	sub, err := parent.MakeOwnedSimpleCatalog(name)
 	if err != nil {
 		return nil, err
 	}
-	c.subCatalogs[strings.ToLower(key)] = sub
+	c.subCatalogs[key] = sub
 	return sub, nil
 }
 
-// pathToProjectTable also reports whether the project was filled in from the
-// default project.
-func (c *Catalog) pathToProjectTable(path []string) (projectID, datasetID, tableID string, defaulted bool, err error) {
-	tableSep := strings.Split(strings.Join(path, "."), ".")
-	if len(tableSep) == 3 {
-		return tableSep[0], tableSep[1], tableSep[2], false, nil
-	} else if len(tableSep) == 2 {
-		return c.bqClient.GetDefaultProject(), tableSep[0], tableSep[1], true, nil
+// tableRef is a table path with the project filled in.
+type tableRef struct {
+	project string
+	// rest is the path after the project: dataset and table, or for
+	// INFORMATION_SCHEMA views an optional region or dataset qualifier,
+	// INFORMATION_SCHEMA and the view.
+	rest []string
+	// defaulted reports whether project was filled in from the default project.
+	defaulted         bool
+	informationSchema bool
+}
+
+func (r tableRef) path() []string {
+	return append([]string{r.project}, r.rest...)
+}
+
+func (r tableRef) key() string {
+	return strings.ToLower(strings.Join(r.path(), "."))
+}
+
+// parseTablePath splits path at every dot, so that however the path is quoted
+// it resolves to the same table. defaultProject is called only when the
+// project is omitted.
+func parseTablePath(path []string, defaultProject func() string) (tableRef, error) {
+	parts := strings.Split(strings.Join(path, "."), ".")
+	// INFORMATION_SCHEMA views are [[project.]region-or-dataset.]INFORMATION_SCHEMA.view.
+	if len(parts) >= 2 && strings.EqualFold(parts[len(parts)-2], "INFORMATION_SCHEMA") {
+		switch len(parts) {
+		case 2, 3:
+			return tableRef{project: defaultProject(), rest: parts, defaulted: true, informationSchema: true}, nil
+		case 4:
+			return tableRef{project: parts[0], rest: parts[1:], informationSchema: true}, nil
+		}
 	}
-	return "", "", "", false, fmt.Errorf(`unknown table "%s"`, strings.Join(tableSep, "."))
+	switch len(parts) {
+	case 3:
+		return tableRef{project: parts[0], rest: parts[1:]}, nil
+	case 2:
+		return tableRef{project: defaultProject(), rest: parts, defaulted: true}, nil
+	}
+	return tableRef{}, fmt.Errorf(`unknown table "%s"`, strings.Join(parts, "."))
+}
+
+func (c *Catalog) parseTablePath(path []string) (tableRef, error) {
+	return parseTablePath(path, c.bqClient.GetDefaultProject)
+}
+
+// fetchTableMetadata asks INFORMATION_SCHEMA views for their schema by a dry
+// run, because they have no table metadata.
+func fetchTableMetadata(ctx context.Context, bqClient bigquery.Client, ref tableRef) (*bq.TableMetadata, error) {
+	if !ref.informationSchema {
+		return bqClient.GetTableMetadata(ctx, ref.project, ref.rest[0], ref.rest[1])
+	}
+	path := ref.rest
+	if ref.project != "" {
+		path = ref.path()
+	}
+	schema, err := bqClient.DryRunSchema(ctx, "SELECT * FROM `"+strings.Join(path, "`.`")+"`")
+	if err != nil {
+		return nil, err
+	}
+	return &bq.TableMetadata{Schema: schema}, nil
 }
 
 func bigqueryTypeToGooglesqlType(tf *googlesql.TypeFactory, typ bq.FieldType, isRepeated bool, schema bq.Schema) (googlesql.Googlesql_TypeNode, error) {
@@ -427,9 +458,7 @@ func (c *Catalog) PreloadTablesFromAST(node *googlesql.ASTScript) error {
 		if !ok {
 			return nil
 		}
-		// Split after joining so that a backticked `p.d.t` becomes three parts.
-		path := strings.Split(name, ".")
-		if err := c.EnsureTable(path); err != nil && c.TableLoadError(name) != nil {
+		if err := c.EnsureTable([]string{name}); err != nil && c.TableLoadError(name) != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 		}
 		return nil
@@ -469,18 +498,12 @@ func (c *Catalog) FindTableMetadata(path string) (*bq.TableMetadata, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	splitNode := strings.Split(path, ".")
-	var tableName string
-	switch len(splitNode) {
-	case 3:
-		tableName = path
-	case 2:
-		tableName = fmt.Sprintf("%s.%s.%s", c.bqClient.GetDefaultProject(), splitNode[0], splitNode[1])
-	default:
+	ref, err := c.parseTablePath([]string{path})
+	if err != nil {
 		return nil, fmt.Errorf("invalid path: %s", path)
 	}
 
-	if meta, ok := c.tableMetaMap[strings.ToLower(tableName)]; ok {
+	if meta, ok := c.tableMetaMap[ref.key()]; ok {
 		return meta, nil
 	}
 	return nil, errors.New("table not found in catalog")

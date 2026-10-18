@@ -28,6 +28,8 @@ type cache struct {
 	db                     *database
 	tableMetadataCacheLock sync.Mutex
 	tableMetadataCache     map[string]*bigquery.TableMetadata
+	dryRunSchemaCacheLock  sync.Mutex
+	dryRunSchemaCache      map[string]bigquery.Schema
 
 	onceListProjects *sync.Once
 	onceListDatasets map[string]*sync.Once
@@ -50,6 +52,7 @@ func newCache(bqClient Client) (*cache, error) {
 		db:                     db,
 		tableMetadataCacheLock: sync.Mutex{},
 		tableMetadataCache:     make(map[string]*bigquery.TableMetadata),
+		dryRunSchemaCache:      make(map[string]bigquery.Schema),
 		onceListProjects:       &sync.Once{},
 		onceListDatasets:       make(map[string]*sync.Once),
 		onceListTables:         make(map[string]*sync.Once),
@@ -205,4 +208,19 @@ func (c *cache) GetTableMetadata(ctx context.Context, projectID, datasetID, tabl
 		c.tableMetadataCache[cacheKey] = result
 	}
 	return result, nil
+}
+
+func (c *cache) DryRunSchema(ctx context.Context, query string) (bigquery.Schema, error) {
+	c.dryRunSchemaCacheLock.Lock()
+	defer c.dryRunSchemaCacheLock.Unlock()
+	if schema, ok := c.dryRunSchemaCache[query]; ok {
+		return schema, nil
+	}
+
+	schema, err := c.Client.DryRunSchema(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	c.dryRunSchemaCache[query] = schema
+	return schema, nil
 }

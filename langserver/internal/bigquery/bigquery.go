@@ -2,6 +2,7 @@ package bigquery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -45,6 +46,10 @@ type Client interface {
 
 	// GetTableMetadata returns the metadata of the specified table.
 	GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.TableMetadata, error)
+
+	// DryRunSchema returns the result schema of the query from a dry run. It
+	// covers what GetTableMetadata cannot fetch, e.g. INFORMATION_SCHEMA views.
+	DryRunSchema(ctx context.Context, query string) (bigquery.Schema, error)
 
 	// GetTableRecord returns the row of the specified table.
 	GetTableRecord(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.RowIterator, error)
@@ -215,6 +220,22 @@ func (c *client) GetTableMetadata(ctx context.Context, projectID, datasetID, tab
 	}
 
 	return md, nil
+}
+
+func (c *client) DryRunSchema(ctx context.Context, query string) (bigquery.Schema, error) {
+	job, err := c.Run(ctx, query, true)
+	if err != nil {
+		return nil, err
+	}
+	status := job.LastStatus()
+	if status == nil || status.Statistics == nil {
+		return nil, errors.New("dry run returned no statistics")
+	}
+	stats, ok := status.Statistics.Details.(*bigquery.QueryStatistics)
+	if !ok {
+		return nil, errors.New("dry run returned no query statistics")
+	}
+	return stats.Schema, nil
 }
 
 func (c *client) GetTableRecord(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.RowIterator, error) {

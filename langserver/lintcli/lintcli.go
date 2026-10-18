@@ -302,9 +302,9 @@ func expandPath(arg string) ([]string, error) {
 	return paths, err
 }
 
-// memoClient remembers table metadata, including failures, for the whole run
-// so that a table read by several files, or by both the analyzer and a lint
-// rule, is fetched from the API once.
+// memoClient remembers table metadata and dry-run schemas, including
+// failures, for the whole run so that a table read by several files, or by
+// both the analyzer and a lint rule, is fetched from the API once.
 //
 // It also records lookups that failed for reasons other than the table not
 // existing, because the analyzer turns every lookup error into "Table not
@@ -313,7 +313,13 @@ type memoClient struct {
 	bigquery.Client
 	mu       sync.Mutex
 	tables   map[string]tableResult
+	schemas  map[string]schemaResult
 	failMsgs []string
+}
+
+type schemaResult struct {
+	schema bq.Schema
+	err    error
 }
 
 type tableResult struct {
@@ -322,7 +328,7 @@ type tableResult struct {
 }
 
 func newMemoClient(c bigquery.Client) *memoClient {
-	return &memoClient{Client: c, tables: make(map[string]tableResult)}
+	return &memoClient{Client: c, tables: make(map[string]tableResult), schemas: make(map[string]schemaResult)}
 }
 
 func (c *memoClient) GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bq.TableMetadata, error) {
@@ -334,10 +340,27 @@ func (c *memoClient) GetTableMetadata(ctx context.Context, projectID, datasetID,
 	}
 	md, err := c.Client.GetTableMetadata(ctx, projectID, datasetID, tableID)
 	c.tables[key] = tableResult{md, err}
+	c.recordFailure(err)
+	return md, err
+}
+
+func (c *memoClient) DryRunSchema(ctx context.Context, query string) (bq.Schema, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if r, ok := c.schemas[query]; ok {
+		return r.schema, r.err
+	}
+	schema, err := c.Client.DryRunSchema(ctx, query)
+	c.schemas[query] = schemaResult{schema, err}
+	c.recordFailure(err)
+	return schema, err
+}
+
+// recordFailure must be called with c.mu held.
+func (c *memoClient) recordFailure(err error) {
 	if err != nil && bigquery.IsRuntimeFailure(err) && !slices.Contains(c.failMsgs, err.Error()) {
 		c.failMsgs = append(c.failMsgs, err.Error())
 	}
-	return md, err
 }
 
 func (c *memoClient) failures() []string {
