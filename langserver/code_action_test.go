@@ -533,3 +533,48 @@ func applyTextEdit(t *testing.T, src string, e lsp.TextEdit) string {
 	lines[e.Range.Start.Line] = line[:offset] + e.NewText + line[offset:]
 	return strings.Join(lines, "\n")
 }
+
+func TestHandler_lintCodeActions_ConvertsPositionsWithAnalyzedText(t *testing.T) {
+	const uri lsp.DocumentURI = "file:///a.sql"
+	const src = "SELECT x FROM p.d.t WHERE x = CAST(NULL AS INT64)"
+	const edited = "SELECT 'ああああああああああああああああ' AS s"
+	h := newTestHandlerEditedDuringDiagnose(t, uri, src, edited)
+	h.initializeParams.Capabilities.TextDocument.CodeAction.CodeActionLiteralSupport.CodeActionKind.ValueSet = []lsp.CodeActionKind{lsp.CAKQuickFix}
+
+	cursor := lsp.Position{Line: 0, Character: 30}
+	got := h.lintCodeActions(t.Context(), uri, lsp.Range{Start: cursor, End: cursor})
+
+	diagRange := lsp.Range{Start: lsp.Position{Line: 0, Character: 26}, End: lsp.Position{Line: 0, Character: 49}}
+	lintDiag := lsp.Diagnostic{
+		Range:    diagRange,
+		Severity: lsp.Warning,
+		Code:     "null-comparison",
+		Source:   "bqls-lint",
+		Message:  "Comparison with NULL using = always yields NULL; use IS NULL",
+	}
+	want := []any{
+		lsp.CodeAction{
+			Title:       "Replace with IS NULL",
+			Kind:        lsp.CAKQuickFix,
+			Diagnostics: []lsp.Diagnostic{lintDiag},
+			IsPreferred: true,
+			Edit: &lsp.WorkspaceEdit{Changes: map[string][]lsp.TextEdit{
+				string(uri): {{Range: diagRange, NewText: "x IS NULL"}},
+			}},
+		},
+		lsp.CodeAction{
+			Title:       "Ignore null-comparison on this line",
+			Kind:        lsp.CAKQuickFix,
+			Diagnostics: []lsp.Diagnostic{lintDiag},
+			Edit: &lsp.WorkspaceEdit{Changes: map[string][]lsp.TextEdit{
+				string(uri): {{
+					Range:   lsp.Range{Start: lsp.Position{Line: 0}, End: lsp.Position{Line: 0}},
+					NewText: "-- bqls:ignore null-comparison\n",
+				}},
+			}},
+		},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("lintCodeActions() diff (-want +got):\n%s", diff)
+	}
+}

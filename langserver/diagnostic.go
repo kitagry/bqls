@@ -146,8 +146,7 @@ func (h *Handler) diagnose(ctx context.Context, uri lsp.DocumentURI) (map[lsp.Do
 	if !ok {
 		return result, nil
 	}
-	src, _ := h.project.GetFile(uri)
-	result[uri] = append(convertErrorsToDiagnostics(src, diags.Errors), convertLintDiagnostics(src, diags.Lint)...)
+	result[uri] = append(convertErrorsToDiagnostics(diags.Src, diags.Errors), convertLintDiagnostics(diags.Src, diags.Lint)...)
 
 	return result, nil
 }

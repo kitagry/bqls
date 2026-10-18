@@ -1,7 +1,10 @@
 package langserver
 
 import (
+	"context"
 	"testing"
+
+	bq "cloud.google.com/go/bigquery"
 
 	"github.com/golang/mock/gomock"
 	"github.com/google/go-cmp/cmp"
@@ -182,5 +185,55 @@ func TestHandler_scheduleDiagnostics_publishesEmptyDiagnosticsOnPanic(t *testing
 				t.Errorf("notify mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+// newTestHandlerEditedDuringDiagnose returns a handler whose open file is
+// replaced by edited while Diagnose fetches table metadata, the way a
+// didChange can land while the diagnostics goroutine is still analyzing.
+func newTestHandlerEditedDuringDiagnose(t *testing.T, uri lsp.DocumentURI, src, edited string) *Handler {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+	bqClient.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+	var p *source.Project
+	bqClient.EXPECT().GetTableMetadata(gomock.Any(), "p", "d", "t").
+		DoAndReturn(func(context.Context, string, string, string) (*bq.TableMetadata, error) {
+			if err := p.UpdateFile(uri, edited, 2); err != nil {
+				t.Error(err)
+			}
+			return &bq.TableMetadata{
+				Type:   bq.RegularTable,
+				Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+			}, nil
+		}).AnyTimes()
+	p = source.NewProjectWithBQClient("/", bqClient, logrus.New())
+	if err := p.UpdateFile(uri, src, 1); err != nil {
+		t.Fatal(err)
+	}
+	return &Handler{project: p, logger: logrus.New()}
+}
+
+func TestHandler_diagnose_ConvertsPositionsWithAnalyzedText(t *testing.T) {
+	const uri lsp.DocumentURI = "file:///a.sql"
+	const src = "SELECT x FROM p.d.t WHERE x = CAST(NULL AS INT64)"
+	// Converting src's byte columns against this text would shrink them,
+	// because every character here takes 3 bytes but 1 UTF-16 unit.
+	const edited = "SELECT 'ああああああああああああああああ' AS s"
+	h := newTestHandlerEditedDuringDiagnose(t, uri, src, edited)
+
+	got, err := h.diagnose(t.Context(), uri)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[lsp.DocumentURI][]lsp.Diagnostic{uri: {{
+		Range:    lsp.Range{Start: lsp.Position{Line: 0, Character: 26}, End: lsp.Position{Line: 0, Character: 49}},
+		Severity: lsp.Warning,
+		Code:     "null-comparison",
+		Source:   "bqls-lint",
+		Message:  "Comparison with NULL using = always yields NULL; use IS NULL",
+	}}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("diagnose() diff (-want +got):\n%s", diff)
 	}
 }

@@ -16,6 +16,10 @@ import (
 // Diagnostics may be shared with other callers through the cache, so callers
 // must treat its slices and maps as read-only.
 type Diagnostics struct {
+	// Src is the text that was analyzed. Positions below are byte offsets
+	// into it, so convert them with Src rather than the current text, which
+	// may have been edited since.
+	Src    string
 	Errors []file.Error
 	// ErrorFixes holds quick fixes for Errors, keyed by index into Errors.
 	ErrorFixes map[int][]lint.SuggestedFix
@@ -95,6 +99,7 @@ func (p *Project) diagnose(ctx context.Context, uri lsp.DocumentURI, src string,
 		return p.lookupTable(ctx, path)
 	}}
 	return Diagnostics{
+		Src:        src,
 		Errors:     parsedFile.Errors,
 		ErrorFixes: errorFixes(parsedFile),
 		Lint:       lint.Run(ctx, parsedFile, cfg, env, lint.Analyzers...),
