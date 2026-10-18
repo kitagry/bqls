@@ -1180,6 +1180,95 @@ func TestAnalyzer_ParseFileWithPipeOperatorUnsupportedByBigQuery(t *testing.T) {
 	}
 }
 
+func TestAnalyzer_ParseFileWithLanguageFeatureUnsupportedByBigQuery(t *testing.T) {
+	tests := map[string]struct {
+		file string
+		want []file.Error
+	}{
+		"FOR UPDATE": {
+			file: "SELECT x FROM (SELECT 1 AS x) FOR UPDATE",
+			want: []file.Error{{Msg: "FOR UPDATE is not supported", Position: lsp.Position{Line: 0, Character: 30}}},
+		},
+		"LATERAL join": {
+			file: "SELECT * FROM (SELECT 1 AS x) t, LATERAL (SELECT t.x)",
+			want: []file.Error{{Msg: "LATERAL join is not supported", Position: lsp.Position{Line: 0, Character: 33}}},
+		},
+		"multiway UNNEST": {
+			file: "SELECT * FROM UNNEST([1], [2])",
+			want: []file.Error{{Msg: "The UNNEST operator supports exactly one argument", Position: lsp.Position{Line: 0, Character: 26}}},
+		},
+		"lambda argument": {
+			file: "SELECT ARRAY_FILTER([1, 2], e -> e > 1)",
+			want: []file.Error{{Msg: "Lambda is not supported", Position: lsp.Position{Line: 0, Character: 28}}},
+		},
+		"UUID type": {
+			file: "SELECT CAST(NULL AS UUID)",
+			want: []file.Error{{Msg: "Type not found: UUID", Position: lsp.Position{Line: 0, Character: 20}}},
+		},
+		"array equality": {
+			file: "SELECT [1] = [1]",
+			want: []file.Error{{Msg: "Equality is not defined for arguments of type ARRAY<INT64>", Position: lsp.Position{Line: 0, Character: 7}}},
+		},
+		"argument defaults": {
+			file: "CREATE TEMP FUNCTION f(a INT64 DEFAULT 5) RETURNS INT64 AS (a)",
+			want: []file.Error{{Msg: "Function arguments with DEFAULT values are not supported", Position: lsp.Position{Line: 0, Character: 39}}},
+		},
+	}
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if diff := cmp.Diff(tt.want, got.Errors, cmpopts.IgnoreUnexported()); diff != "" {
+				t.Errorf("ParseFile errors diff (-want, +got)\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestAnalyzer_ParseFileWithLanguageFeatureSupportedByBigQuery(t *testing.T) {
+	tests := map[string]string{
+		"WITH expression":           "SELECT WITH(a AS 1, a + 1)",
+		"chained function call":     "SELECT ('a').UPPER()",
+		"pipe syntax":               "SELECT 1 AS x |> WHERE x > 0",
+		"GROUPING SETS with ROLLUP": "SELECT x, y FROM (SELECT 1 AS x, 2 AS y) GROUP BY GROUPING SETS (x, ROLLUP (y))",
+	}
+	for n, q := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", q)
+			defer got.Close()
+
+			if len(got.Errors) != 0 {
+				t.Errorf("ParseFile errors = %+v, want none", got.Errors)
+			}
+		})
+	}
+}
+
+func TestAnalyzer_ParseFileWithRowAccessPolicyWithoutGrantTo(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+	analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+	got := analyzer.ParseFile("uri", "CREATE ROW ACCESS POLICY p ON `project.dataset.table` FILTER USING (TRUE)")
+	defer got.Close()
+
+	// The target table is reported as not found until #538 is fixed, so only check that GRANT TO is optional.
+	for _, err := range got.Errors {
+		if strings.Contains(err.Msg, "Missing TO <grantee_list> clause") {
+			t.Errorf("ParseFile reported %q, but GRANT TO is optional in BigQuery", err.Msg)
+		}
+	}
+}
+
 func TestAnalyzer_ParseFileWithUnknownFieldOfDeclaredStruct(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	bqClient := mock_bigquery.NewMockClient(ctrl)

@@ -51,6 +51,77 @@ var unsupportedPipeFeatures = []googlesql.LanguageFeature{
 	googlesql.LanguageFeatureFeaturePipeAggregateWithDifferentialPrivacy,
 }
 
+// unsupportedFeatures are non-pipe GoogleSQL features that BigQuery's GoogleSQL
+// reference does not include, so queries using them must be reported as errors.
+// https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax
+var unsupportedFeatures = []googlesql.LanguageFeature{
+	// https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax
+	googlesql.LanguageFeatureFeatureLateralJoin,
+	googlesql.LanguageFeatureFeatureForUpdate,
+	googlesql.LanguageFeatureFeatureWithRecursiveDepthModifier,
+	googlesql.LanguageFeatureFeatureOrderByCollate,
+	googlesql.LanguageFeatureFeatureStratifiedReservoirTablesample,
+	googlesql.LanguageFeatureFeatureMultiwayUnnest,
+	googlesql.LanguageFeatureFeatureUnnestAndFlattenArrays,
+	googlesql.LanguageFeatureFeatureMultiGroupingSets,
+	// https://cloud.google.com/bigquery/docs/table-sampling#limitations
+	googlesql.LanguageFeatureFeatureTablesampleFromTableValuedFunctions,
+
+	// https://cloud.google.com/bigquery/docs/reference/standard-sql/dml-syntax
+	googlesql.LanguageFeatureFeatureDmlReturning,
+	googlesql.LanguageFeatureFeatureInsertOnConflictClause,
+	googlesql.LanguageFeatureFeatureArrayElementsWithSet,
+	googlesql.LanguageFeatureFeatureJsonSubfieldsWithSet,
+	googlesql.LanguageFeatureFeatureNestedUpdateDeleteWithOffset,
+	googlesql.LanguageFeatureFeatureCorrelatedRefsInNestedDml,
+
+	// https://cloud.google.com/bigquery/docs/reference/standard-sql/array_functions
+	googlesql.LanguageFeatureFeatureInlineLambdaArgument,
+	googlesql.LanguageFeatureFeatureSafeFunctionCallWithLambdaArgs,
+	// https://cloud.google.com/bigquery/docs/reference/standard-sql/data-definition-language#create_function_statement
+	googlesql.LanguageFeatureFeatureFunctionArgumentsWithDefaults,
+	// https://cloud.google.com/bigquery/docs/reference/standard-sql/collation-concepts#limitations
+	googlesql.LanguageFeatureFeatureTypeAnnotationsOnSqlFunctionArguments,
+
+	// https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types
+	googlesql.LanguageFeatureFeatureUuidType,
+	googlesql.LanguageFeatureFeatureTokenizedSearch,
+	googlesql.LanguageFeatureFeatureArrayEquality,
+	googlesql.LanguageFeatureFeatureArrayOrdering,
+	googlesql.LanguageFeatureFeatureJsonTypeComparison,
+	googlesql.LanguageFeatureFeatureGroupByGraphPath,
+
+	// BigQuery has no PROTO type.
+	googlesql.LanguageFeatureFeatureReplaceFields,
+	googlesql.LanguageFeatureFeatureReplaceFieldsAllowMultiOneof,
+	googlesql.LanguageFeatureFeatureFilterFields,
+	googlesql.LanguageFeatureFeatureBracedProtoConstructors,
+	googlesql.LanguageFeatureFeatureExtractFromProto,
+	googlesql.LanguageFeatureFeatureExtractOneofCase,
+	googlesql.LanguageFeatureFeatureProtoMaps,
+	googlesql.LanguageFeatureFeatureProtoExtensionsWithNew,
+	googlesql.LanguageFeatureFeatureProtoExtensionsWithSet,
+	googlesql.LanguageFeatureFeatureProtoDefaultIfNull,
+	googlesql.LanguageFeatureFeatureEnumValueDescriptorProto,
+	googlesql.LanguageFeatureFeatureFromAndToProtoInterval,
+	googlesql.LanguageFeatureFeatureIgnoreProto3UseDefaults,
+
+	// https://cloud.google.com/bigquery/docs/reference/standard-sql/data-definition-language
+	googlesql.LanguageFeatureFeatureCheckConstraint,
+	// The legacy syntax makes GRANT TO mandatory in CREATE ROW ACCESS POLICY, but it is optional in BigQuery.
+	googlesql.LanguageFeatureFeatureAllowLegacyRowAccessPolicySyntax,
+	googlesql.LanguageFeatureFeatureExperimentalModules,
+
+	// https://cloud.google.com/bigquery/docs/reference/standard-sql/graph-patterns
+	googlesql.LanguageFeatureFeatureSqlGraphPathSearchPrefixPathCount,
+	// https://cloud.google.com/bigquery/docs/reference/standard-sql/graph-query-statements
+	googlesql.LanguageFeatureFeatureSqlGraphSetOperationPropagationMode,
+	// https://cloud.google.com/bigquery/docs/reference/standard-sql/graph-schema-statements
+	googlesql.LanguageFeatureFeatureSqlGraphDynamicLabelPropertiesInDdl,
+	googlesql.LanguageFeatureFeatureSqlGraphDynamicLabelExtensionInDdl,
+	googlesql.LanguageFeatureFeatureSqlGraphDynamicElementType,
+}
+
 func newLanguageOptions() (*googlesql.LanguageOptions, error) {
 	langOpt, err := googlesql.NewLanguageOptions()
 	if err != nil {
@@ -65,7 +136,7 @@ func newLanguageOptions() (*googlesql.LanguageOptions, error) {
 	if err := langOpt.EnableMaximumLanguageFeatures(); err != nil {
 		return nil, err
 	}
-	for _, f := range unsupportedPipeFeatures {
+	for _, f := range slices.Concat(unsupportedPipeFeatures, unsupportedFeatures) {
 		if err := langOpt.DisableLanguageFeature(f); err != nil {
 			return nil, err
 		}
