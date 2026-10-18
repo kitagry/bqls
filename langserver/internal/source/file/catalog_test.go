@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"testing"
 
 	bq "cloud.google.com/go/bigquery"
@@ -193,33 +192,31 @@ func TestCatalog_shouldNotGetSchemaTwice(t *testing.T) {
 	}
 }
 
-func TestCatalog_SubCatalogRegistrationError(t *testing.T) {
+func TestCatalog_CaseInsensitiveCacheKeys(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	meta := &bq.TableMetadata{Schema: bq.Schema{{Name: "name", Type: bq.StringFieldType}}}
 	bqClient := mock_bigquery.NewMockClient(ctrl)
 	bqClient.EXPECT().GetTableMetadata(gomock.Any(), "Project", "dataset", "a").Return(meta, nil).Times(1)
-	bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "b").Return(meta, nil).Times(2)
+	bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "b").Return(meta, nil).Times(1)
 	catalog := file.NewCatalog(bqClient)
 
 	if err := catalog.EnsureTable([]string{"Project.dataset.a"}); err != nil {
 		t.Fatal(err)
 	}
-
-	// SimpleCatalog matches names case-insensitively, so creating the "project"
-	// sub-catalog collides with the existing "Project" one.
-	err := catalog.EnsureTable([]string{"project.dataset.b"})
-	if err == nil || !strings.Contains(err.Error(), "sub-catalog") {
-		t.Fatalf("expected sub-catalog error, got %v", err)
+	// SimpleCatalog matches names case-insensitively, so "project" must reuse
+	// the "Project" sub-catalog instead of colliding with it.
+	if err := catalog.EnsureTable([]string{"project.dataset.b"}); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := catalog.FindTableMetadata("project.dataset.b"); err == nil {
-		t.Error("table must not be recorded when sub-catalog registration fails")
+	// A different casing of a loaded table is the same catalog entry, so it is
+	// neither fetched nor registered again.
+	if err := catalog.EnsureTable([]string{"project.DATASET.A"}); err != nil {
+		t.Fatal(err)
 	}
-
-	err = catalog.EnsureTable([]string{"project.dataset.b"})
-	if err == nil || !strings.Contains(err.Error(), "sub-catalog") {
-		t.Fatalf("expected the retry to fail with the same sub-catalog error, got %v", err)
+	if _, err := catalog.FindTableMetadata("project.DATASET.A"); err != nil {
+		t.Errorf("metadata must be found regardless of casing: %v", err)
 	}
 }
 
@@ -486,7 +483,7 @@ func TestCatalog_TwoPartTableNames(t *testing.T) {
 		bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			DoAndReturn(func(_ any, project, dataset, table string) (*bq.TableMetadata, error) {
 				switch project + "." + dataset + "." + table {
-				case "p.d.t", "p.d.t_*", "p.other.t", "other.x.t":
+				case "p.d.t", "p.d.t_*", "p.other.t", "other.x.t", "p.D.T", "p.D.u":
 					return &bq.TableMetadata{Schema: schema}, nil
 				}
 				return nil, fmt.Errorf("table %s.%s.%s not found", project, dataset, table)
@@ -504,11 +501,14 @@ func TestCatalog_TwoPartTableNames(t *testing.T) {
 		"dataset named like a project, 2-part first": "SELECT a.x FROM other.t a JOIN other.x.t b ON a.x = b.x",
 		"repeated unquoted":                          "SELECT a.x FROM d.t a JOIN d.t b ON a.x = b.x",
 		"repeated backticked":                        "SELECT a.x FROM `d.t` a JOIN `d.t` b ON a.x = b.x",
-		// The mock has no p.D.T, so D.T can only resolve through the d.t alias.
-		// When both casings exist, registering p.D.T itself traps (#435).
-		"mixed case resolves via alias when the other casing does not exist": "SELECT a.x FROM d.t a JOIN D.T b ON a.x = b.x",
-		"multiple statements":  "SELECT x FROM d.t;\nSELECT x FROM d.t;",
-		"DML target also read": "INSERT d.t (x) SELECT x FROM d.t",
+		// SimpleCatalog matches names case-insensitively, so these must not
+		// register a second table or sub-catalog for the other casing (#435).
+		"mixed case 2-part":                      "SELECT a.x FROM d.t a JOIN D.T b ON a.x = b.x",
+		"mixed case 3-part":                      "SELECT a.x FROM p.d.t a JOIN p.D.T b ON a.x = b.x",
+		"mixed case dataset, other table":        "SELECT a.x FROM p.d.t a JOIN p.D.u b ON a.x = b.x",
+		"mixed case 2-part dataset, other table": "SELECT a.x FROM d.t a JOIN D.u b ON a.x = b.x",
+		"multiple statements":                    "SELECT x FROM d.t;\nSELECT x FROM d.t;",
+		"DML target also read":                   "INSERT d.t (x) SELECT x FROM d.t",
 	}
 	for name, src := range tests {
 		t.Run(name, func(t *testing.T) {
