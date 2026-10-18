@@ -1071,6 +1071,129 @@ func TestProject_CompleteColumns(t *testing.T) {
 				},
 			},
 		},
+		"Complete column while typing an existing non-bool column as an AND operand in where clause": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT * FROM `project.dataset.table` WHERE word_count = 1 AND word|",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "word",
+							Type: bq.StringFieldType,
+						},
+						{
+							Name: "word_count",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "word",
+					Detail:  "STRING",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "STRING",
+					},
+					TypedPrefix: "word",
+				},
+				{
+					Kind:    lsp.CIKField,
+					NewText: "word_count",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+					TypedPrefix: "word",
+				},
+			},
+		},
+		"Complete column while typing an existing non-bool column as an OR operand in where clause": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT * FROM `project.dataset.table` WHERE word_count = 1 OR word|",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "word",
+							Type: bq.StringFieldType,
+						},
+						{
+							Name: "word_count",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "word",
+					Detail:  "STRING",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "STRING",
+					},
+					TypedPrefix: "word",
+				},
+				{
+					Kind:    lsp.CIKField,
+					NewText: "word_count",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+					TypedPrefix: "word",
+				},
+			},
+		},
+		"Complete column while typing an existing non-bool column as a NOT operand in where clause": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT * FROM `project.dataset.table` WHERE NOT word|",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "word",
+							Type: bq.StringFieldType,
+						},
+						{
+							Name: "word_count",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "word",
+					Detail:  "STRING",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "STRING",
+					},
+					TypedPrefix: "word",
+				},
+				{
+					Kind:    lsp.CIKField,
+					NewText: "word_count",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+					TypedPrefix: "word",
+				},
+			},
+		},
 		"Complete column in where clause while typing a column name prefix at end of script": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM `project.dataset.table` WHERE i|",
