@@ -95,6 +95,21 @@ func (mr *MockClientMockRecorder) GetDefaultProject() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDefaultProject", reflect.TypeOf((*MockClient)(nil).GetDefaultProject))
 }
 
+// GetRoutineMetadata mocks base method.
+func (m *MockClient) GetRoutineMetadata(ctx context.Context, projectID, datasetID, routineID string) (*bigquery.RoutineMetadata, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRoutineMetadata", ctx, projectID, datasetID, routineID)
+	ret0, _ := ret[0].(*bigquery.RoutineMetadata)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetRoutineMetadata indicates an expected call of GetRoutineMetadata.
+func (mr *MockClientMockRecorder) GetRoutineMetadata(ctx, projectID, datasetID, routineID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRoutineMetadata", reflect.TypeOf((*MockClient)(nil).GetRoutineMetadata), ctx, projectID, datasetID, routineID)
+}
+
 // GetTableMetadata mocks base method.
 func (m *MockClient) GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bigquery.TableMetadata, error) {
 	m.ctrl.T.Helper()

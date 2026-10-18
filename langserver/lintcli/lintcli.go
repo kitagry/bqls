@@ -302,7 +302,7 @@ func expandPath(arg string) ([]string, error) {
 	return paths, err
 }
 
-// memoClient remembers table metadata and dry-run schemas, including
+// memoClient remembers table and routine metadata and dry-run schemas, including
 // failures, for the whole run so that a table read by several files, or by
 // both the analyzer and a lint rule, is fetched from the API once.
 //
@@ -313,6 +313,7 @@ type memoClient struct {
 	bigquery.Client
 	mu       sync.Mutex
 	tables   map[string]tableResult
+	routines map[string]routineResult
 	schemas  map[string]schemaResult
 	failMsgs []string
 }
@@ -322,13 +323,18 @@ type schemaResult struct {
 	err    error
 }
 
+type routineResult struct {
+	md  *bq.RoutineMetadata
+	err error
+}
+
 type tableResult struct {
 	md  *bq.TableMetadata
 	err error
 }
 
 func newMemoClient(c bigquery.Client) *memoClient {
-	return &memoClient{Client: c, tables: make(map[string]tableResult), schemas: make(map[string]schemaResult)}
+	return &memoClient{Client: c, tables: make(map[string]tableResult), routines: make(map[string]routineResult), schemas: make(map[string]schemaResult)}
 }
 
 func (c *memoClient) GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bq.TableMetadata, error) {
@@ -340,6 +346,19 @@ func (c *memoClient) GetTableMetadata(ctx context.Context, projectID, datasetID,
 	}
 	md, err := c.Client.GetTableMetadata(ctx, projectID, datasetID, tableID)
 	c.tables[key] = tableResult{md, err}
+	c.recordFailure(err)
+	return md, err
+}
+
+func (c *memoClient) GetRoutineMetadata(ctx context.Context, projectID, datasetID, routineID string) (*bq.RoutineMetadata, error) {
+	key := projectID + ":" + datasetID + ":" + routineID
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if r, ok := c.routines[key]; ok {
+		return r.md, r.err
+	}
+	md, err := c.Client.GetRoutineMetadata(ctx, projectID, datasetID, routineID)
+	c.routines[key] = routineResult{md, err}
 	c.recordFailure(err)
 	return md, err
 }

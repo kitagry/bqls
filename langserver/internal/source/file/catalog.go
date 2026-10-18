@@ -27,26 +27,31 @@ type Catalog struct {
 	// a name that differs only in case traps.
 	tableMetaMap map[string]*bq.TableMetadata
 	tables       map[string]*googlesql.SimpleTable // key: "project.dataset.table"
-	names        *tableNames
-	// loadErrs keeps why a table could not be registered, because the analyzer
-	// only reports "Table not found", which hides auth or network problems.
-	loadErrs map[string]error // key: lowercased "project.dataset.table"
-	mu       *sync.Mutex
-	// scriptTables holds the tables created by the statements analyzed so far,
-	// in creation order. They are registered in their own catalog layered over
-	// the base catalog, rebuilt on every creation, because CREATE OR REPLACE
-	// replaces a table and SimpleCatalog cannot remove one.
-	scriptTables []scriptTable
+	procedures   map[string]*googlesql.Procedure   // key: "project.dataset.procedure"
+	names        *catalogNames
+	// loadErrs and procedureLoadErrs keep why a table or a procedure could not
+	// be registered, because the analyzer only reports "Table not found" or
+	// "Procedure not found", which hides auth or network problems.
+	loadErrs          map[string]error // key: lowercased "project.dataset.table"
+	procedureLoadErrs map[string]error // key: lowercased "project.dataset.procedure"
+	mu                *sync.Mutex
+	// scriptObjects holds the tables and procedures created by the statements
+	// analyzed so far, in creation order. They are registered in their own
+	// catalog layered over the base catalog, rebuilt on every creation, because
+	// CREATE OR REPLACE replaces an object and SimpleCatalog cannot remove one.
+	scriptObjects []scriptObject
 	// scriptNames keeps the layer's catalogs referenced from Go for as long as
 	// scriptNode uses them.
-	scriptNames *tableNames
+	scriptNames *catalogNames
 	scriptNode  googlesql.CatalogNode
 }
 
-type scriptTable struct {
-	key   string
-	paths [][]string
-	table *googlesql.SimpleTable
+// scriptObject is either a table or a procedure.
+type scriptObject struct {
+	key       string
+	paths     [][]string
+	table     *googlesql.SimpleTable
+	procedure *googlesql.Procedure
 }
 
 func NewCatalog(bqClient bigquery.Client) *Catalog {
@@ -63,15 +68,17 @@ func NewCatalog(bqClient bigquery.Client) *Catalog {
 		panic(fmt.Sprintf("failed to create catalog: %v", err))
 	}
 	return &Catalog{
-		catalog:      cat,
-		typeFactory:  tf,
-		langOpts:     langOpts,
-		bqClient:     bqClient,
-		tableMetaMap: make(map[string]*bq.TableMetadata),
-		tables:       make(map[string]*googlesql.SimpleTable),
-		names:        newTableNames(cat),
-		loadErrs:     make(map[string]error),
-		mu:           &sync.Mutex{},
+		catalog:           cat,
+		typeFactory:       tf,
+		langOpts:          langOpts,
+		bqClient:          bqClient,
+		tableMetaMap:      make(map[string]*bq.TableMetadata),
+		tables:            make(map[string]*googlesql.SimpleTable),
+		procedures:        make(map[string]*googlesql.Procedure),
+		names:             newCatalogNames(cat),
+		loadErrs:          make(map[string]error),
+		procedureLoadErrs: make(map[string]error),
+		mu:                &sync.Mutex{},
 	}
 }
 
@@ -93,15 +100,17 @@ func (c *Catalog) Clone() *Catalog {
 		panic(fmt.Sprintf("failed to clone catalog: %v", err))
 	}
 	return &Catalog{
-		catalog:      cat,
-		typeFactory:  c.typeFactory,
-		langOpts:     c.langOpts,
-		bqClient:     c.bqClient,
-		tableMetaMap: make(map[string]*bq.TableMetadata),
-		tables:       make(map[string]*googlesql.SimpleTable),
-		names:        newTableNames(cat),
-		loadErrs:     make(map[string]error),
-		mu:           &sync.Mutex{},
+		catalog:           cat,
+		typeFactory:       c.typeFactory,
+		langOpts:          c.langOpts,
+		bqClient:          c.bqClient,
+		tableMetaMap:      make(map[string]*bq.TableMetadata),
+		tables:            make(map[string]*googlesql.SimpleTable),
+		procedures:        make(map[string]*googlesql.Procedure),
+		names:             newCatalogNames(cat),
+		loadErrs:          make(map[string]error),
+		procedureLoadErrs: make(map[string]error),
+		mu:                &sync.Mutex{},
 	}
 }
 
@@ -111,7 +120,7 @@ func (c *Catalog) CatalogNode() *googlesql.SimpleCatalog {
 }
 
 // node returns the catalog that statements are analyzed against: the tables
-// created by the script so far over the base catalog.
+// and procedures created by the script so far over the base catalog.
 func (c *Catalog) node() googlesql.CatalogNode {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -152,12 +161,12 @@ func (c *Catalog) EnsureTable(path []string) error {
 	}
 	// Registered even when the table is already loaded, because it may have
 	// been loaded through another name, e.g. its 3-part name.
-	if err := c.names.registerAllSplits(ref.path(), table); err != nil {
+	if err := c.names.registerTable(ref.path(), table); err != nil {
 		c.loadErrs[key] = err
 		return err
 	}
 	if ref.defaulted && ref.project != "" {
-		if err := c.names.registerAllSplits(ref.rest, table); err != nil {
+		if err := c.names.registerTable(ref.rest, table); err != nil {
 			c.loadErrs[key] = err
 			return err
 		}
@@ -190,7 +199,7 @@ func (c *Catalog) addScriptTable(namePath []string, columnNames []string, column
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	paths := c.scriptTablePaths(namePath)
+	paths := c.scriptPaths(namePath)
 	tableName := strings.Join(paths[0], ".")
 	table, err := googlesql.NewSimpleTable(tableName, 0)
 	if err != nil {
@@ -201,19 +210,43 @@ func (c *Catalog) addScriptTable(namePath []string, columnNames []string, column
 			return err
 		}
 	}
+	return c.addScriptObject(scriptObject{key: strings.ToLower(tableName), paths: paths, table: table})
+}
 
-	key := strings.ToLower(tableName)
-	tables := slices.DeleteFunc(slices.Clone(c.scriptTables), func(t scriptTable) bool { return t.key == key })
-	tables = append(tables, scriptTable{key: key, paths: paths, table: table})
+// addScriptProcedure makes a procedure created by a statement of the script
+// callable by the later statements, replacing a procedure of the same name.
+func (c *Catalog) addScriptProcedure(namePath []string, signature *googlesql.FunctionSignature) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	paths := c.scriptPaths(namePath)
+	procedure, err := googlesql.NewProcedure(paths[0], signature)
+	if err != nil {
+		return fmt.Errorf("failed to create procedure: %w", err)
+	}
+	return c.addScriptObject(scriptObject{key: strings.ToLower(strings.Join(paths[0], ".")), paths: paths, procedure: procedure})
+}
+
+// addScriptObject must be called with c.mu held.
+func (c *Catalog) addScriptObject(object scriptObject) error {
+	objects := slices.DeleteFunc(slices.Clone(c.scriptObjects), func(o scriptObject) bool {
+		return o.key == object.key && (o.table == nil) == (object.table == nil)
+	})
+	objects = append(objects, object)
 
 	root, err := googlesql.NewSimpleCatalog("", c.typeFactory)
 	if err != nil {
 		return err
 	}
-	names := newTableNames(root)
-	for _, t := range tables {
-		for _, path := range t.paths {
-			if err := names.registerAllSplits(path, t.table); err != nil {
+	names := newCatalogNames(root)
+	for _, o := range objects {
+		for _, path := range o.paths {
+			if o.table != nil {
+				err = names.registerTable(path, o.table)
+			} else {
+				err = names.registerProcedure(path, o.procedure)
+			}
+			if err != nil {
 				return err
 			}
 		}
@@ -222,7 +255,7 @@ func (c *Catalog) addScriptTable(namePath []string, columnNames []string, column
 	if err != nil {
 		return err
 	}
-	c.scriptTables, c.scriptNames, c.scriptNode = tables, names, node
+	c.scriptObjects, c.scriptNames, c.scriptNode = objects, names, node
 	return nil
 }
 
@@ -232,54 +265,228 @@ func (c *Catalog) hasTable(namePath []string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	key := strings.ToLower(strings.Join(c.scriptTablePaths(namePath)[0], "."))
+	key := strings.ToLower(strings.Join(c.scriptPaths(namePath)[0], "."))
 	if _, ok := c.tables[key]; ok {
 		return true
 	}
-	return slices.ContainsFunc(c.scriptTables, func(t scriptTable) bool { return t.key == key })
+	return slices.ContainsFunc(c.scriptObjects, func(o scriptObject) bool { return o.key == key && o.table != nil })
 }
 
-// scriptTablePaths returns the paths a created table resolves by, the full
-// path first. A temporary table is named by a single identifier.
-func (c *Catalog) scriptTablePaths(namePath []string) [][]string {
+// hasProcedure is hasTable for procedures.
+func (c *Catalog) hasProcedure(namePath []string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	key := strings.ToLower(strings.Join(c.scriptPaths(namePath)[0], "."))
+	if _, ok := c.procedures[key]; ok {
+		return true
+	}
+	return slices.ContainsFunc(c.scriptObjects, func(o scriptObject) bool { return o.key == key && o.procedure != nil })
+}
+
+// scriptPaths returns the paths a created object resolves by, the full path
+// first. A temporary table is named by a single identifier.
+func (c *Catalog) scriptPaths(namePath []string) [][]string {
 	ref, err := c.parseTablePath(namePath)
 	if err != nil || ref.informationSchema {
 		return [][]string{namePath}
 	}
 	paths := [][]string{ref.path()}
-	// Also checked when the project is written, because a table created as
-	// project.dataset.table is then referred to as dataset.table.
+	// Also checked when the project is written, because an object created as
+	// project.dataset.name is then referred to as dataset.name.
 	if ref.project != "" && ref.project == c.bqClient.GetDefaultProject() {
 		paths = append(paths, ref.rest)
 	}
 	return paths
 }
 
-// tableNames registers tables in a catalog under their paths.
-type tableNames struct {
+// EnsureProcedure loads a procedure from BigQuery if not already in the
+// catalog.
+func (c *Catalog) EnsureProcedure(path []string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	ref, err := c.parseTablePath(path)
+	if err != nil {
+		return err
+	}
+	if ref.informationSchema {
+		return fmt.Errorf(`unknown procedure "%s"`, strings.Join(path, "."))
+	}
+	key := ref.key()
+	procedure, ok := c.procedures[key]
+	if !ok {
+		procedure, err = c.loadProcedure(ref)
+		if err != nil {
+			c.procedureLoadErrs[key] = err
+			return err
+		}
+		if procedure == nil {
+			return nil
+		}
+		c.procedures[key] = procedure
+	}
+	if err := c.names.registerProcedure(ref.path(), procedure); err != nil {
+		c.procedureLoadErrs[key] = err
+		return err
+	}
+	if ref.defaulted && ref.project != "" {
+		if err := c.names.registerProcedure(ref.rest, procedure); err != nil {
+			c.procedureLoadErrs[key] = err
+			return err
+		}
+	}
+	delete(c.procedureLoadErrs, key)
+	return nil
+}
+
+// ProcedureLoadError is TableLoadError for procedures.
+func (c *Catalog) ProcedureLoadError(name string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	ref, err := c.parseTablePath([]string{strings.ReplaceAll(name, "`", "")})
+	if err != nil {
+		return nil
+	}
+	err = c.procedureLoadErrs[ref.key()]
+	if err == nil || !bigquery.IsRuntimeFailure(err) {
+		return nil
+	}
+	return err
+}
+
+// loadProcedure returns nil when the routine is not a procedure, which is not
+// a load failure but a wrong name in the query.
+func (c *Catalog) loadProcedure(ref tableRef) (*googlesql.Procedure, error) {
+	metadata, err := c.bqClient.GetRoutineMetadata(context.Background(), ref.project, ref.rest[0], ref.rest[1])
+	if err != nil {
+		return nil, fmt.Errorf("failed to load routine metadata: %w", err)
+	}
+	if metadata.Type != "PROCEDURE" {
+		return nil, nil
+	}
+	args := make([]*googlesql.FunctionArgumentType, len(metadata.Arguments))
+	for i, arg := range metadata.Arguments {
+		typ, err := standardSQLTypeToGooglesqlType(c.typeFactory, arg.DataType)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert type(%s): %w", arg.Name, err)
+		}
+		if args[i], err = googlesql.NewFunctionArgumentType3(typ, 1); err != nil {
+			return nil, err
+		}
+	}
+	result, err := googlesql.NewFunctionArgumentType4(googlesql.SignatureArgumentKindArgTypeVoid, 1)
+	if err != nil {
+		return nil, err
+	}
+	signature, err := googlesql.NewFunctionSignature3(result, args, 0)
+	if err != nil {
+		return nil, err
+	}
+	return googlesql.NewProcedure(ref.path(), signature)
+}
+
+func standardSQLTypeToGooglesqlType(tf *googlesql.TypeFactory, typ *bq.StandardSQLDataType) (googlesql.Googlesql_TypeNode, error) {
+	if typ == nil {
+		return nil, errors.New("type is not specified")
+	}
+	switch typ.TypeKind {
+	case "INT64":
+		return tf.GetInt64()
+	case "FLOAT64":
+		return tf.GetDouble()
+	case "BOOL":
+		return tf.GetBool()
+	case "STRING":
+		return tf.GetString()
+	case "BYTES":
+		return tf.GetBytes()
+	case "DATE":
+		return tf.GetDate()
+	case "DATETIME":
+		return tf.GetDatetime()
+	case "TIME":
+		return tf.GetTime()
+	case "TIMESTAMP":
+		return tf.GetTimestamp()
+	case "NUMERIC":
+		return tf.GetNumeric()
+	case "BIGNUMERIC":
+		return tf.GetBignumeric()
+	case "GEOGRAPHY":
+		return tf.GetGeography()
+	case "INTERVAL":
+		return tf.GetInterval()
+	case "JSON":
+		return tf.GetJson()
+	case "ARRAY":
+		elem, err := standardSQLTypeToGooglesqlType(tf, typ.ArrayElementType)
+		if err != nil {
+			return nil, err
+		}
+		return tf.MakeArrayType2(elem)
+	case "RANGE":
+		elem, err := standardSQLTypeToGooglesqlType(tf, typ.RangeElementType)
+		if err != nil {
+			return nil, err
+		}
+		return tf.MakeRangeType3(elem)
+	case "STRUCT":
+		if typ.StructType == nil {
+			return nil, errors.New("struct type has no fields")
+		}
+		fields := make([]*googlesql.StructField, len(typ.StructType.Fields))
+		for i, field := range typ.StructType.Fields {
+			fieldType, err := standardSQLTypeToGooglesqlType(tf, field.Type)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert type(%s): %w", field.Name, err)
+			}
+			fields[i] = &googlesql.StructField{Name: field.Name, Type_: fieldType}
+		}
+		return tf.MakeStructType2(fields)
+	default:
+		return nil, fmt.Errorf("unsupported type: %s", typ.TypeKind)
+	}
+}
+
+// catalogNames registers tables and procedures in a catalog under their paths.
+type catalogNames struct {
 	root *googlesql.SimpleCatalog
-	// registered holds the identifier splits a table is already registered
+	// registered holds the identifier splits an object is already registered
 	// under, because registering one twice traps in SimpleCatalog, which
 	// matches names case-insensitively.
-	registered map[string]bool // key: splitKey
+	registered map[string]bool // key: kind and splitKey
 	// subCatalogs tracks nested sub-catalogs for non-backtick path resolution.
 	subCatalogs map[string]*googlesql.SimpleCatalog // key: splitKey of the catalog path
 }
 
-func newTableNames(root *googlesql.SimpleCatalog) *tableNames {
-	return &tableNames{
+func newCatalogNames(root *googlesql.SimpleCatalog) *catalogNames {
+	return &catalogNames{
 		root:        root,
 		registered:  make(map[string]bool),
 		subCatalogs: make(map[string]*googlesql.SimpleCatalog),
 	}
 }
 
-// registerAllSplits makes the table resolvable however its path is quoted,
-// e.g. p.d.t, `p.d.t`, `p.d`.t and p.`d.t`, because the analyzer looks a
-// table up by the identifiers as written. The same table object is registered
-// so that its name stays the full path, which hover, completion and lint rely
-// on.
-func (n *tableNames) registerAllSplits(path []string, table *googlesql.SimpleTable) error {
+func (n *catalogNames) registerTable(path []string, table *googlesql.SimpleTable) error {
+	return n.registerAllSplits("table", path, func(parent *googlesql.SimpleCatalog, name string) error {
+		return parent.AddTable2(name, table)
+	})
+}
+
+func (n *catalogNames) registerProcedure(path []string, procedure *googlesql.Procedure) error {
+	return n.registerAllSplits("procedure", path, func(parent *googlesql.SimpleCatalog, name string) error {
+		return parent.AddProcedure2(name, procedure)
+	})
+}
+
+// registerAllSplits makes the object resolvable however its path is quoted,
+// e.g. p.d.t, `p.d.t`, `p.d`.t and p.`d.t`, because the analyzer looks an
+// object up by the identifiers as written. The same object is registered so
+// that its name stays the full path, which hover, completion and lint rely
+// on. Tables and procedures have separate names, so kind tells them apart.
+func (n *catalogNames) registerAllSplits(kind string, path []string, add func(parent *googlesql.SimpleCatalog, name string) error) error {
 	for mask := 0; mask < 1<<(len(path)-1); mask++ {
 		// Bit i joins path[i] and path[i+1] into one identifier.
 		groups := []string{path[0]}
@@ -290,7 +497,7 @@ func (n *tableNames) registerAllSplits(path []string, table *googlesql.SimpleTab
 				groups = append(groups, part)
 			}
 		}
-		key := splitKey(groups)
+		key := kind + "\x00" + splitKey(groups)
 		if n.registered[key] {
 			continue
 		}
@@ -303,8 +510,8 @@ func (n *tableNames) registerAllSplits(path []string, table *googlesql.SimpleTab
 			parent = sub
 		}
 		name := groups[len(groups)-1]
-		if err := parent.AddTable2(name, table); err != nil {
-			return fmt.Errorf("failed to add table as %s: %w", name, err)
+		if err := add(parent, name); err != nil {
+			return fmt.Errorf("failed to add %s as %s: %w", kind, name, err)
 		}
 		n.registered[key] = true
 	}
@@ -399,7 +606,7 @@ func addColumn(table *googlesql.SimpleTable, tableName, name string, typ googles
 // which is reached by catalogPath. A project and a default-project dataset of
 // the same name share one, because the root cannot hold two sub-catalogs with
 // one name.
-func (n *tableNames) getOrCreateSubCatalog(parent *googlesql.SimpleCatalog, catalogPath []string, name string) (*googlesql.SimpleCatalog, error) {
+func (n *catalogNames) getOrCreateSubCatalog(parent *googlesql.SimpleCatalog, catalogPath []string, name string) (*googlesql.SimpleCatalog, error) {
 	key := splitKey(catalogPath)
 	if sub, ok := n.subCatalogs[key]; ok {
 		return sub, nil
@@ -569,6 +776,32 @@ func (c *Catalog) PreloadTablesFromAST(node *googlesql.ASTScript) error {
 			return nil
 		}
 		if err := c.EnsureTable([]string{name}); err != nil && c.TableLoadError(name) != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+		}
+		return nil
+	})
+	return errors.Join(errs...)
+}
+
+// PreloadProceduresFromAST loads the procedures that CALL statements refer to.
+// It returns the errors that ProcedureLoadError reports, so that the caller
+// can log them.
+func (c *Catalog) PreloadProceduresFromAST(node *googlesql.ASTScript) error {
+	var errs []error
+	Walk(node, func(n googlesql.ASTNode) error { //nolint
+		call, ok := n.(*googlesql.ASTCallStatement)
+		if !ok {
+			return nil
+		}
+		pe, err := call.ProcedureName()
+		if err != nil || pe == nil {
+			return nil
+		}
+		name, ok := joinPathExpression(pe)
+		if !ok {
+			return nil
+		}
+		if err := c.EnsureProcedure(strings.Split(name, ".")); err != nil && c.ProcedureLoadError(name) != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 		}
 		return nil

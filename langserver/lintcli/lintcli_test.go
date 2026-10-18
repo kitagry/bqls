@@ -526,3 +526,25 @@ func TestRun_InformationSchemaDryRunRuntimeFailure(t *testing.T) {
 		t.Errorf("stderr = %q, want it to contain the failure exactly once", got.stderr)
 	}
 }
+
+func TestRun_RoutineMetadataFetchedOncePerProcedure(t *testing.T) {
+	t.Chdir(t.TempDir())
+	const src = "CALL p.d.proc(1)\n"
+	writeFiles(t, map[string]string{"a.sql": src, "b.sql": src})
+
+	ctrl := gomock.NewController(t)
+	c := mock_bigquery.NewMockClient(ctrl)
+	c.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+	c.EXPECT().Close().Return(nil).AnyTimes()
+	c.EXPECT().GetRoutineMetadata(gomock.Any(), "p", "d", "proc").
+		Return(&bq.RoutineMetadata{
+			Type:      "PROCEDURE",
+			Arguments: []*bq.RoutineArgument{{Name: "x", DataType: &bq.StandardSQLDataType{TypeKind: "INT64"}}},
+		}, nil).Times(1)
+	factory := func(context.Context, string, string) (bigquery.Client, error) { return c, nil }
+
+	got := runWith(t, factory, "", "a.sql", "b.sql")
+	if diff := cmp.Diff(result{}, got, cmp.AllowUnexported(result{})); diff != "" {
+		t.Errorf("run result diff (-want +got):\n%s", diff)
+	}
+}

@@ -2207,6 +2207,7 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 		t.Run(n, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetDefaultProject().Return("project").AnyTimes()
 			for tablePath, schema := range tt.bqTableMetadataMap {
 				tablePathSplitted := strings.Split(tablePath, ".")
 				if len(tablePathSplitted) != 3 {
@@ -2296,6 +2297,99 @@ func TestAnalyzer_ParseFileWithTablesCreatedInScript(t *testing.T) {
 				Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}},
 			}, nil).AnyTimes()
 			bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, &googleapi.Error{Code: 404, Message: "Not found"}).AnyTimes()
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
+			if diff := cmp.Diff(tt.expectedErrs, got.Errors, cmpopts.IgnoreUnexported()); diff != "" {
+				t.Errorf("ParseFile result diff (-expect, +got)\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestAnalyzer_ParseFileWithCallStatement(t *testing.T) {
+	procedure := &bq.RoutineMetadata{
+		Type: "PROCEDURE",
+		Arguments: []*bq.RoutineArgument{
+			{Name: "x", DataType: &bq.StandardSQLDataType{TypeKind: "INT64"}},
+			{Name: "ys", DataType: &bq.StandardSQLDataType{TypeKind: "ARRAY", ArrayElementType: &bq.StandardSQLDataType{TypeKind: "STRING"}}},
+			{Name: "s", Mode: "OUT", DataType: &bq.StandardSQLDataType{TypeKind: "STRUCT", StructType: &bq.StandardSQLStructType{
+				Fields: []*bq.StandardSQLField{{Name: "a", Type: &bq.StandardSQLDataType{TypeKind: "DATE"}}},
+			}}},
+		},
+	}
+	tests := map[string]struct {
+		file         string
+		expectedErrs []file.Error
+	}{
+		"CALL procedure in BigQuery": {
+			file:         "DECLARE s STRUCT<a DATE>;\nCALL p.d.proc(1, ['a'], s);",
+			expectedErrs: []file.Error{},
+		},
+		"CALL procedure by quoted and dataset-qualified names": {
+			file:         "DECLARE s STRUCT<a DATE>;\nCALL `p.d.proc`(1, ['a'], s);\nCALL `p.d`.proc(1, ['a'], s);\nCALL d.proc(1, ['a'], s);",
+			expectedErrs: []file.Error{},
+		},
+		"CALL procedure with an argument of a wrong type": {
+			file: "DECLARE s STRUCT<a DATE>;\nCALL p.d.proc('x', ['a'], s);",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "No matching signature for procedure p.d.proc for argument types: STRING, ARRAY<STRING>, STRUCT<a DATE>. Supported signature: p.d.proc(INT64, ARRAY<STRING>, STRUCT<a DATE>)",
+					Position: lsp.Position{Line: 1, Character: 5},
+				},
+			},
+		},
+		"CALL procedure created in script": {
+			file:         "CREATE PROCEDURE p.d.created(x INT64)\nBEGIN\n  SELECT x;\nEND;\nCALL p.d.created(1);",
+			expectedErrs: []file.Error{},
+		},
+		"CREATE PROCEDURE IF NOT EXISTS keeps an existing procedure": {
+			file:         "DECLARE s STRUCT<a DATE>;\nCREATE PROCEDURE IF NOT EXISTS p.d.proc()\nBEGIN\n  SELECT 1;\nEND;\nCALL p.d.proc(1, ['a'], s);",
+			expectedErrs: []file.Error{},
+		},
+		"CALL procedure that does not exist": {
+			file: "CALL p.d.unknown(1);",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Procedure not found: p.d.unknown",
+					Position: lsp.Position{Line: 0, Character: 5},
+				},
+			},
+		},
+		"CALL routine that is not a procedure": {
+			file: "CALL p.d.fn(1);",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Procedure not found: p.d.fn",
+					Position: lsp.Position{Line: 0, Character: 5},
+				},
+			},
+		},
+		"CALL procedure that cannot be loaded": {
+			file: "CALL p.d.denied(1);",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Procedure not found: p.d.denied (failed to load routine metadata: googleapi: Error 403: Access Denied)",
+					Position: lsp.Position{Line: 0, Character: 5},
+				},
+			},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+			bqClient.EXPECT().GetRoutineMetadata(gomock.Any(), "p", "d", "proc").Return(procedure, nil).AnyTimes()
+			bqClient.EXPECT().GetRoutineMetadata(gomock.Any(), "p", "d", "fn").Return(&bq.RoutineMetadata{
+				Type:       "SCALAR_FUNCTION",
+				Arguments:  []*bq.RoutineArgument{{Name: "x", DataType: &bq.StandardSQLDataType{TypeKind: "INT64"}}},
+				ReturnType: &bq.StandardSQLDataType{TypeKind: "INT64"},
+			}, nil).AnyTimes()
+			bqClient.EXPECT().GetRoutineMetadata(gomock.Any(), "p", "d", "denied").Return(nil, &googleapi.Error{Code: 403, Message: "Access Denied"}).AnyTimes()
+			bqClient.EXPECT().GetRoutineMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, &googleapi.Error{Code: 404, Message: "Not found"}).AnyTimes()
 			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
 
 			got := analyzer.ParseFile("uri", tt.file)
