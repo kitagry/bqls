@@ -101,7 +101,11 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 		}, nil
 	}
 
-	if term, ok := file.SearchResolvedAstNode[*googlesql.ResolvedColumnRef](output, termOffset); ok {
+	term, ok := file.SearchResolvedAstNode[*googlesql.ResolvedColumnRef](output, termOffset)
+	if !ok {
+		term, ok = searchOrderByColumnRef(output, targetNode, termOffset)
+	}
+	if ok {
 		column, err := term.Column()
 		if err != nil || column == nil {
 			return nil, fmt.Errorf("failed to find term: %v", term)
@@ -149,6 +153,35 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 	}
 
 	return nil, nil
+}
+
+// searchOrderByColumnRef finds the column that an ORDER BY item referring to
+// an existing column sorts by. Such a ColumnRef has no parse location, and
+// only its OrderByItem has one.
+func searchOrderByColumnRef(output *googlesql.AnalyzerOutput, targetNode *googlesql.ASTPathExpression, termOffset int) (*googlesql.ResolvedColumnRef, bool) {
+	item, ok := file.SearchResolvedAstNode[*googlesql.ResolvedOrderByItem](output, termOffset)
+	if !ok {
+		return nil, false
+	}
+	columnRef, err := item.ColumnRef()
+	if err != nil || columnRef == nil {
+		return nil, false
+	}
+	column, err := columnRef.Column()
+	if err != nil || column == nil {
+		return nil, false
+	}
+	// An ORDER BY expression such as `b + 1` is sorted by a column computed
+	// for it, which is not the column under the cursor.
+	names, err := targetNode.ToIdentifierVector()
+	if err != nil || len(names) == 0 {
+		return nil, false
+	}
+	colName, _ := column.Name()
+	if !strings.EqualFold(colName, names[len(names)-1]) {
+		return nil, false
+	}
+	return columnRef, true
 }
 
 func (p *Project) termDocumentFromAstNode(ctx context.Context, targetNode *googlesql.ASTTablePathExpression) ([]lsp.MarkedString, bool) {
