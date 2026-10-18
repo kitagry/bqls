@@ -674,6 +674,44 @@ func TestCompletor_CompleteKeyword(t *testing.T) {
 			},
 			expectNotContains: []string{"SELECT ", "FROM ", "WHERE "},
 		},
+		"Complete BY after ORDER": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT col FROM `project.dataset.table` ORDER |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "BY ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "BY specifies the expressions to sort or group by.",
+					},
+				},
+			},
+			expectNotContains: []string{"WHERE ", "GROUP BY ", "ORDER BY ", "LIMIT "},
+		},
+		"Complete BY after GROUP": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT col FROM `project.dataset.table` WHERE col = 1 group |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "BY ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "BY specifies the expressions to sort or group by.",
+					},
+				},
+			},
+			expectNotContains: []string{"WHERE ", "GROUP BY ", "ORDER BY ", "LIMIT ", "HAVING "},
+		},
 		"Complete DISTINCT after SELECT": {
 			files: map[lsp.DocumentURI]string{
 				"a.sql": "SELECT |",
