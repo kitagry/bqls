@@ -1744,6 +1744,126 @@ func TestProject_CompleteColumns(t *testing.T) {
 				},
 			},
 		},
+		"Complete column with table alias qualifier case-insensitively": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT T.I| FROM `project.dataset.table` AS t",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+						{Name: "name", Type: bq.StringFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+					TypedPrefix: "I",
+				},
+			},
+		},
+		"Complete column with with table qualifier case-insensitively": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "WITH data AS (SELECT * FROM `project.dataset.table`)\nSELECT DATA.I| FROM data",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+						{Name: "name", Type: bq.StringFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INT64",
+					},
+					TypedPrefix: "I",
+				},
+			},
+		},
+		"Complete nested record column with record qualifier case-insensitively": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT RECORD.Record.| FROM `project.dataset.table`",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "record",
+							Type: bq.RecordFieldType,
+							Schema: bq.Schema{
+								{
+									Name: "record",
+									Type: bq.RecordFieldType,
+									Schema: bq.Schema{
+										{Name: "id", Type: bq.IntegerFieldType},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+				},
+			},
+		},
+		"Complete nested record column of with table with record qualifier case-insensitively": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "WITH data AS (SELECT * FROM `project.dataset.table`)\nSELECT RECORD.Record.| FROM data",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "record",
+							Type: bq.RecordFieldType,
+							Schema: bq.Schema{
+								{
+									Name: "record",
+									Type: bq.RecordFieldType,
+									Schema: bq.Schema{
+										{Name: "id", Type: bq.IntegerFieldType},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INT64",
+					},
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {

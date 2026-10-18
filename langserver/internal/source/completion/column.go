@@ -56,7 +56,7 @@ func (c *completor) completeColumns(ctx context.Context, parsedFile file.ParsedF
 	columns, _ = node.MutableColumnList()
 	for _, column := range columns {
 		name, _ := column.Name()
-		if !strings.HasPrefix(incompleteColumnName, name) {
+		if !hasPrefixFold(incompleteColumnName, name+".") {
 			continue
 		}
 		items := c.createCompletionItemForRecordType(ctx, incompleteColumnName, column)
@@ -159,7 +159,7 @@ func (c *completor) createCompletionItemForType(ctx context.Context, incompleteC
 	inCompleteColumns := strings.Split(incompleteColumnName, ".")
 	if len(inCompleteColumns) > 1 {
 		for _, field := range fields {
-			if field.Name == inCompleteColumns[0] {
+			if strings.EqualFold(field.Name, inCompleteColumns[0]) {
 				isFieldStruct, _ := field.Type_.IsStruct()
 				if !isFieldStruct {
 					return nil
@@ -184,7 +184,7 @@ func (c *completor) createCompletionItemForBigquerySchema(ctx context.Context, i
 	inCompleteColumns := strings.Split(incompleteColumnName, ".")
 	if len(inCompleteColumns) > 1 {
 		for _, field := range schema {
-			if field.Name == inCompleteColumns[0] {
+			if strings.EqualFold(field.Name, inCompleteColumns[0]) {
 				return c.createCompletionItemForBigquerySchema(ctx, strings.Join(inCompleteColumns[1:], "."), field.Schema)
 			}
 		}
@@ -253,12 +253,12 @@ func (c *completor) completeTableScanField(ctx context.Context, tableScanNode *g
 		}
 	}
 
-	if !strings.HasPrefix(incompleteColumnName, alias+".") {
+	afterWord, ok := trimQualifierFold(incompleteColumnName, alias)
+	if !ok {
 		return nil
 	}
 
 	result := make([]CompletionItem, 0)
-	afterWord := strings.TrimPrefix(incompleteColumnName, alias+".")
 	columns, _ := tableScanNode.ColumnList()
 	for _, column := range columns {
 		name, _ := column.Name()
@@ -288,12 +288,12 @@ func (c *completor) completeWithScanField(ctx context.Context, withScanNode *goo
 		}
 	}
 
-	if !strings.HasPrefix(incompleteColumnName, withQueryName+".") {
+	afterWord, ok := trimQualifierFold(incompleteColumnName, withQueryName)
+	if !ok {
 		return nil
 	}
 
 	result := make([]CompletionItem, 0)
-	afterWord := strings.TrimPrefix(incompleteColumnName, withQueryName+".")
 	columns, _ := withScanNode.ColumnList()
 	for _, column := range columns {
 		name, _ := column.Name()
@@ -487,4 +487,14 @@ func (c *completor) getMostNarrowInputScanNode(node googlesql.ResolvedScanNode, 
 // BigQuery column and alias names are case-insensitive.
 func hasPrefixFold(s, prefix string) bool {
 	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
+}
+
+// trimQualifierFold cuts "qualifier." off s by length so that the rest keeps
+// the case the user typed.
+func trimQualifierFold(s, qualifier string) (string, bool) {
+	prefix := qualifier + "."
+	if !hasPrefixFold(s, prefix) {
+		return "", false
+	}
+	return s[len(prefix):], true
 }
