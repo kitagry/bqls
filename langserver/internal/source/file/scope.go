@@ -2,6 +2,7 @@ package file
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/goccy/go-googlesql"
 )
@@ -12,6 +13,43 @@ import (
 // name is a NULL constant of its type, so it is visible only to statements
 // inside the enclosing statement's body.
 func (a *Analyzer) scopeCatalog(rawText string, stmt googlesql.ASTNode, catalog *Catalog) googlesql.CatalogNode {
+	current, _ := a.resolveScopes(rawText, stmt, catalog)
+	return current
+}
+
+// ScopeVariable is a name that an enclosing statement brings into scope, such
+// as the variable of a FOR...IN loop.
+type ScopeVariable struct {
+	Name string
+	Type googlesql.Googlesql_TypeNode
+}
+
+// ScopeVariables returns the names in scope at termOffset that the enclosing
+// statements bring in, innermost first, so that the first match of a name is
+// the one that shadows the others.
+func (a *Analyzer) ScopeVariables(p ParsedFile, termOffset int) []ScopeVariable {
+	if p.Node == nil || p.catalog == nil {
+		return nil
+	}
+	var stmt googlesql.ASTStatementNode
+	// collectStatements is in pre-order, so the last statement containing the
+	// offset is the innermost one.
+	for _, s := range collectStatements(p.Node) {
+		if containsOffset(s, termOffset) {
+			stmt = s
+		}
+	}
+	if stmt == nil {
+		return nil
+	}
+	_, variables := a.resolveScopes(p.FixedSrc, stmt, p.catalog)
+	slices.Reverse(variables)
+	return variables
+}
+
+// resolveScopes returns the catalog of scopeCatalog and the names it adds,
+// outermost first.
+func (a *Analyzer) resolveScopes(rawText string, stmt googlesql.ASTNode, catalog *Catalog) (googlesql.CatalogNode, []ScopeVariable) {
 	var scopes []googlesql.ASTNode
 	for n := stmt; n != nil; {
 		parent, err := n.Parent()
@@ -29,6 +67,7 @@ func (a *Analyzer) scopeCatalog(rawText string, stmt googlesql.ASTNode, catalog 
 	// names, and an inner name shadows an outer one of the same name because
 	// MultiCatalog resolves names from the front.
 	current := catalog.node()
+	var variables []ScopeVariable
 	for i := len(scopes) - 1; i >= 0; i-- {
 		var names []string
 		var types []googlesql.Googlesql_TypeNode
@@ -48,8 +87,11 @@ func (a *Analyzer) scopeCatalog(rawText string, stmt googlesql.ASTNode, catalog 
 			continue
 		}
 		current = scoped
+		for j, name := range names {
+			variables = append(variables, ScopeVariable{Name: name, Type: types[j]})
+		}
 	}
-	return current
+	return current, variables
 }
 
 // withConstants layers NULL constants of the given names and types over current.

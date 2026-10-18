@@ -637,6 +637,138 @@ func TestProject_CompleteColumns(t *testing.T) {
 				},
 			},
 		},
+		"Complete fields of FOR...IN loop variable": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "FOR r IN (SELECT id, name FROM `project.dataset.table`) DO\n" + "  SELECT r.|;\n" + "END FOR;",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+						{
+							Name: "name",
+							Type: bq.StringFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INT64",
+					},
+				},
+				{
+					Kind:    lsp.CIKField,
+					NewText: "name",
+					Detail:  "STRING",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "STRING",
+					},
+				},
+			},
+		},
+		"Complete incomplete field of FOR...IN loop variable": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "FOR r IN (SELECT id, name FROM `project.dataset.table`) DO\n" + "  SELECT r.na|;\n" + "END FOR;",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+						{
+							Name: "name",
+							Type: bq.StringFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "name",
+					Detail:  "STRING",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "STRING",
+					},
+					TypedPrefix: "na",
+				},
+			},
+		},
+		"Complete nested record field of FOR...IN loop variable": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "FOR r IN (SELECT record FROM `project.dataset.table`) DO\n" + "  SELECT r.record.|;\n" + "END FOR;",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "record",
+							Type: bq.RecordFieldType,
+							Schema: bq.Schema{
+								{
+									Name: "id",
+									Type: bq.IntegerFieldType,
+								},
+							},
+						},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INT64",
+					},
+				},
+			},
+		},
+		"Complete fields of FOR...IN loop variable in WHERE clause": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "FOR r IN (SELECT id FROM `project.dataset.table`) DO\n" + "  SELECT name FROM `project.dataset.table` WHERE id = r.|;\n" + "END FOR;",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+						{
+							Name: "name",
+							Type: bq.StringFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INT64",
+					},
+				},
+			},
+		},
 		"Complete record column with WITH clause": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "WITH data AS (SELECT * FROM `project.dataset.table`)\n" + "SELECT record.| FROM data",

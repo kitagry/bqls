@@ -310,6 +310,16 @@ func TestFixDot_KeepsTrailingNewline(t *testing.T) {
 	}
 }
 
+func TestFixDot_WordBeforeSemicolon(t *testing.T) {
+	got, errs, _ := fixDot("SELECT r.;")
+	if want := "SELECT true;"; got != want {
+		t.Errorf("fixDot() = %q, want %q", got, want)
+	}
+	if len(errs) != 1 || errs[0].IncompleteColumnName != "r." {
+		t.Errorf("fixDot() errors = %+v, want one error for %q", errs, "r.")
+	}
+}
+
 func TestFixIncompletePipeOperator(t *testing.T) {
 	tests := map[string]struct {
 		src            string

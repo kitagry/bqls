@@ -12,18 +12,22 @@ import (
 
 func (c *completor) completeColumns(ctx context.Context, parsedFile file.ParsedFile, position lsp.Position) []CompletionItem {
 	termOffset := parsedFile.TermOffset(position)
+	incompleteColumnName := parsedFile.FindIncompleteColumnName(position)
+
+	// A loop variable is a constant rather than a column of any scan, and a
+	// statement that refers to its unknown field is analyzed without it.
+	scopeItems := c.completeScopeVariableFields(ctx, parsedFile, termOffset, incompleteColumnName)
 
 	output, ok := parsedFile.FindTargetAnalyzeOutput(termOffset)
 	if !ok {
 		c.logger.Debug("not found analyze output")
-		return nil
+		return scopeItems
 	}
-	incompleteColumnName := parsedFile.FindIncompleteColumnName(position)
 
 	node, ok := findScanNode(output, termOffset)
 	if !ok {
 		c.logger.Debug("not found project scan node")
-		return nil
+		return scopeItems
 	}
 
 	if sNode, ok := c.getMostNarrowInputScanNode(node, termOffset); ok {
@@ -67,7 +71,23 @@ func (c *completor) completeColumns(ctx context.Context, parsedFile file.ParsedF
 	// for table alias completion
 	result = append(result, c.completeScanField(ctx, node, incompleteColumnName)...)
 
-	return result
+	return append(result, scopeItems...)
+}
+
+func (c *completor) completeScopeVariableFields(ctx context.Context, parsedFile file.ParsedFile, termOffset int, incompleteColumnName string) []CompletionItem {
+	// ScopeVariables analyzes the queries of the enclosing loops, so it is
+	// skipped unless a field of some name is being completed.
+	if !strings.Contains(incompleteColumnName, ".") {
+		return nil
+	}
+	for _, v := range c.analyzer.ScopeVariables(parsedFile, termOffset) {
+		afterWord, ok := trimQualifierFold(incompleteColumnName, v.Name)
+		if !ok {
+			continue
+		}
+		return c.createCompletionItemForType(ctx, afterWord, v.Type)
+	}
+	return nil
 }
 
 func (c *completor) createCompletionItemFromColumn(ctx context.Context, incompleteColumnName string, column *googlesql.ResolvedColumn) (CompletionItem, bool) {
