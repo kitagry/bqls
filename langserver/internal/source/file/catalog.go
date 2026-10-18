@@ -17,10 +17,13 @@ const (
 )
 
 type Catalog struct {
-	catalog      *googlesql.SimpleCatalog
-	typeFactory  *googlesql.TypeFactory
-	langOpts     *googlesql.LanguageOptions
-	bqClient     bigquery.Client
+	catalog     *googlesql.SimpleCatalog
+	typeFactory *googlesql.TypeFactory
+	langOpts    *googlesql.LanguageOptions
+	bqClient    bigquery.Client
+	// tableMetaMap, tables and subCatalogs are keyed by lowercased names,
+	// because SimpleCatalog matches names case-insensitively and registering
+	// a name that differs only in case traps.
 	tableMetaMap map[string]*bq.TableMetadata
 	tables       map[string]*googlesql.SimpleTable // key: "project.dataset.table"
 	// aliases holds lowercased "dataset.table" names already registered, because
@@ -112,7 +115,9 @@ func (c *Catalog) EnsureTable(path []string) error {
 		return err
 	}
 	tableName := fmt.Sprintf("%s.%s.%s", projectID, datasetID, tableID)
-	table, ok := c.tables[tableName]
+	// A different casing of a loaded table resolves to the same catalog entry,
+	// so it is reused even though BigQuery may hold it as a separate table.
+	table, ok := c.tables[strings.ToLower(tableName)]
 	if !ok {
 		table, err = c.addTable(path)
 		if err != nil {
@@ -236,8 +241,9 @@ func (c *Catalog) addTable(path []string) (*googlesql.SimpleTable, error) {
 		return nil, fmt.Errorf("failed to add table to catalog: %w", err)
 	}
 
-	c.tableMetaMap[tableName] = metadata
-	c.tables[tableName] = table
+	key := strings.ToLower(tableName)
+	c.tableMetaMap[key] = metadata
+	c.tables[key] = table
 	return table, nil
 }
 
@@ -253,7 +259,7 @@ func addColumn(table *googlesql.SimpleTable, tableName, name string, typ googles
 }
 
 func (c *Catalog) getOrCreateSubCatalog(parent *googlesql.SimpleCatalog, key string) (*googlesql.SimpleCatalog, error) {
-	if sub, ok := c.subCatalogs[key]; ok {
+	if sub, ok := c.subCatalogs[strings.ToLower(key)]; ok {
 		return sub, nil
 	}
 	// Extract the local name (last segment of the key).
@@ -265,7 +271,7 @@ func (c *Catalog) getOrCreateSubCatalog(parent *googlesql.SimpleCatalog, key str
 	if err != nil {
 		return nil, err
 	}
-	c.subCatalogs[key] = sub
+	c.subCatalogs[strings.ToLower(key)] = sub
 	return sub, nil
 }
 
@@ -421,7 +427,7 @@ func (c *Catalog) FindTableMetadata(path string) (*bq.TableMetadata, error) {
 		return nil, fmt.Errorf("invalid path: %s", path)
 	}
 
-	if meta, ok := c.tableMetaMap[tableName]; ok {
+	if meta, ok := c.tableMetaMap[strings.ToLower(tableName)]; ok {
 		return meta, nil
 	}
 	return nil, errors.New("table not found in catalog")
