@@ -519,3 +519,134 @@ func TestCatalog_TwoPartTableNames(t *testing.T) {
 		})
 	}
 }
+
+func TestCatalog_PartiallyBacktickedPaths(t *testing.T) {
+	parse := func(t *testing.T, src string) file.ParsedFile {
+		t.Helper()
+		ctrl := gomock.NewController(t)
+		bqClient := mock_bigquery.NewMockClient(ctrl)
+		bqClient.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+		bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ any, project, dataset, table string) (*bq.TableMetadata, error) {
+				switch project + "." + dataset + "." + table {
+				case "p.d.t", "P.d.t":
+					return &bq.TableMetadata{Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}}}, nil
+				}
+				return nil, fmt.Errorf("table %s.%s.%s not found", project, dataset, table)
+			}).AnyTimes()
+		return file.NewAnalyzer(logrus.New(), bqClient).ParseFile("file:///a.sql", src)
+	}
+
+	tests := map[string]string{
+		"project and dataset backticked":    "SELECT x FROM `p.d`.t",
+		"dataset and table backticked":      "SELECT x FROM p.`d.t`",
+		"each part backticked":              "SELECT x FROM `p`.`d`.`t`",
+		"2-part table backticked":           "SELECT x FROM d.`t`",
+		"2-part dataset backticked":         "SELECT x FROM `d`.t",
+		"every form in one query":           "SELECT a.x FROM `p.d`.t a JOIN p.`d.t` b ON a.x = b.x JOIN `p.d.t` c ON a.x = c.x JOIN p.d.t e ON a.x = e.x",
+		"mixed case partially backticked":   "SELECT a.x FROM `p.d`.t a JOIN `P.d`.T b ON a.x = b.x",
+		"partially backticked DML target":   "INSERT `p.d`.t (x) SELECT x FROM p.`d.t`",
+		"partially backticked after 2-part": "SELECT a.x FROM d.t a JOIN `p.d`.t b ON a.x = b.x",
+	}
+	for name, src := range tests {
+		t.Run(name, func(t *testing.T) {
+			parsed := parse(t, src)
+			if len(parsed.Errors) > 0 {
+				t.Errorf("unexpected errors: %v", parsed.Errors)
+			}
+		})
+	}
+}
+
+func TestCatalog_InformationSchema(t *testing.T) {
+	jobs := bq.Schema{{Name: "job_id", Type: bq.StringFieldType}}
+	tables := bq.Schema{{Name: "table_name", Type: bq.StringFieldType}}
+	schemata := bq.Schema{{Name: "schema_name", Type: bq.StringFieldType}}
+	// Keyed by the dry-run query, so that a wrong split of the path fails the test.
+	schemas := map[string]bq.Schema{
+		"SELECT * FROM `p`.`region-us`.`INFORMATION_SCHEMA`.`JOBS`":     jobs,
+		"SELECT * FROM `p`.`region-us`.`information_schema`.`jobs`":     jobs,
+		"SELECT * FROM `other`.`region-us`.`INFORMATION_SCHEMA`.`JOBS`": jobs,
+		"SELECT * FROM `p`.`d`.`INFORMATION_SCHEMA`.`TABLES`":           tables,
+		"SELECT * FROM `other`.`d`.`INFORMATION_SCHEMA`.`TABLES`":       tables,
+		"SELECT * FROM `p`.`INFORMATION_SCHEMA`.`SCHEMATA`":             schemata,
+	}
+	parse := func(t *testing.T, src string) file.ParsedFile {
+		t.Helper()
+		ctrl := gomock.NewController(t)
+		// GetTableMetadata is not expected, because INFORMATION_SCHEMA views have no table metadata.
+		bqClient := mock_bigquery.NewMockClient(ctrl)
+		bqClient.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+		bqClient.EXPECT().DryRunSchema(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ any, query string) (bq.Schema, error) {
+				if s, ok := schemas[query]; ok {
+					return s, nil
+				}
+				return nil, fmt.Errorf("unexpected query: %s", query)
+			}).AnyTimes()
+		return file.NewAnalyzer(logrus.New(), bqClient).ParseFile("file:///a.sql", src)
+	}
+
+	tests := map[string]string{
+		"region qualified":                 "SELECT job_id FROM `region-us`.INFORMATION_SCHEMA.JOBS",
+		"region qualified, backticked":     "SELECT job_id FROM `region-us.INFORMATION_SCHEMA.JOBS`",
+		"project and region qualified":     "SELECT job_id FROM other.`region-us`.INFORMATION_SCHEMA.JOBS",
+		"project and region, backticked":   "SELECT job_id FROM `other.region-us.INFORMATION_SCHEMA.JOBS`",
+		"project and region, partially":    "SELECT job_id FROM `other.region-us`.INFORMATION_SCHEMA.JOBS",
+		"lowercase":                        "SELECT job_id FROM `region-us`.information_schema.jobs",
+		"dataset qualified":                "SELECT table_name FROM d.INFORMATION_SCHEMA.TABLES",
+		"project and dataset qualified":    "SELECT table_name FROM other.d.INFORMATION_SCHEMA.TABLES",
+		"default project, fully qualified": "SELECT table_name FROM p.d.INFORMATION_SCHEMA.TABLES",
+		"unqualified":                      "SELECT schema_name FROM INFORMATION_SCHEMA.SCHEMATA",
+		"same view by two names":           "SELECT a.table_name FROM d.INFORMATION_SCHEMA.TABLES a JOIN p.d.INFORMATION_SCHEMA.TABLES b USING (table_name)",
+	}
+	for name, src := range tests {
+		t.Run(name, func(t *testing.T) {
+			parsed := parse(t, src)
+			if len(parsed.Errors) > 0 {
+				t.Errorf("unexpected errors: %v", parsed.Errors)
+			}
+		})
+	}
+
+	t.Run("unknown column", func(t *testing.T) {
+		parsed := parse(t, "SELECT nope FROM `region-us`.INFORMATION_SCHEMA.JOBS")
+		var msgs []string
+		for _, e := range parsed.Errors {
+			msgs = append(msgs, e.Msg)
+		}
+		if diff := cmp.Diff([]string{"Unrecognized name: nope"}, msgs); diff != "" {
+			t.Errorf("errors diff (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("metadata is found by the table name", func(t *testing.T) {
+		parsed := parse(t, "SELECT job_id FROM `region-us`.INFORMATION_SCHEMA.JOBS")
+		meta, ok := parsed.TableMetadata("p.region-us.INFORMATION_SCHEMA.JOBS")
+		if !ok {
+			t.Fatal("metadata not found")
+		}
+		if diff := cmp.Diff(jobs, meta.Schema); diff != "" {
+			t.Errorf("schema diff (-want +got):\n%s", diff)
+		}
+	})
+}
+
+func TestAnalyzer_GetTableMetadataFromPath_InformationSchema(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+	bqClient.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+	schema := bq.Schema{{Name: "job_id", Type: bq.StringFieldType}}
+	bqClient.EXPECT().DryRunSchema(gomock.Any(), "SELECT * FROM `p`.`region-us`.`INFORMATION_SCHEMA`.`JOBS`").Return(schema, nil).Times(2)
+
+	analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+	for _, path := range []string{"region-us.INFORMATION_SCHEMA.JOBS", "p.region-us.INFORMATION_SCHEMA.JOBS"} {
+		meta, err := analyzer.GetTableMetadataFromPath(t.Context(), path)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		if diff := cmp.Diff(schema, meta.Schema); diff != "" {
+			t.Errorf("%s: schema diff (-want +got):\n%s", path, diff)
+		}
+	}
+}

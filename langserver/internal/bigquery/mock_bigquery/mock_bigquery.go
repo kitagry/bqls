@@ -51,6 +51,21 @@ func (mr *MockClientMockRecorder) Close() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockClient)(nil).Close))
 }
 
+// DryRunSchema mocks base method.
+func (m *MockClient) DryRunSchema(ctx context.Context, query string) (bigquery.Schema, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DryRunSchema", ctx, query)
+	ret0, _ := ret[0].(bigquery.Schema)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// DryRunSchema indicates an expected call of DryRunSchema.
+func (mr *MockClientMockRecorder) DryRunSchema(ctx, query interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DryRunSchema", reflect.TypeOf((*MockClient)(nil).DryRunSchema), ctx, query)
+}
+
 // GetDatasetMetadata mocks base method.
 func (m *MockClient) GetDatasetMetadata(ctx context.Context, projectID, datasetID string) (*bigquery.DatasetMetadata, error) {
 	m.ctrl.T.Helper()
