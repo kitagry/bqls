@@ -60,6 +60,8 @@ type Handler struct {
 	// while workspace/didChangeConfiguration may replace it.
 	settingsMu       sync.RWMutex
 	initializeParams lsp.InitializeParams[InitializeOption]
+
+	lintConfigFiles lintConfigFiles
 }
 
 func (h *Handler) lintConfig() lint.Config {

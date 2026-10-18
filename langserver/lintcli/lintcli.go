@@ -61,6 +61,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	project := fset.String("project", "", "BigQuery project ID (default: the gcloud default project)")
 	location := fset.String("location", "", "BigQuery location (default: US)")
 	format := fset.String("format", "text", "output format: text, json, or github")
+	configPath := fset.String("config", "", "config file to use instead of looking up "+lint.ConfigFileName+" from each file's directory to the repository root")
+	fix := fset.Bool("fix", false, "apply suggested fixes, write the files back (stdin: print the fixed SQL), and report what is left")
 	var toggles []ruleToggle
 	fset.Func("enable", "enable a rule (repeatable)", func(s string) error {
 		toggles = append(toggles, ruleToggle{s, true})
@@ -82,7 +84,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return exitFailure
 	}
 
-	cfg, err := buildConfig(toggles)
+	flagCfg, err := buildConfig(toggles)
 	if err != nil {
 		fmt.Fprintf(stderr, "bqls lint: %v\n", err)
 		return exitFailure
@@ -106,15 +108,31 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		}
 	}
 
+	configs := newConfigResolver(*configPath, flagCfg)
 	inputs, readErrs := readInputs(fset.Args(), stdin)
 	for _, err := range readErrs {
 		fmt.Fprintf(stderr, "bqls lint: %v\n", err)
+	}
+	cfgs := make([]lint.Config, len(inputs))
+	for i, in := range inputs {
+		cfg, err := configs.resolve(in)
+		if err != nil {
+			fmt.Fprintf(stderr, "bqls lint: %v\n", err)
+			return exitFailure
+		}
+		cfgs[i] = cfg
+	}
+
+	// The fixed SQL from stdin owns stdout, so the findings move to stderr.
+	findingsOut := stdout
+	if *fix && slices.ContainsFunc(inputs, func(in input) bool { return in.abs == "" }) {
+		findingsOut = stderr
 	}
 	if len(inputs) == 0 {
 		if len(readErrs) > 0 {
 			return exitFailure
 		}
-		return formatAndExit(stdout, stderr, formatter, nil)
+		return formatAndExit(findingsOut, stderr, formatter, nil)
 	}
 
 	if err := googlesql.Init(); err != nil {
@@ -131,20 +149,50 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	defer p.Close()
 
 	var findings []finding
-	for _, in := range inputs {
+	var fixedStdin *string
+	writeFailed := false
+	for i, in := range inputs {
 		if err := p.UpdateFile(in.uri, in.src, 1); err != nil {
 			fmt.Fprintf(stderr, "bqls lint: %s: %v\n", in.name, err)
 			return exitFailure
 		}
-		diags, _ := p.Diagnose(ctx, in.uri, cfg)
+		diags, _ := p.Diagnose(ctx, in.uri, cfgs[i])
+		if *fix {
+			fixed, skipped := applyFixes(diags.Src, suggestedFixes(diags))
+			if skipped > 0 {
+				fmt.Fprintf(stderr, "bqls lint: %s: skipped %d fix(es) overlapping another fix; run again to apply them\n", in.name, skipped)
+			}
+			if fixed != in.src {
+				if in.abs != "" {
+					if err := os.WriteFile(in.name, []byte(fixed), 0o644); err != nil {
+						fmt.Fprintf(stderr, "bqls lint: %v\n", err)
+						writeFailed = true
+					}
+				}
+				if err := p.UpdateFile(in.uri, fixed, 2); err != nil {
+					fmt.Fprintf(stderr, "bqls lint: %s: %v\n", in.name, err)
+					return exitFailure
+				}
+				diags, _ = p.Diagnose(ctx, in.uri, cfgs[i])
+			}
+			if in.abs == "" {
+				fixedStdin = &fixed
+			}
+		}
 		findings = append(findings, toFindings(in, diags)...)
 		p.DeleteFile(in.uri)
+	}
+	if fixedStdin != nil {
+		if _, err := io.WriteString(stdout, *fixedStdin); err != nil {
+			fmt.Fprintf(stderr, "bqls lint: %v\n", err)
+			writeFailed = true
+		}
 	}
 	slices.SortStableFunc(findings, func(a, b finding) int {
 		return cmp.Or(cmp.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), cmp.Compare(a.Column, b.Column))
 	})
 
-	code := formatAndExit(stdout, stderr, formatter, findings)
+	code := formatAndExit(findingsOut, stderr, formatter, findings)
 	// Without the table schema these files could not be checked, and the
 	// analyzer reported "Table not found" in its place, so the run must not
 	// look like an ordinary set of findings.
@@ -152,7 +200,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		fmt.Fprintf(stderr, "bqls lint: failed to fetch table metadata: %s\n", msg)
 		code = exitFailure
 	}
-	if len(readErrs) > 0 {
+	if len(readErrs) > 0 || writeFailed {
 		code = exitFailure
 	}
 	return code
@@ -184,6 +232,10 @@ func printUsage(w io.Writer, fset *flag.FlagSet) {
 Lint BigQuery SQL files. Directories are searched recursively for *.sql files,
 and "-" reads from stdin.
 
+Settings are read from the nearest `+lint.ConfigFileName+` between each file's
+directory (the working directory for stdin) and the repository root, unless
+--config is given. --enable and --disable take precedence over the file.
+
 Exit codes: 0 no findings, 1 findings reported, 2 usage or runtime error.
 
 Flags:
@@ -203,23 +255,149 @@ Flags:
 func buildConfig(toggles []ruleToggle) (lint.Config, error) {
 	var cfg lint.Config
 	for _, t := range toggles {
-		if !slices.ContainsFunc(lint.Analyzers, func(a *lint.Analyzer) bool { return a.Name == t.name }) {
-			return lint.Config{}, fmt.Errorf("unknown rule %q (valid: %s)", t.name, strings.Join(ruleNames(), ", "))
-		}
 		if cfg.Rules == nil {
 			cfg.Rules = make(map[string]bool)
 		}
 		cfg.Rules[t.name] = t.enabled
 	}
+	if err := cfg.Validate(lint.Analyzers); err != nil {
+		return lint.Config{}, err
+	}
 	return cfg, nil
 }
 
-func ruleNames() []string {
-	names := make([]string, len(lint.Analyzers))
-	for i, a := range lint.Analyzers {
-		names[i] = a.Name
+// configResolver finds the config file for each input and caches it by path,
+// since the files of one run usually share a config.
+type configResolver struct {
+	explicit string
+	flags    lint.Config
+	loaded   map[string]configResult
+}
+
+type configResult struct {
+	cfg lint.Config
+	err error
+}
+
+func newConfigResolver(explicit string, flags lint.Config) *configResolver {
+	return &configResolver{explicit: explicit, flags: flags, loaded: make(map[string]configResult)}
+}
+
+// resolve returns the settings for in: the flags applied on top of its config file.
+func (r *configResolver) resolve(in input) (lint.Config, error) {
+	path := r.explicit
+	if path == "" {
+		dir := filepath.Dir(in.abs)
+		if in.abs == "" {
+			var err error
+			if dir, err = os.Getwd(); err != nil {
+				return lint.Config{}, err
+			}
+		}
+		var ok bool
+		if path, ok = lint.FindConfigFile(dir); !ok {
+			return r.flags, nil
+		}
 	}
-	return names
+	res, ok := r.loaded[path]
+	if !ok {
+		res.cfg, res.err = loadConfigFile(path)
+		r.loaded[path] = res
+	}
+	if res.err != nil {
+		return lint.Config{}, res.err
+	}
+	return res.cfg.Override(r.flags)
+}
+
+func loadConfigFile(path string) (lint.Config, error) {
+	cfg, err := lint.LoadConfigFile(path)
+	if err != nil {
+		return lint.Config{}, err
+	}
+	if err := cfg.Validate(lint.Analyzers); err != nil {
+		return lint.Config{}, fmt.Errorf("%s: %w", path, err)
+	}
+	return cfg, nil
+}
+
+// suggestedFixes returns the preferred fix of every diagnostic in position
+// order, so that applyFixes keeps the earlier of two overlapping fixes.
+func suggestedFixes(diags source.Diagnostics) []lint.SuggestedFix {
+	type located struct {
+		pos lsp.Position
+		fix lint.SuggestedFix
+	}
+	var fixes []located
+	for i, e := range diags.Errors {
+		if fs := diags.ErrorFixes[i]; len(fs) > 0 {
+			fixes = append(fixes, located{e.Position, fs[0]})
+		}
+	}
+	for _, d := range diags.Lint {
+		if len(d.SuggestedFixes) > 0 {
+			fixes = append(fixes, located{d.Range.Start, d.SuggestedFixes[0]})
+		}
+	}
+	slices.SortStableFunc(fixes, func(a, b located) int {
+		return cmp.Or(cmp.Compare(a.pos.Line, b.pos.Line), cmp.Compare(a.pos.Character, b.pos.Character))
+	})
+	result := make([]lint.SuggestedFix, len(fixes))
+	for i, f := range fixes {
+		result[i] = f.fix
+	}
+	return result
+}
+
+// applyFixes applies fixes in order, skipping each fix with an edit that
+// overlaps an edit already taken, because the two were computed against the
+// same text and cannot both be applied safely. Positions are byte based.
+// It returns the new text and the number of skipped fixes.
+func applyFixes(src string, fixes []lint.SuggestedFix) (string, int) {
+	lineStarts := []int{0}
+	for i := range len(src) {
+		if src[i] == '\n' {
+			lineStarts = append(lineStarts, i+1)
+		}
+	}
+	offset := func(p lsp.Position) int {
+		if p.Line >= len(lineStarts) {
+			return len(src)
+		}
+		return min(lineStarts[p.Line]+p.Character, len(src))
+	}
+
+	type span struct {
+		start, end int
+		text       string
+	}
+	// Two insertions at one point, or an insertion at the start of a
+	// replacement, have no defined order, so a shared start also conflicts.
+	overlaps := func(a, b span) bool {
+		return a.start == b.start || (a.start < b.end && b.start < a.end)
+	}
+	var accepted []span
+	skipped := 0
+	for _, fix := range fixes {
+		spans := make([]span, len(fix.Edits))
+		conflict := false
+		for i, e := range fix.Edits {
+			spans[i] = span{offset(e.Range.Start), offset(e.Range.End), e.NewText}
+			conflict = conflict || slices.ContainsFunc(accepted, func(a span) bool { return overlaps(a, spans[i]) })
+		}
+		if conflict {
+			skipped++
+			continue
+		}
+		accepted = append(accepted, spans...)
+	}
+
+	// Applying from the end keeps the offsets of earlier spans valid.
+	slices.SortFunc(accepted, func(a, b span) int { return cmp.Compare(b.start, a.start) })
+	for _, s := range accepted {
+		src = src[:s.start] + s.text + src[s.end:]
+	}
+	return src, skipped
 }
 
 type input struct {

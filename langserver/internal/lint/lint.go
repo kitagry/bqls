@@ -27,7 +27,12 @@ type Analyzer struct {
 	Name           string
 	Doc            string
 	DefaultEnabled bool
-	Run            func(*Pass)
+	// NewOptions returns a pointer to the rule's default options, which the
+	// configured options are decoded onto as JSON (unknown fields are
+	// rejected) and handed to Run as Pass.Options. Nil means the rule takes
+	// no options.
+	NewOptions func() any
+	Run        func(*Pass)
 }
 
 // TableMetadataLookup fetches metadata for a `project.dataset.table` path.
@@ -47,6 +52,9 @@ type Pass struct {
 	// LookupTable is nil-safe to call; it returns (nil, nil) when no lookup is configured.
 	LookupTable TableMetadataLookup
 	DryRun      *bq.JobStatus
+	// Options is the value from Analyzer.NewOptions with the configured
+	// options applied, or nil when the analyzer takes none.
+	Options any
 
 	report func(Diagnostic)
 }
@@ -76,21 +84,6 @@ type SuggestedFix struct {
 	Edits []lsp.TextEdit
 }
 
-// Config is the user-facing lint settings, e.g. {"rules": {"null-comparison": false}}.
-// The Diagnose cache in package source keys on these fields, so update it
-// when adding one.
-type Config struct {
-	Rules map[string]bool `json:"rules,omitempty"`
-}
-
-// Enabled reports whether a is enabled, letting user settings override the default.
-func (c Config) Enabled(a *Analyzer) bool {
-	if v, ok := c.Rules[a.Name]; ok {
-		return v
-	}
-	return a.DefaultEnabled
-}
-
 // Run executes the enabled analyzers over f and returns unsuppressed diagnostics.
 // Files that failed analysis are skipped because rules rely on a complete
 // resolved AST and would otherwise produce noise on top of real errors.
@@ -110,12 +103,19 @@ func Run(ctx context.Context, f file.ParsedFile, cfg Config, env Env, analyzers 
 		if !cfg.Enabled(a) {
 			continue
 		}
+		// Validate is where invalid options are reported; running the rule
+		// with settings the user did not ask for would be misleading.
+		opts, err := cfg.options(a)
+		if err != nil {
+			continue
+		}
 		pass := &Pass{
 			Context:     ctx,
 			Analyzer:    a,
 			File:        f,
 			LookupTable: lookup,
 			DryRun:      env.DryRun,
+			Options:     opts,
 			report: func(d Diagnostic) {
 				if suppressions.Suppressed(d.Rule, d.Range.Start.Line) {
 					return
