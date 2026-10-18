@@ -48,7 +48,7 @@ func completeFromCursorPosition(rootNode *bqparser.Node, parsedFile file.ParsedF
 	}
 
 	// Find the select_statement containing the cursor position
-	selectStmt = findSelectStatementAtPosition(rootNode, uint(offset), insideCTE)
+	selectStmt = findSelectStatementAtPosition(rootNode, parsedFile.FixedSrc, uint(offset), insideCTE)
 	if selectStmt == nil {
 		// No select statement found - suggest starting keywords
 		return completeFromEmptyProgram()
@@ -331,7 +331,7 @@ func hasAscOrDescRecursive(node *bqparser.Node) bool {
 
 // findSelectStatementAtPosition finds the select_statement node containing the given position
 // If insideCTE is true, skip the WITH clause when searching
-func findSelectStatementAtPosition(node *bqparser.Node, offset uint, insideCTE bool) *bqparser.Node {
+func findSelectStatementAtPosition(node *bqparser.Node, src string, offset uint, insideCTE bool) *bqparser.Node {
 	if node == nil {
 		return nil
 	}
@@ -340,7 +340,7 @@ func findSelectStatementAtPosition(node *bqparser.Node, offset uint, insideCTE b
 	// We need to be lenient because the cursor might be right after the last token
 	if node.Kind() == "select_statement" {
 		// Allow cursor to be at or just after the end of the statement
-		if offset >= node.StartByte() && offset <= node.EndByte()+10 {
+		if offset >= node.StartByte() && offset <= node.EndByte()+10 && !isTerminatedBefore(node, src, offset) {
 			return node
 		}
 	}
@@ -354,7 +354,7 @@ func findSelectStatementAtPosition(node *bqparser.Node, offset uint, insideCTE b
 			continue
 		}
 
-		if result := findSelectStatementAtPosition(child, offset, insideCTE); result != nil {
+		if result := findSelectStatementAtPosition(child, src, offset, insideCTE); result != nil {
 			return result
 		}
 	}
@@ -366,7 +366,7 @@ func findSelectStatementAtPosition(node *bqparser.Node, offset uint, insideCTE b
 			child := node.NamedChild(uint(i))
 			if child != nil && child.Kind() == "select_statement" {
 				// Check if offset is close to this statement
-				if offset >= node.StartByte() {
+				if offset >= node.StartByte() && !isTerminatedBefore(child, src, offset) {
 					return child
 				}
 			}
@@ -374,6 +374,15 @@ func findSelectStatementAtPosition(node *bqparser.Node, offset uint, insideCTE b
 	}
 
 	return nil
+}
+
+// isTerminatedBefore reports whether stmt is closed by ';' before offset,
+// so that the cursor belongs to the next statement.
+func isTerminatedBefore(stmt *bqparser.Node, src string, offset uint) bool {
+	if offset <= stmt.EndByte() || int(offset) > len(src) {
+		return false
+	}
+	return strings.Contains(src[stmt.EndByte():offset], ";")
 }
 
 func createSelectKeywordCompletionItem(typedPrefix string) []CompletionItem {

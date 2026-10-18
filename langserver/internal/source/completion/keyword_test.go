@@ -712,6 +712,108 @@ func TestCompletor_CompleteKeyword(t *testing.T) {
 			},
 			expectNotContains: []string{"WHERE ", "GROUP BY ", "ORDER BY ", "LIMIT ", "HAVING "},
 		},
+		"Complete FROM after struct field access followed by semicolon": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT STRUCT(1 AS a).|;",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "FROM ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The FROM clause specifies the table to query data from.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "WITH "},
+		},
+		"Complete FROM after struct field access in IF block": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "IF true THEN\n  SELECT STRUCT(1 AS a).|;\nEND IF;",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "FROM ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The FROM clause specifies the table to query data from.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "WITH "},
+		},
+		"Complete FROM after column list in FOR block": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "FOR r IN (SELECT 1 AS a) DO\n  SELECT 1, |;\nEND FOR;",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "FROM ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The FROM clause specifies the table to query data from.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "WITH "},
+		},
+		"Complete FROM after loop variable access in FOR block": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "FOR r IN (SELECT 1 AS a) DO\n  SELECT r.|\nEND FOR;",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "FROM ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The FROM clause specifies the table to query data from.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "WITH "},
+		},
+		"Complete FROM in second statement": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT 1;\nSELECT * |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "FROM ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The FROM clause specifies the table to query data from.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "WITH "},
+		},
+		"Complete SELECT after semicolon": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT 1;\n|",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "SELECT ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The SELECT statement is used to query data from a table.",
+					},
+				},
+			},
+			expectNotContains: []string{"FROM ", "WHERE "},
+		},
 		"Complete DISTINCT after SELECT": {
 			files: map[lsp.DocumentURI]string{
 				"a.sql": "SELECT |",
