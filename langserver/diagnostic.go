@@ -144,7 +144,7 @@ func (h *Handler) diagnose(ctx context.Context, uri lsp.DocumentURI) (map[lsp.Do
 
 	p, release := h.acquireProject()
 	defer release()
-	diags, ok := p.Diagnose(ctx, uri, h.lintConfig())
+	diags, ok := p.Diagnose(ctx, uri, h.lintConfigFor(uri))
 	if !ok {
 		return result, nil
 	}

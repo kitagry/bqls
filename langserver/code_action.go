@@ -17,7 +17,7 @@ func (h *Handler) lintCodeActions(ctx context.Context, uri lsp.DocumentURI, rng 
 	if h.project == nil || !h.supportsCodeActionLiterals() {
 		return nil
 	}
-	diags, ok := h.project.Diagnose(ctx, uri, h.lintConfig())
+	diags, ok := h.project.Diagnose(ctx, uri, h.lintConfigFor(uri))
 	if !ok {
 		return nil
 	}

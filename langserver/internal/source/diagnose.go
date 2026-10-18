@@ -3,7 +3,6 @@ package source
 import (
 	"context"
 	"fmt"
-	"maps"
 	"strings"
 	"sync"
 
@@ -30,8 +29,8 @@ type Diagnostics struct {
 // computing so concurrent callers for the same input wait instead of
 // re-analyzing.
 type diagnoseEntry struct {
-	src   string
-	rules map[string]bool
+	src string
+	cfg lint.Config
 
 	mu     sync.Mutex
 	done   bool
@@ -70,11 +69,11 @@ func (p *Project) diagnoseEntry(uri lsp.DocumentURI, src string, cfg lint.Config
 	if p.cache.Get(uri) == nil {
 		return &diagnoseEntry{}
 	}
-	if e, ok := p.diagnoseCache[uri]; ok && e.src == src && maps.Equal(e.rules, cfg.Rules) {
+	if e, ok := p.diagnoseCache[uri]; ok && e.src == src && e.cfg.Equal(cfg) {
 		return e
 	}
 	// Clone so a caller mutating its config map cannot change the cache key.
-	e := &diagnoseEntry{src: src, rules: maps.Clone(cfg.Rules)}
+	e := &diagnoseEntry{src: src, cfg: cfg.Clone()}
 	p.diagnoseCache[uri] = e
 	return e
 }

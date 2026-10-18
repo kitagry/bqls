@@ -72,9 +72,9 @@ func mergeSettings(prev InitializeOption, raw json.RawMessage) (InitializeOption
 		// restores the defaults).
 		next.Lint = lint.Config{}
 	} else {
-		// lintConfig() hands the rules map to concurrent readers, so the
-		// merged settings must not share it.
-		next.Lint.Rules = maps.Clone(prev.Lint.Rules)
+		// lintConfig() hands the maps to concurrent readers, so the merged
+		// settings must not share them.
+		next.Lint = prev.Lint.Clone()
 	}
 	if err := json.Unmarshal(raw, &next); err != nil {
 		return prev, err

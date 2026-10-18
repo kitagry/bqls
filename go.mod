@@ -14,6 +14,7 @@ require (
 	github.com/goccy/go-googlesql v0.4.0
 	github.com/golang/mock v1.6.0
 	github.com/sirupsen/logrus v1.9.3
+	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/text v0.38.0
 	google.golang.org/api v0.287.1
 	modernc.org/sqlite v1.55.0

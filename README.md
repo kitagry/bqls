@@ -85,6 +85,23 @@ settings = {
 }
 ```
 
+### Config file
+
+To share lint settings between your editor and CI, put a `.bqls.yaml` in your repository. Both the language server and `bqls lint` look for it from the SQL file's directory up to the repository root (the directory containing `.git`); the nearest one wins.
+
+```yaml
+lint:
+  rules:
+    unused-cte: false
+    some-rule:          # a rule can also take an object
+      enabled: true
+      some_option: 10   # rule-specific options
+```
+
+Each rule is either `true` / `false` or an object with an optional `enabled` and the rule's options; the editor's `lint` setting takes the same form. Unknown rules and options are errors (`bqls lint` exits with `2`; the language server logs the error and ignores the file). The language server rereads the file when it changes.
+
+Precedence: `--enable` / `--disable` flags or the editor's `lint` setting > `.bqls.yaml` > rule defaults. Rule options are merged key by key, so a setting only needs the options it changes.
+
 To silence a single occurrence, add a `bqls:ignore` comment. A comment on its own line applies to the next line; a trailing comment applies to its own line. Omitting rule names ignores every rule.
 
 ```sql
@@ -104,18 +121,20 @@ queries/report.sql:3:6: info: CTE `tmp` is defined but never used (unused-cte)
 queries/report.sql:8:7: error: Unrecognized name: y
 ```
 
-Directories are searched recursively for `*.sql` files (skipping directories whose name starts with `.`, such as `.git`), and `-` reads from stdin. Flags must come before files. Run `bqls lint --help` for the full list of rules.
+Directories are searched recursively for `*.sql` files (skipping directories whose name starts with `.`, such as `.git`), and `-` reads from stdin. Flags must come before files. Run `bqls lint --help` for the full list of rules. Each file uses the nearest [`.bqls.yaml`](#config-file) (stdin uses the one found from the working directory).
 
 | Flag | Description |
 | --- | --- |
 | `--project` | BigQuery project ID. Defaults to `gcloud config get project`. |
 | `--location` | BigQuery location. Defaults to `US`. |
-| `--enable <rule>` / `--disable <rule>` | Turn a rule on or off. Repeatable; the last one wins. |
+| `--enable <rule>` / `--disable <rule>` | Turn a rule on or off. Repeatable; the last one wins. Takes precedence over the config file. |
+| `--config <path>` | Use this config file for every input instead of looking up `.bqls.yaml`. |
+| `--fix` | Apply the quick fixes (the first one of each finding) and write the files back, then report the findings that are left. With `-`, the fixed SQL is printed to stdout and the findings go to stderr. A fix that overlaps another fix in the same file is skipped (noted on stderr) and its finding is reported; running `--fix` again applies it. |
 | `--format text\|json\|github` | `text` (default) prints `path:line:col: severity: message (rule)`. `json` prints an array of `{file, line, column, endLine, endColumn, severity, rule, message}`. `github` prints [workflow commands](https://docs.github.com/en/actions/reference/workflow-commands-for-github-actions) that show up as annotations on pull requests. |
 
 Lines and columns are 1-based and the end position is exclusive. Columns are currently off on lines containing non-ASCII text ([#375](https://github.com/kitagry/bqls/issues/375)). Analysis errors are reported with severity `error` and no rule. With `--format github`, file paths are made relative to `$GITHUB_WORKSPACE` so annotations attach to the diff.
 
-Exit codes: `0` nothing found, `1` any lint finding or analysis error, `2` usage or runtime error (bad flags, unreadable file, authentication/permission/network failure while fetching table metadata). An unreadable file does not stop the others from being linted; their findings are still printed and the exit code is `2`.
+Exit codes: `0` nothing found, `1` any lint finding or analysis error (with `--fix`, any that is left after fixing), `2` usage or runtime error (bad flags, invalid config file, unreadable or unwritable file, authentication/permission/network failure while fetching table metadata). An unreadable file does not stop the others from being linted; their findings are still printed and the exit code is `2`.
 
 GitHub Actions example. The service account only needs to read table metadata (e.g. `roles/bigquery.metadataViewer`). Pass `--project` explicitly, since the fallback to `gcloud config get project` only works where gcloud is installed and configured. Instead of `go install`, you can download a binary from [GitHub Releases](https://github.com/kitagry/bqls/releases) (the `lint` subcommand needs a release that includes it).
 
