@@ -1235,6 +1235,59 @@ func TestProject_CompleteColumns(t *testing.T) {
 				},
 			},
 		},
+		"Complete column in where clause of a subquery compared by outer binary expression": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT * FROM `project.dataset.outer_table` WHERE id = (SELECT 1 FROM `project.dataset.table` WHERE i|)",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.outer_table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+						{
+							Name: "id_outer",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+						{
+							Name: "id_alias",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+					TypedPrefix: "i",
+				},
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id_alias",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+					TypedPrefix: "i",
+				},
+			},
+		},
 		"Complete incomplete column in order by clause": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM `project.dataset.table` ORDER BY i|",

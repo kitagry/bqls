@@ -1265,6 +1265,60 @@ func TestAnalyzer_NotBoolClauseRewritesOnlyBarePath(t *testing.T) {
 	}
 }
 
+func TestAnalyzer_UnrecognizedNameInWhereRewritesOnlyItsOwnClause(t *testing.T) {
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc   string
+		expectedFixOffsets []file.FixOffset
+	}{
+		"binary expression in where clause": {
+			file:               "SELECT * FROM `project.dataset.table` WHERE 1 = idx",
+			expectedFixedSrc:   "SELECT * FROM `project.dataset.table` WHERE true",
+			expectedFixOffsets: []file.FixOffset{{Offset: 44, Length: -3}},
+		},
+		"bare name in where subquery compared by outer binary expression": {
+			file:               "SELECT * FROM `project.dataset.table` WHERE id = (SELECT 1 FROM `project.dataset.table` WHERE idx)",
+			expectedFixedSrc:   "SELECT * FROM `project.dataset.table` WHERE id = (SELECT 1 FROM `project.dataset.table` WHERE true)",
+			expectedFixOffsets: []file.FixOffset{{Offset: 94, Length: 1}},
+		},
+		"binary expression in where subquery compared by outer binary expression": {
+			file:               "SELECT * FROM `project.dataset.table` WHERE id = (SELECT 1 FROM `project.dataset.table` WHERE 1 = idx)",
+			expectedFixedSrc:   "SELECT * FROM `project.dataset.table` WHERE id = (SELECT 1 FROM `project.dataset.table` WHERE true)",
+			expectedFixOffsets: []file.FixOffset{{Offset: 94, Length: -3}},
+		},
+		"bare name in join on clause of where subquery": {
+			file:               "SELECT * FROM `project.dataset.table` WHERE id = (SELECT 1 FROM `project.dataset.table` a JOIN `project.dataset.table` b ON idx)",
+			expectedFixedSrc:   "SELECT * FROM `project.dataset.table` WHERE id = (SELECT 1 FROM `project.dataset.table` a JOIN `project.dataset.table` b ON true)",
+			expectedFixOffsets: []file.FixOffset{{Offset: 124, Length: 1}},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
+				AnyTimes()
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			if diff := cmp.Diff(tt.expectedFixOffsets, got.FixOffsets, cmpopts.IgnoreUnexported(file.FixOffset{})); diff != "" {
+				t.Errorf("FixOffsets diff (-expect, +got)\n%s", diff)
+			}
+			if len(got.RNode) == 0 {
+				t.Errorf("failed to analyze")
+			}
+		})
+	}
+}
+
 func TestAnalyzer_ParseFileKeepsTermBeforeDeletedTrailingClause(t *testing.T) {
 	tests := map[string]struct {
 		file         string
