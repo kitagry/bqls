@@ -60,8 +60,9 @@ func completeFromCursorPosition(rootNode *bqparser.Node, parsedFile file.ParsedF
 	// Get clauses that appear after the cursor (we should not suggest these)
 	clausesAfter := getClausesAfterCursor(selectStmt, uint(offset))
 
-	// If cursor is after a set operator (UNION/EXCEPT/INTERSECT), suggest SELECT
-	if hasSetOperatorBeforeCursor(parsedFile.FixedSrc, uint(offset)) {
+	// If cursor is after a set operator (UNION/EXCEPT/INTERSECT), suggest SELECT.
+	// A fix-up deletes a set operator without its query, so Src is checked.
+	if hasSetOperatorBeforeCursor(parsedFile.Src, uint(parsedFile.SrcOffset(position))) {
 		return createSelectKeywordCompletionItem("")
 	}
 

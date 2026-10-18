@@ -69,6 +69,12 @@ func (p ParsedFile) TermOffset(pos lsp.Position) int {
 	return toFixedOffset(p.edits, positionToByteOffset(p.Src, pos))
 }
 
+// SrcOffset is TermOffset in Src, for looking at what the user wrote where a
+// fix-up rewrote it.
+func (p ParsedFile) SrcOffset(pos lsp.Position) int {
+	return positionToByteOffset(p.Src, pos)
+}
+
 func (p ParsedFile) ExtractSQL(locationRange *googlesql.ParseLocationRange) (string, bool) {
 	if locationRange == nil {
 		return "", false
@@ -491,8 +497,11 @@ func fixUnexpectedEndOfScript(src string, parsedErr Error) (fixedSrc string, err
 		fixFunx  func(src string, err Error, keyword []string) (string, Error, []FixOffset)
 	}{
 		{
-			keywords: []string{"GROUP BY", "ORDER BY", "AND", "OR"},
-			fixFunx:  fixUnexpectedEndOfScriptWithDeletion,
+			keywords: []string{
+				"GROUP BY", "ORDER BY", "GROUP", "ORDER", "AND", "OR",
+				"UNION ALL", "UNION DISTINCT", "UNION", "INTERSECT DISTINCT", "EXCEPT DISTINCT",
+			},
+			fixFunx: fixUnexpectedEndOfScriptWithDeletion,
 		},
 		{
 			keywords: []string{"WHERE", "ON"},
@@ -509,15 +518,32 @@ func fixUnexpectedEndOfScript(src string, parsedErr Error) (fixedSrc string, err
 	return src, parsedErr, nil
 }
 
-// trailingKeyword returns the keyword that code ends with.
-func trailingKeyword(code string, keywords []string) (string, bool) {
-	oneLineCode := strings.Join(strings.Fields(code), " ")
+// trailingKeyword returns where the keyword that code ends with starts.
+// Keywords are case-insensitive and their words may be separated by any
+// whitespace, but they must not be the end of a longer word.
+func trailingKeyword(code string, keywords []string) (int, bool) {
 	for _, keyword := range keywords {
-		if strings.HasSuffix(oneLineCode, keyword) {
-			return keyword, true
+		if start, ok := keywordSuffixStart(code, keyword); ok {
+			return start, true
 		}
 	}
-	return "", false
+	return 0, false
+}
+
+func keywordSuffixStart(code, keyword string) (int, bool) {
+	start := len(code)
+	words := strings.Fields(keyword)
+	for i := len(words) - 1; i >= 0; i-- {
+		end := len(strings.TrimRightFunc(code[:start], unicode.IsSpace))
+		start = end - len(words[i])
+		if start < 0 || !strings.EqualFold(code[start:end], words[i]) {
+			return 0, false
+		}
+		if start > 0 && isIdentifierByte(code[start-1]) {
+			return 0, false
+		}
+	}
+	return start, true
 }
 
 // endInsertionPoint returns where a fix-up inserts text to complete what the
@@ -729,6 +755,7 @@ func skipSpacesAndComments(src string, start int) int {
 // fix Unexpected end of script with deletion
 //
 //	SELECT * FROM table GROUP BY
+//	SELECT * FROM table UNION ALL
 //
 // becomes
 //
@@ -740,13 +767,8 @@ func fixUnexpectedEndOfScriptWithDeletion(src string, parsedErr Error, targetUne
 	}
 
 	code := src[:beforeTrailingComments(src, errOffset)]
-	targetKeyword, ok := trailingKeyword(code, targetUnexpectedEndKeyword)
+	targetOffset, ok := trailingKeyword(code, targetUnexpectedEndKeyword)
 	if !ok {
-		return src, parsedErr, nil
-	}
-
-	targetOffset := strings.LastIndex(code, strings.Split(targetKeyword, " ")[0])
-	if targetOffset == -1 {
 		return src, parsedErr, nil
 	}
 
