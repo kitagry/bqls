@@ -215,19 +215,25 @@ func (c *Catalog) addTable(path []string) (*googlesql.SimpleTable, error) {
 		}
 	}
 
-	if err := c.catalog.AddTable(table); err != nil {
-		return nil, fmt.Errorf("failed to add table to catalog: %w", err)
+	// Registered in nested sub-catalogs for non-backtick 3-part path resolution:
+	// project.dataset.table → root["project"]["dataset"]["table"]. Done before
+	// the root registration so that a failure leaves nothing behind and a retry
+	// hits the same error instead of a duplicate-name one.
+	projectCat, err := c.getOrCreateSubCatalog(c.catalog, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create sub-catalog(%s): %w", projectID, err)
+	}
+	datasetKey := projectID + "." + datasetID
+	datasetCat, err := c.getOrCreateSubCatalog(projectCat, datasetKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create sub-catalog(%s): %w", datasetKey, err)
+	}
+	if err := datasetCat.AddTable2(tableID, table); err != nil {
+		return nil, fmt.Errorf("failed to add table to sub-catalog(%s): %w", datasetKey, err)
 	}
 
-	// Also register in nested sub-catalogs for non-backtick 3-part path resolution.
-	// project.dataset.table → root["project"]["dataset"]["table"]
-	projectCat, err := c.getOrCreateSubCatalog(c.catalog, projectID)
-	if err == nil {
-		datasetKey := projectID + "." + datasetID
-		datasetCat, err := c.getOrCreateSubCatalog(projectCat, datasetKey)
-		if err == nil {
-			_ = datasetCat.AddTable2(tableID, table)
-		}
+	if err := c.catalog.AddTable(table); err != nil {
+		return nil, fmt.Errorf("failed to add table to catalog: %w", err)
 	}
 
 	c.tableMetaMap[tableName] = metadata
