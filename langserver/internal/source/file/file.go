@@ -438,6 +438,7 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) 
 
 		for len(loc) == 2 {
 			// sql.Rawtext[loc[1]] is a space, a semicolon, or end of file.
+			loc[0] = hyphenatedTablePathStart(line, loc[0])
 			srcStart := currentOffset + loc[0]
 			targetWord := line[loc[0] : loc[1]-1]
 			line = line[:loc[0]] + "true" + line[loc[1]-1:]
@@ -470,6 +471,30 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) 
 	// more than src has.
 	fixed := strings.TrimSuffix(fixedBuilder.String(), "\n")
 	return fixed, errs, fixOffsets
+}
+
+// hyphenatedTablePathStart extends the start of a word ending with a dot back over
+// a hyphenated project ID, such as `FROM my-project.dataset.`. An unquoted
+// identifier can contain hyphens only in a table path, so the word is extended
+// only after FROM or JOIN; otherwise `1-t.` would be taken as one word.
+func hyphenatedTablePathStart(line string, start int) int {
+	i := start
+	for i > 0 && (line[i-1] == '-' || line[i-1] == '.' || isIdentifierByte(line[i-1])) {
+		i--
+	}
+	if i == start {
+		return start
+	}
+
+	words := strings.Fields(line[:i])
+	if len(words) == 0 {
+		return start
+	}
+	lastWord := words[len(words)-1]
+	if !strings.EqualFold(lastWord, "FROM") && !strings.EqualFold(lastWord, "JOIN") {
+		return start
+	}
+	return i
 }
 
 // fix SELECT list must not be empty

@@ -147,6 +147,68 @@ func TestProject_CompleteTablePath(t *testing.T) {
 				},
 			},
 		},
+		"list table after unquoted project with a hyphen": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT long FROM my-project.dataset.|",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+
+				bqClient.EXPECT().ListTables(gomock.Any(), "my-project", "dataset").Return([]*bq.Table{
+					{
+						ProjectID: "my-project",
+						DatasetID: "dataset",
+						TableID:   "table",
+					},
+				}, nil)
+				bqClient.EXPECT().GetDefaultProject().Return("project").MinTimes(0)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
+				return bqClient
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKModule,
+					NewText: "table",
+					Detail:  "TABLE",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "my-project.dataset.table",
+					},
+				},
+			},
+		},
+		"list table after unquoted project with a hyphen in JOIN": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT * FROM `project.dataset.table` JOIN my-project.dataset.| USING (id)",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+
+				bqClient.EXPECT().ListTables(gomock.Any(), "my-project", "dataset").Return([]*bq.Table{
+					{
+						ProjectID: "my-project",
+						DatasetID: "dataset",
+						TableID:   "table",
+					},
+				}, nil)
+				bqClient.EXPECT().GetDefaultProject().Return("project").MinTimes(0)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found")).MinTimes(0)
+				return bqClient
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKModule,
+					NewText: "table",
+					Detail:  "TABLE",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "my-project.dataset.table",
+					},
+				},
+			},
+		},
 		"list table of default project after unquoted dataset": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT long FROM dataset.|",
