@@ -50,6 +50,14 @@ func TestHandler_diagnose(t *testing.T) {
 				Message:  "Comparison with NULL using = always yields NULL; use IS NULL",
 			}},
 		},
+		"analysis error range in UTF-16 after surrogate pair and tab": {
+			src: "SELECT '😀',\ty",
+			want: []lsp.Diagnostic{{
+				Range:    lsp.Range{Start: lsp.Position{Line: 0, Character: 13}, End: lsp.Position{Line: 0, Character: 14}},
+				Severity: lsp.Error,
+				Message:  "Unrecognized name: y",
+			}},
+		},
 		"lint rule disabled by settings": {
 			src:  "SELECT x FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64)",
 			cfg:  lint.Config{Rules: map[string]bool{"null-comparison": false}},

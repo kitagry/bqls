@@ -137,3 +137,83 @@ func TestUTF16PositionToBytePosition(t *testing.T) {
 		})
 	}
 }
+
+func TestBytePositionToUTF16Position(t *testing.T) {
+	tests := map[string]struct {
+		src  string
+		pos  lsp.Position
+		want lsp.Position
+	}{
+		"ascii only": {
+			src:  "SELECT x",
+			pos:  lsp.Position{Line: 0, Character: 7},
+			want: lsp.Position{Line: 0, Character: 7},
+		},
+		"after CJK characters": {
+			src:  "SELECT 1;\n/* あいう */ x",
+			pos:  lsp.Position{Line: 1, Character: 17},
+			want: lsp.Position{Line: 1, Character: 11},
+		},
+		"after surrogate pair": {
+			src:  "'😀' x",
+			pos:  lsp.Position{Line: 0, Character: 7},
+			want: lsp.Position{Line: 0, Character: 5},
+		},
+		"tab counts as one unit": {
+			src:  "\t'あ' x",
+			pos:  lsp.Position{Line: 0, Character: 6},
+			want: lsp.Position{Line: 0, Character: 4},
+		},
+		"CRLF line ending": {
+			src:  "'あ'\r\nx",
+			pos:  lsp.Position{Line: 0, Character: 6},
+			want: lsp.Position{Line: 0, Character: 4},
+		},
+		"beyond the end of the line is clamped": {
+			src:  "'あ'",
+			pos:  lsp.Position{Line: 0, Character: 10},
+			want: lsp.Position{Line: 0, Character: 3},
+		},
+		"beyond the last line": {
+			src:  "SELECT 1",
+			pos:  lsp.Position{Line: 3, Character: 2},
+			want: lsp.Position{Line: 3, Character: 2},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := helper.BytePositionToUTF16Position(tt.src, tt.pos)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("BytePositionToUTF16Position(%q, %v) diff (-want +got):\n%s", tt.src, tt.pos, diff)
+			}
+			back := helper.UTF16PositionToBytePosition(tt.src, got)
+			if tt.pos.Line == 0 && tt.pos.Character <= len(tt.src) && back != tt.pos {
+				t.Errorf("round trip of %v = %v", tt.pos, back)
+			}
+		})
+	}
+}
+
+func TestPositionConverter_RangeToUTF16(t *testing.T) {
+	src := "SELECT '😀', x\nFROM t"
+	r := lsp.Range{Start: lsp.Position{Line: 0, Character: 14}, End: lsp.Position{Line: 1, Character: 4}}
+	want := lsp.Range{Start: lsp.Position{Line: 0, Character: 12}, End: lsp.Position{Line: 1, Character: 4}}
+	if diff := cmp.Diff(want, helper.NewPositionConverter(src).RangeToUTF16(r)); diff != "" {
+		t.Errorf("RangeToUTF16() diff (-want +got):\n%s", diff)
+	}
+}
+
+func TestGetUTF16LspPosition(t *testing.T) {
+	files := map[lsp.DocumentURI]string{"a.sql": "SELECT 'あ😀', |x"}
+	gotFiles, gotPath, gotPos, err := helper.GetUTF16LspPosition(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotFiles["a.sql"] != "SELECT 'あ😀', x" || gotPath != "a.sql" {
+		t.Errorf("unexpected files %v path %v", gotFiles, gotPath)
+	}
+	if want := (lsp.Position{Line: 0, Character: 14}); gotPos != want {
+		t.Errorf("position = %v, want %v", gotPos, want)
+	}
+}
