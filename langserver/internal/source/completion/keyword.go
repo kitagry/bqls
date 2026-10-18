@@ -66,6 +66,11 @@ func completeFromCursorPosition(rootNode *bqparser.Node, parsedFile file.ParsedF
 		return createSelectKeywordCompletionItem("")
 	}
 
+	// A bare ORDER / GROUP is not a clause in the parse tree, so Src is checked.
+	if hasOrderOrGroupBeforeCursor(parsedFile.Src, uint(parsedFile.SrcOffset(position))) {
+		return createByKeywordCompletionItem("")
+	}
+
 	// Check if there's a join_expression in the from_clause
 	hasJoinWithoutOn := hasJoinExpressionWithoutOn(selectStmt, parsedFile.FixedSrc)
 
@@ -481,6 +486,20 @@ func createOrderByKeywordCompletionItem(typedPrefix string) []CompletionItem {
 	}
 }
 
+func createByKeywordCompletionItem(typedPrefix string) []CompletionItem {
+	return []CompletionItem{
+		{
+			Kind:    lsp.CIKKeyword,
+			NewText: "BY ",
+			Documentation: lsp.MarkupContent{
+				Kind:  lsp.MKPlainText,
+				Value: "BY specifies the expressions to sort or group by.",
+			},
+			TypedPrefix: typedPrefix,
+		},
+	}
+}
+
 func createLimitKeywordCompletionItem(typedPrefix string) []CompletionItem {
 	return []CompletionItem{
 		{
@@ -695,6 +714,20 @@ func hasSetOperatorBeforeCursor(src string, cursorOffset uint) bool {
 		return true
 	}
 	return false
+}
+
+// hasOrderOrGroupBeforeCursor checks if the last token before the cursor is ORDER or GROUP
+// followed by whitespace, i.e. the user still has to type BY.
+func hasOrderOrGroupBeforeCursor(src string, cursorOffset uint) bool {
+	if cursorOffset == 0 || int(cursorOffset) > len(src) || !isWhitespace(src[cursorOffset-1]) {
+		return false
+	}
+	tokens := tokenizeBackwards(src[:cursorOffset])
+	if len(tokens) == 0 {
+		return false
+	}
+	last := strings.ToUpper(tokens[0])
+	return last == "ORDER" || last == "GROUP"
 }
 
 // tokenizeBackwards returns up to the last 3 whitespace-separated tokens before the end of s,
