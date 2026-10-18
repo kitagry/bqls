@@ -2149,6 +2149,48 @@ func TestAnalyzer_ParseFileWithScriptStatement(t *testing.T) {
 			expectedErrs:     []file.Error{},
 			expectedRNodeLen: 0,
 		},
+		"procedure parameter in body": {
+			file:             "CREATE PROCEDURE p.d.proc(x INT64)\nBEGIN\n  SELECT x;\nEND;",
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 2,
+		},
+		"procedure parameter of composite type": {
+			file:             "CREATE PROCEDURE p.d.proc(xs ARRAY<STRUCT<a INT64>>)\nBEGIN\n  SELECT x.a FROM UNNEST(xs) AS x;\nEND;",
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 2,
+		},
+		"procedure OUT parameter in SET": {
+			file:             "CREATE PROCEDURE p.d.proc(x INT64, OUT y STRING)\nBEGIN\n  SET y = CAST(x AS STRING);\nEND;",
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 1,
+		},
+		"procedure parameter keeps its type": {
+			file: "CREATE PROCEDURE p.d.proc(x INT64)\nBEGIN\n  SELECT x.a;\nEND;",
+			expectedErrs: []file.Error{
+				{
+					Msg:      "Cannot access field a on a value with type INT64",
+					Position: lsp.Position{Line: 2, Character: 11},
+				},
+			},
+			expectedRNodeLen: 1,
+		},
+		"procedure parameter in FOR loop": {
+			file:             "CREATE PROCEDURE p.d.proc(n INT64)\nBEGIN\n  FOR r IN (SELECT n AS a) DO\n    SELECT r.a + n;\n  END FOR;\nEND;",
+			expectedErrs:     []file.Error{},
+			expectedRNodeLen: 2,
+		},
+		"procedure parameter is out of scope after the procedure": {
+			file: "CREATE PROCEDURE p.d.proc(x INT64)\nBEGIN\n  SELECT 1;\nEND;\nSELECT x;",
+			expectedErrs: []file.Error{
+				{
+					Msg:                  "Unrecognized name: x",
+					Position:             lsp.Position{Line: 4, Character: 7},
+					TermLength:           1,
+					IncompleteColumnName: "x",
+				},
+			},
+			expectedRNodeLen: 3,
+		},
 		"SET with unknown function": {
 			file: "DECLARE x DATE;\nSET x = UNKNOWN_FUNC();",
 			expectedErrs: []file.Error{
