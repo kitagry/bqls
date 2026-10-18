@@ -320,6 +320,42 @@ func TestFixDot_WordBeforeSemicolon(t *testing.T) {
 	}
 }
 
+func TestFixDot_HyphenatedTablePath(t *testing.T) {
+	tests := map[string]struct {
+		src            string
+		want           string
+		wantIncomplete string
+	}{
+		"after FROM": {
+			src:            "SELECT long FROM my-project.dataset.",
+			want:           "SELECT long FROM true",
+			wantIncomplete: "my-project.dataset.",
+		},
+		"after JOIN": {
+			src:            "SELECT * FROM t join my-project.dataset. USING (id)",
+			want:           "SELECT * FROM t join true USING (id)",
+			wantIncomplete: "my-project.dataset.",
+		},
+		"minus in select list is not a table path": {
+			src:            "SELECT 1-t. FROM t",
+			want:           "SELECT 1-true FROM t",
+			wantIncomplete: "t.",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, errs, _ := fixDot(tt.src)
+			if got != tt.want {
+				t.Errorf("fixDot(%q) = %q, want %q", tt.src, got, tt.want)
+			}
+			if len(errs) != 1 || errs[0].IncompleteColumnName != tt.wantIncomplete {
+				t.Errorf("fixDot() errors = %+v, want one error for %q", errs, tt.wantIncomplete)
+			}
+		})
+	}
+}
+
 func TestFixIncompletePipeOperator(t *testing.T) {
 	tests := map[string]struct {
 		src            string
