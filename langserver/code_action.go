@@ -22,7 +22,7 @@ func (h *Handler) lintCodeActions(ctx context.Context, uri lsp.DocumentURI, rng 
 		return nil
 	}
 
-	src, _ := h.project.GetFile(uri)
+	src := diags.Src
 	// Diagnose works in byte columns while rng and everything sent back are
 	// in UTF-16 units, so all comparisons happen after conversion.
 	conv := helper.NewPositionConverter(src)
