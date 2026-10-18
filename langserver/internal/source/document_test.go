@@ -69,6 +69,44 @@ Storage info
 				lsp.RawMarkedString("| Name | Type | Mode | Description |\n| --- | --- | --- | --- |\n| name | STRING | NULLABLE | name description |\n"),
 			},
 		},
+		"hover INSERT target table": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "INSERT |`project.dataset.table` (name) SELECT name FROM `project.dataset.table`",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID:           "project:dataset.table",
+					CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+					LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+					Schema: bq.Schema{
+						{
+							Name: "name",
+							Type: bq.StringFieldType,
+						},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				lsp.RawMarkedString(`Table: project.dataset.table
+
+Table info
+
+* Created: 2023-06-17 00:00:00
+* Last modified: 2023-06-17 00:00:00
+
+Storage info
+
+* Number of rows: 0
+* Total logical bytes: 0 bytes
+
+[Docs](https://console.cloud.google.com/bigquery?project=project&ws=!1m5!1m4!4m3!1sproject!2sdataset!3stable)
+`),
+				lsp.RawMarkedString("| Name | Type | Mode | Description |\n| --- | --- | --- | --- |\n| name | STRING | NULLABLE |  |\n"),
+			},
+		},
 		"hover default project table": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT * FROM |`dataset.table`",

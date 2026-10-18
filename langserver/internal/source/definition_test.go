@@ -107,6 +107,102 @@ SELECT a FROM data2|`,
 				},
 			},
 		},
+		"definition to INSERT target bq table": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "INSERT `project.dataset.table|` (id) SELECT id FROM `project.dataset.table`",
+			},
+			bqTableMetadata: &bq.TableMetadata{
+				FullID: "project:dataset.table",
+				Schema: bq.Schema{
+					{
+						Name: "id",
+						Type: bq.IntegerFieldType,
+					},
+				},
+			},
+			expectLocations: []lsp.Location{
+				{
+					URI: lsp.NewTableVirtualTextDocumentURI("project", "dataset", "table"),
+				},
+			},
+		},
+		"definition to dataset-qualified INSERT target bq table": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "INSERT INTO dataset.table| (id) VALUES (1)",
+			},
+			bqTableMetadata: &bq.TableMetadata{
+				FullID: "project:dataset.table",
+				Schema: bq.Schema{
+					{
+						Name: "id",
+						Type: bq.IntegerFieldType,
+					},
+				},
+			},
+			defaultProject: "project",
+			expectLocations: []lsp.Location{
+				{
+					URI: lsp.NewTableVirtualTextDocumentURI("project", "dataset", "table"),
+				},
+			},
+		},
+		"definition to UPDATE target bq table": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "UPDATE `project.dataset.table|` SET id = 1 WHERE true",
+			},
+			bqTableMetadata: &bq.TableMetadata{
+				FullID: "project:dataset.table",
+				Schema: bq.Schema{
+					{
+						Name: "id",
+						Type: bq.IntegerFieldType,
+					},
+				},
+			},
+			expectLocations: []lsp.Location{
+				{
+					URI: lsp.NewTableVirtualTextDocumentURI("project", "dataset", "table"),
+				},
+			},
+		},
+		"definition to DELETE target bq table": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "DELETE FROM `project.dataset.table|` WHERE id = 1",
+			},
+			bqTableMetadata: &bq.TableMetadata{
+				FullID: "project:dataset.table",
+				Schema: bq.Schema{
+					{
+						Name: "id",
+						Type: bq.IntegerFieldType,
+					},
+				},
+			},
+			expectLocations: []lsp.Location{
+				{
+					URI: lsp.NewTableVirtualTextDocumentURI("project", "dataset", "table"),
+				},
+			},
+		},
+		"definition to MERGE target bq table": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "MERGE `project.dataset.table|` T USING `project.dataset.table` S ON T.id = S.id WHEN MATCHED THEN DELETE",
+			},
+			bqTableMetadata: &bq.TableMetadata{
+				FullID: "project:dataset.table",
+				Schema: bq.Schema{
+					{
+						Name: "id",
+						Type: bq.IntegerFieldType,
+					},
+				},
+			},
+			expectLocations: []lsp.Location{
+				{
+					URI: lsp.NewTableVirtualTextDocumentURI("project", "dataset", "table"),
+				},
+			},
+		},
 		"definition to dataset-qualified bq table": {
 			files: map[lsp.DocumentURI]string{
 				"a.sql": "SELECT * FROM dataset.table|",
