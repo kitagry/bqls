@@ -50,6 +50,12 @@ func (p *Project) lookupIdent(ctx context.Context, uri lsp.DocumentURI, parsedFi
 		return p.lookupTablePathExpressionNode(ctx, uri, parsedFile, tablePathExpression, tablePathRastNode)
 	}
 
+	if pathExpr, ok := file.SearchAstNode[*googlesql.ASTPathExpression](parsedFile.Node, termOffset); ok {
+		if name, ok := file.DMLTargetTableName(pathExpr); ok {
+			return p.listupTableEntries(ctx, name), nil
+		}
+	}
+
 	if locs := p.listupTargetVariableDeclarationEntries(parsedFile, uri, position); len(locs) > 0 {
 		return locs, nil
 	}
@@ -201,8 +207,11 @@ func (p *Project) listupTargetTableExpressionEntries(ctx context.Context, parsed
 	if err != nil {
 		return nil
 	}
+	return p.listupTableEntries(ctx, tableFullName)
+}
 
-	metadata, err := p.analyzer.GetTableMetadataFromPath(ctx, tableFullName)
+func (p *Project) listupTableEntries(ctx context.Context, tableName string) []lsp.Location {
+	metadata, err := p.analyzer.GetTableMetadataFromPath(ctx, tableName)
 	if err != nil {
 		return nil
 	}

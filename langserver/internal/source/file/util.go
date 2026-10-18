@@ -37,3 +37,18 @@ func joinPathExpression(pathExpr *googlesql.ASTPathExpression) (string, bool) {
 	}
 	return strings.Join(names, "."), true
 }
+
+// DMLTargetTableName returns the table name when node is the target table of
+// a DML statement, which the AST holds as a path expression rather than a
+// table path expression.
+func DMLTargetTableName(node *googlesql.ASTPathExpression) (string, bool) {
+	parent, err := node.Parent()
+	if err != nil || parent == nil {
+		return "", false
+	}
+	target := dmlTargetPath(parent)
+	if target == nil || locStart(target) != locStart(node) || locEnd(target) != locEnd(node) {
+		return "", false
+	}
+	return joinPathExpression(node)
+}

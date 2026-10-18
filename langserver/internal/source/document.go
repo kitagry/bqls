@@ -29,6 +29,12 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 		return nil, nil
 	}
 
+	if name, ok := file.DMLTargetTableName(targetNode); ok {
+		if result, ok := p.termDocumentFromTableName(ctx, name); ok {
+			return result, nil
+		}
+	}
+
 	output, ok := parsedFile.FindTargetAnalyzeOutput(termOffset)
 	if !ok {
 		// Fallback: table hover from AST.
@@ -150,7 +156,10 @@ func (p *Project) termDocumentFromAstNode(ctx context.Context, targetNode *googl
 	if !ok {
 		return nil, false
 	}
+	return p.termDocumentFromTableName(ctx, name)
+}
 
+func (p *Project) termDocumentFromTableName(ctx context.Context, name string) ([]lsp.MarkedString, bool) {
 	targetTable, err := p.analyzer.GetTableMetadataFromPath(ctx, name)
 	if err != nil {
 		return nil, false
