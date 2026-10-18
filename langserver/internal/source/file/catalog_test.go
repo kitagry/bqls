@@ -648,5 +648,8 @@ func TestAnalyzer_GetTableMetadataFromPath_InformationSchema(t *testing.T) {
 		if diff := cmp.Diff(schema, meta.Schema); diff != "" {
 			t.Errorf("%s: schema diff (-want +got):\n%s", path, diff)
 		}
+		if diff := cmp.Diff("p:region-us.INFORMATION_SCHEMA.JOBS", meta.FullID); diff != "" {
+			t.Errorf("%s: FullID diff (-want +got):\n%s", path, diff)
+		}
 	}
 }

@@ -804,6 +804,11 @@ func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([
 		fmt.Fprintf(&sb, "%s\n", metadata.Description)
 	}
 
+	// Views whose schema comes from a dry run, such as INFORMATION_SCHEMA, have no table or storage info.
+	if metadata.CreationTime.IsZero() {
+		return []lsp.MarkedString{lsp.RawMarkedString(sb.String())}, nil
+	}
+
 	sb.WriteString("\nTable info\n\n")
 
 	fmt.Fprintf(&sb, "* Created: %s\n", metadata.CreationTime.Format("2006-01-02 15:04:05"))

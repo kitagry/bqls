@@ -685,7 +685,12 @@ func fetchTableMetadata(ctx context.Context, bqClient bigquery.Client, ref table
 	if err != nil {
 		return nil, err
 	}
-	return &bq.TableMetadata{Schema: schema}, nil
+	// FullID follows BigQuery's project:dataset.table form so that it is shown like other tables.
+	fullID := strings.Join(ref.rest, ".")
+	if ref.project != "" {
+		fullID = ref.project + ":" + fullID
+	}
+	return &bq.TableMetadata{FullID: fullID, Schema: schema}, nil
 }
 
 func bigqueryTypeToGooglesqlType(tf *googlesql.TypeFactory, typ bq.FieldType, isRepeated bool, schema bq.Schema) (googlesql.Googlesql_TypeNode, error) {
