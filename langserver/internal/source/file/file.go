@@ -30,8 +30,8 @@ type ParsedFile struct {
 	RNode []*googlesql.AnalyzerOutput
 	// Statements holds the result of every statement analyzed in the final
 	// pass, so that a failed statement does not shift which output belongs to
-	// which statement. When the retry limit is reached, the final pass stops
-	// early and Statements covers only a prefix of the file.
+	// which statement. When the retry limit is reached, the final pass applies
+	// no fix-up, so the statement it would fix up keeps its error.
 	Statements []StatementResult
 
 	ParseTree *bqparser.Node

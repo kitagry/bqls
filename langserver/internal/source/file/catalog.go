@@ -95,6 +95,11 @@ func newSimpleCatalogWithBuiltins(tf *googlesql.TypeFactory, langOpts *googlesql
 }
 
 func (c *Catalog) Clone() *Catalog {
+	return c.cloneWithClient(c.bqClient)
+}
+
+// cloneWithClient is Clone with the metadata fetched through bqClient.
+func (c *Catalog) cloneWithClient(bqClient bigquery.Client) *Catalog {
 	cat, err := newSimpleCatalogWithBuiltins(c.typeFactory, c.langOpts)
 	if err != nil {
 		panic(fmt.Sprintf("failed to clone catalog: %v", err))
@@ -103,7 +108,7 @@ func (c *Catalog) Clone() *Catalog {
 		catalog:           cat,
 		typeFactory:       c.typeFactory,
 		langOpts:          c.langOpts,
-		bqClient:          c.bqClient,
+		bqClient:          bqClient,
 		tableMetaMap:      make(map[string]*bq.TableMetadata),
 		tables:            make(map[string]*googlesql.SimpleTable),
 		procedures:        make(map[string]*googlesql.Procedure),

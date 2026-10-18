@@ -372,7 +372,15 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 	// Statements are re-analyzed on every retry, so only errors whose fix-up was applied
 	// (they no longer reproduce in the fixed source) survive a pass; the rest come from the final pass.
 	var fixedErrs, passErrs []statementError
-	for _retry := 0; _retry < 10; _retry++ {
+	// Every pass analyzes against a fresh catalog, so lookups are shared across passes
+	// to fetch each table at most once.
+	client := newMemoClient(a.bqClient)
+	maxRetries := minRetries
+	budgeted := false
+	for retry := 0; retry < maxRetries; retry++ {
+		// The last pass applies no fix-up, so that it analyzes every statement instead
+		// of stopping at the first one it would fix.
+		lastPass := retry == maxRetries-1
 		statements = make([]StatementResult, 0)
 		var err error
 		var fo []FixOffset
@@ -424,7 +432,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 		// must not drop the previous pass's errors.
 		passErrs = nil
 
-		catalog = a.catalog.Clone()
+		catalog = a.catalog.cloneWithClient(client)
 
 		// Pre-load tables referenced in the SQL from BigQuery
 		if err := catalog.PreloadTablesFromAST(node); err != nil {
@@ -438,6 +446,12 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 
 		stmts := collectStatements(node)
 		declarationMap := make(map[string]string)
+		if !budgeted {
+			// A substitution fixes one reference to a declared variable per pass (#467).
+			maxRetries = min(minRetries+countDeclaredVariableReferences(node), maxRetriesLimit)
+			lastPass = retry == maxRetries-1
+			budgeted = true
+		}
 
 		for i, s := range stmts {
 			kind, _ := s.NodeKind()
@@ -538,6 +552,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			}
 
 			// fix src
+			srcBeforeFix := fixedSrc
 			skipError := false
 			if isUnrecognizedNameError || isNotExistInStructError || isNotFoundInsideError {
 				errTermOffset := positionToByteOffset(fixedSrc, pErr.Position)
@@ -573,6 +588,18 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				fixedSrc, fo = fixNotBoolClauseError(fixedSrc, pErr)
 			}
 
+			if lastPass && len(fo) > 0 {
+				fixedSrc, fo = srcBeforeFix, nil
+				if skipError {
+					// The error is not the user's, but the rest of the statement is left unchecked.
+					skipError = false
+					pErr = Error{
+						Msg:      fmt.Sprintf("bqls could not finish analyzing this statement: reached the limit of %d fix-ups", maxRetries),
+						Position: pErr.Position,
+						Severity: lsp.Warning,
+					}
+				}
+			}
 			srcErr := errorToSrc(src, errSrc, edits, pErr)
 			if insideInsertedText(errSrc, edits, positionToByteOffset(errSrc, pErr.Position)) {
 				skipError = true
@@ -624,6 +651,54 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 		Errors:     errs,
 		catalog:    catalog,
 	}
+}
+
+const (
+	minRetries = 10
+	// maxRetriesLimit bounds the time spent on a file, as every pass re-analyzes every statement.
+	maxRetriesLimit = 100
+)
+
+// countDeclaredVariableReferences counts the identifiers named after a declared variable,
+// including the declarations themselves.
+func countDeclaredVariableReferences(node *googlesql.ASTScript) int {
+	declared := make(map[string]bool)
+	Walk(node, func(n googlesql.ASTNode) error { //nolint
+		decl, ok := n.(*googlesql.ASTVariableDeclaration)
+		if !ok {
+			return nil
+		}
+		varList, _ := decl.VariableList()
+		if varList == nil {
+			return nil
+		}
+		num, _ := varList.NumChildren()
+		for i := int32(0); i < num; i++ {
+			ident, err := varList.IdentifierList(i)
+			if err != nil {
+				continue
+			}
+			name, _ := ident.GetAsString()
+			declared[name] = true
+		}
+		return nil
+	})
+	if len(declared) == 0 {
+		return 0
+	}
+	count := 0
+	Walk(node, func(n googlesql.ASTNode) error { //nolint
+		ident, ok := n.(*googlesql.ASTIdentifier)
+		if !ok {
+			return nil
+		}
+		name, _ := ident.GetAsString()
+		if declared[name] {
+			count++
+		}
+		return nil
+	})
+	return count
 }
 
 func editsOf(fixOffsets []FixOffset) []sourceEdit {
