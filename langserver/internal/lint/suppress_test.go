@@ -266,3 +266,33 @@ func TestLineStates(t *testing.T) {
 		})
 	}
 }
+
+func TestHasComment(t *testing.T) {
+	tests := map[string]struct {
+		src  string
+		want bool
+	}{
+		"no comment":                      {src: "SELECT 1 FROM t", want: false},
+		"line comment":                    {src: "-- head\nSELECT 1", want: true},
+		"trailing line comment":           {src: "SELECT 1 -- note", want: true},
+		"hash comment":                    {src: "SELECT 1 # note", want: true},
+		"block comment":                   {src: "SELECT /* note */ 1", want: true},
+		"unterminated block comment":      {src: "SELECT 1 /* note", want: true},
+		"markers in single-quoted string": {src: "SELECT '-- a # b /* c */' AS s", want: false},
+		"markers in double-quoted string": {src: `SELECT "-- a # b" AS s`, want: false},
+		"markers in triple-quoted string": {src: "SELECT '''\n-- a\n# b\n''' AS s", want: false},
+		"markers in quoted identifier":    {src: "SELECT `a--b#c` FROM t", want: false},
+		"escaped quote keeps the string open": {
+			src:  `SELECT 'it\'s -- not a comment' AS s`,
+			want: false,
+		},
+		"comment after a string": {src: "SELECT '#' AS s -- note", want: true},
+	}
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			if got := lint.HasComment(tt.src); got != tt.want {
+				t.Errorf("HasComment(%q) = %v, want %v", tt.src, got, tt.want)
+			}
+		})
+	}
+}
