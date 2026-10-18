@@ -897,9 +897,9 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 		return src, nil
 	}
 
-	fixOffset := FixOffset{Offset: errOffset, Length: 0}
+	var fixOffset FixOffset
 	usedBinaryExpr := false
-	if binExpr, ok := SearchAstNode[*googlesql.ASTBinaryExpression](node, errOffset); ok {
+	if binExpr, ok := SearchAstNode[*googlesql.ASTBinaryExpression](node, errOffset); ok && insideInnermostCondition(node, binExpr, errOffset) {
 		// e.x.) SELECT * FROM table WHERE unexist_column = 1
 		loc, _ := binExpr.GetParseLocationRange()
 		startOffset := parseLocStart(loc)
@@ -907,8 +907,11 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 		if startOffset >= 0 && endOffset >= 0 {
 			length := endOffset - startOffset
 			fixedSrc = src[:startOffset] + "true" + src[endOffset:]
-			fixOffset.Length = len("true") - length
-			fixOffset.edits = []sourceEdit{{start: startOffset, oldLen: length, newLen: len("true")}}
+			fixOffset = FixOffset{
+				Offset: startOffset,
+				Length: len("true") - length,
+				edits:  []sourceEdit{{start: startOffset, oldLen: length, newLen: len("true")}},
+			}
 			usedBinaryExpr = true
 		}
 	}
@@ -920,11 +923,31 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 			return src, nil
 		}
 		fixedSrc = src[:incompleteOffset] + "true" + src[incompleteOffset+replacedLength:]
-		fixOffset.Length = len("true") - replacedLength
-		fixOffset.edits = []sourceEdit{{start: incompleteOffset, oldLen: replacedLength, newLen: len("true")}}
+		fixOffset = FixOffset{
+			Offset: incompleteOffset,
+			Length: len("true") - replacedLength,
+			edits:  []sourceEdit{{start: incompleteOffset, oldLen: replacedLength, newLen: len("true")}},
+		}
 	}
 
 	return fixedSrc, []FixOffset{fixOffset}
+}
+
+// insideInnermostCondition reports whether expr lies within the innermost WHERE/ON
+// condition containing offset. Otherwise expr belongs to an outer query, e.g. it
+// compares against a subquery, and rewriting it would drop the subquery being typed.
+func insideInnermostCondition(node googlesql.ASTNode, expr googlesql.ASTNode, offset int) bool {
+	clauseStart, clauseEnd := -1, -1
+	if where, ok := SearchAstNode[*googlesql.ASTWhereClause](node, offset); ok {
+		clauseStart, clauseEnd = locStart(where), locEnd(where)
+	}
+	if on, ok := SearchAstNode[*googlesql.ASTOnClause](node, offset); ok && locStart(on) > clauseStart {
+		clauseStart, clauseEnd = locStart(on), locEnd(on)
+	}
+	if clauseStart < 0 {
+		return false
+	}
+	return clauseStart <= locStart(expr) && locEnd(expr) <= clauseEnd
 }
 
 // addInformationToNotBoolClauseError fills IncompleteColumnName only when the whole
