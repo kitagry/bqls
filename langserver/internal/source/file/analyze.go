@@ -510,6 +510,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			if len(fo) == 0 {
 				fixedSrc, fo = fixIncompletePipeOperator(fixedSrc, pErr)
 			}
+			if len(fo) == 0 && strings.Contains(pErr.Msg, "A pipe operator cannot follow the WITH clause") {
+				fixedSrc, fo = fixPipeOperatorAfterWithClause(fixedSrc, pErr)
+			}
 			srcErr := errorToSrc(src, passSrc, edits, pErr)
 			// An error where one is already reported is left by a fix-up that deleted
 			// what the user has not finished, such as "(SELECT 1 UNION ALL" becoming

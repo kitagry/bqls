@@ -740,6 +740,93 @@ func fixIncompletePipeOperator(src string, parsedErr Error) (fixedSrc string, fi
 	}
 }
 
+// fix the pipe operator that follows a WITH clause by reading the last CTE, so
+// that the pipe operators can be analyzed while the user is typing them
+//
+//	WITH a AS (SELECT 1) |> SELECT
+//
+// becomes
+//
+//	WITH a AS (SELECT 1) FROM a |> SELECT
+func fixPipeOperatorAfterWithClause(src string, parsedErr Error) (fixedSrc string, fixOffsets []FixOffset) {
+	errOffset, ok := errorByteOffset(src, parsedErr.Position)
+	if !ok || !strings.HasPrefix(src[errOffset:], "|>") {
+		return src, nil
+	}
+	name, ok := lastCTEName(src[:errOffset])
+	if !ok {
+		return src, nil
+	}
+	insert := "FROM " + name + " "
+	return src[:errOffset] + insert + src[errOffset:], []FixOffset{
+		{
+			Offset: errOffset,
+			Length: len(insert),
+			edits:  []sourceEdit{{start: errOffset, newLen: len(insert)}},
+		},
+	}
+}
+
+// lastCTEName returns the name of the CTE "name AS (query)" that code ends with.
+func lastCTEName(code string) (string, bool) {
+	type token struct {
+		text string
+		// match is the index of the matching "(" for ")".
+		match int
+	}
+	var tokens []token
+	var opens []int
+	for i := 0; i < len(code); {
+		switch {
+		case unicode.IsSpace(rune(code[i])):
+			i++
+		case code[i] == '\'' || code[i] == '"' || code[i] == '`':
+			end := skipQuoted(code, i)
+			tokens = append(tokens, token{text: code[i:end]})
+			i = end
+		case code[i] == '(':
+			opens = append(opens, len(tokens))
+			tokens = append(tokens, token{text: "("})
+			i++
+		case code[i] == ')':
+			match := -1
+			if len(opens) > 0 {
+				match = opens[len(opens)-1]
+				opens = opens[:len(opens)-1]
+			}
+			tokens = append(tokens, token{text: ")", match: match})
+			i++
+		case isIdentifierByte(code[i]):
+			end := i
+			for end < len(code) && isIdentifierByte(code[end]) {
+				end++
+			}
+			tokens = append(tokens, token{text: code[i:end]})
+			i = end
+		default:
+			if next := skipComment(code, i); next != i {
+				i = next
+			} else {
+				tokens = append(tokens, token{text: code[i : i+1]})
+				i++
+			}
+		}
+	}
+
+	if len(tokens) == 0 || tokens[len(tokens)-1].text != ")" {
+		return "", false
+	}
+	open := tokens[len(tokens)-1].match
+	if open < 2 || !strings.EqualFold(tokens[open-1].text, "AS") {
+		return "", false
+	}
+	name := tokens[open-2].text
+	if name[0] != '`' && !isIdentifierByte(name[0]) {
+		return "", false
+	}
+	return name, true
+}
+
 func isIdentifierByte(b byte) bool {
 	return b == '_' || ('a' <= b && b <= 'z') || ('A' <= b && b <= 'Z') || ('0' <= b && b <= '9')
 }
