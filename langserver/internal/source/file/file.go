@@ -17,6 +17,8 @@ var lastDotRegex = regexp.MustCompile(`[\w.]+\.[\s;]`)
 
 var zetaSQLLocationRegex = regexp.MustCompile(`\[at (\d+):(\d+)\]`)
 
+var notBoolConditionErrorRegex = regexp.MustCompile(`^Cannot coerce expression (?s:(.*)) to type BOOL$`)
+
 var logicalOperandErrorRegex = regexp.MustCompile(`^No matching signature for operator (AND|OR|NOT)\n(?s:.*?)Argument (\d+): Unable to coerce type \S+ to expected type BOOL`)
 
 type ParsedFile struct {
@@ -377,6 +379,44 @@ func parseZetaSQLError(src string, err error) Error {
 	// Trim position information
 	errStr = strings.TrimSpace(errStr[:loc[0]])
 	return Error{Msg: errStr, Position: pos}
+}
+
+// addInformationToNotBoolConditionError marks the condition quoted in the
+// error as its term.
+func addInformationToNotBoolConditionError(parsedErr Error) Error {
+	m := notBoolConditionErrorRegex.FindStringSubmatch(parsedErr.Msg)
+	if m == nil {
+		return parsedErr
+	}
+	parsedErr.TermLength = len(m[1])
+	return parsedErr
+}
+
+// notBoolConditionErrorInSrc quotes the condition from src, since the analyzed
+// text may have declared variables replaced with their values.
+func notBoolConditionErrorInSrc(src string, srcErr Error) Error {
+	start, ok := errorByteOffset(src, srcErr.Position)
+	if !ok || srcErr.TermLength <= 0 || start+srcErr.TermLength > len(src) {
+		return srcErr
+	}
+	srcErr.Msg = fmt.Sprintf("Cannot coerce expression %s to type BOOL", src[start:start+srcErr.TermLength])
+	return srcErr
+}
+
+// zetaSQLLocation formats a byte offset in src as GoogleSQL's "[at line:column]",
+// the inverse of zetaSQLColumnToByteOffset.
+func zetaSQLLocation(src string, offset int) string {
+	lineStart := strings.LastIndex(src[:offset], "\n") + 1
+	line := strings.Count(src[:lineStart], "\n") + 1
+	col := 1
+	for _, r := range src[lineStart:offset] {
+		if r == '\t' {
+			col = ((col-1)/8+1)*8 + 1
+			continue
+		}
+		col++
+	}
+	return fmt.Sprintf("[at %d:%d]", line, col)
 }
 
 // zetaSQLColumnToByteOffset converts a 1-based GoogleSQL column into a byte
