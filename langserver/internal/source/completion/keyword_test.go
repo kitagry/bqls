@@ -831,6 +831,127 @@ func TestCompletor_CompleteKeyword(t *testing.T) {
 			},
 			expectNotContains: []string{"FROM ", "WHERE ", "GROUP BY "},
 		},
+		"Complete pipe operators after pipe": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "FROM `project.dataset.table` |> |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "WHERE ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The WHERE pipe operator filters the rows of the input table.",
+					},
+				},
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "EXTEND ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The EXTEND pipe operator adds computed columns to the input table.",
+					},
+				},
+			},
+			expectNotContains: []string{"GROUP BY ", "HAVING "},
+		},
+		"Complete pipe operators with typed prefix": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "FROM `project.dataset.table` |> W|",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "WHERE ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The WHERE pipe operator filters the rows of the input table.",
+					},
+					TypedPrefix: "W",
+				},
+			},
+		},
+		"Complete pipe operators after pipe following a SELECT query": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT * FROM `project.dataset.table` |> |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "WHERE ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The WHERE pipe operator filters the rows of the input table.",
+					},
+				},
+			},
+			expectNotContains: []string{"GROUP BY ", "FROM "},
+		},
+		"Complete pipe operators after pipe in a subquery": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "SELECT * FROM (FROM `project.dataset.table` |> |)",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:    lsp.CIKKeyword,
+					NewText: "WHERE ",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "The WHERE pipe operator filters the rows of the input table.",
+					},
+				},
+			},
+		},
+		"Do not complete SELECT or WITH inside a pipe operator": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "FROM `project.dataset.table` |> WHERE id = 1 |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectNotContains: []string{"SELECT ", "WITH ", "WHERE "},
+		},
+		"Do not complete SELECT or WITH after a column path in a pipe operator": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "FROM `project.dataset.table` AS t |> SELECT t.|",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectNotContains: []string{"SELECT ", "WITH "},
+		},
+		"Complete JOIN after FROM-first query": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "FROM `project.dataset.table` |",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {},
+			},
+			expectContains: []CompletionItem{
+				{
+					Kind:        lsp.CIKKeyword,
+					NewText:     "JOIN ",
+					SnippetText: "JOIN ${1:table} ON ${2:condition}",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INNER JOIN - returns rows when there is a match in both tables.",
+					},
+				},
+			},
+			expectNotContains: []string{"SELECT ", "WITH ", "WHERE ", "GROUP BY "},
+		},
 	}
 
 	for n, tt := range tests {
