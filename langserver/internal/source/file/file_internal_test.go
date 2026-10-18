@@ -870,3 +870,71 @@ func TestFixUnexpectedEndOfScript_IncompleteClauseAndSetOperation(t *testing.T) 
 		})
 	}
 }
+
+func TestNewLanguageOptions_NonPipeFeatures(t *testing.T) {
+	tests := map[string]struct {
+		feature googlesql.LanguageFeature
+		want    bool
+	}{
+		"WITH expression":                   {feature: googlesql.LanguageFeatureFeatureWithExpression, want: true},
+		"chained function calls":            {feature: googlesql.LanguageFeatureFeatureChainedFunctionCalls, want: true},
+		"MATCH_RECOGNIZE":                   {feature: googlesql.LanguageFeatureFeatureMatchRecognize, want: true},
+		"CORRESPONDING":                     {feature: googlesql.LanguageFeatureFeatureCorresponding, want: true},
+		"aggregate filtering":               {feature: googlesql.LanguageFeatureFeatureAggregateFiltering, want: true},
+		"GROUP BY array":                    {feature: googlesql.LanguageFeatureFeatureGroupByArray, want: true},
+		"generated columns":                 {feature: googlesql.LanguageFeatureFeatureGeneratedColumns, want: true},
+		"SQL graph":                         {feature: googlesql.LanguageFeatureFeatureSqlGraph, want: true},
+		"LATERAL join":                      {feature: googlesql.LanguageFeatureFeatureLateralJoin, want: false},
+		"FOR UPDATE":                        {feature: googlesql.LanguageFeatureFeatureForUpdate, want: false},
+		"WITH RECURSIVE depth modifier":     {feature: googlesql.LanguageFeatureFeatureWithRecursiveDepthModifier, want: false},
+		"ORDER BY COLLATE":                  {feature: googlesql.LanguageFeatureFeatureOrderByCollate, want: false},
+		"stratified reservoir TABLESAMPLE":  {feature: googlesql.LanguageFeatureFeatureStratifiedReservoirTablesample, want: false},
+		"TABLESAMPLE on TVF":                {feature: googlesql.LanguageFeatureFeatureTablesampleFromTableValuedFunctions, want: false},
+		"multiway UNNEST":                   {feature: googlesql.LanguageFeatureFeatureMultiwayUnnest, want: false},
+		"UNNEST and FLATTEN arrays":         {feature: googlesql.LanguageFeatureFeatureUnnestAndFlattenArrays, want: false},
+		"multi grouping sets":               {feature: googlesql.LanguageFeatureFeatureMultiGroupingSets, want: false},
+		"THEN RETURN":                       {feature: googlesql.LanguageFeatureFeatureDmlReturning, want: false},
+		"INSERT ON CONFLICT":                {feature: googlesql.LanguageFeatureFeatureInsertOnConflictClause, want: false},
+		"array elements with SET":           {feature: googlesql.LanguageFeatureFeatureArrayElementsWithSet, want: false},
+		"JSON subfields with SET":           {feature: googlesql.LanguageFeatureFeatureJsonSubfieldsWithSet, want: false},
+		"nested DML WITH OFFSET":            {feature: googlesql.LanguageFeatureFeatureNestedUpdateDeleteWithOffset, want: false},
+		"correlated refs in nested DML":     {feature: googlesql.LanguageFeatureFeatureCorrelatedRefsInNestedDml, want: false},
+		"inline lambda":                     {feature: googlesql.LanguageFeatureFeatureInlineLambdaArgument, want: false},
+		"SAFE call with lambda":             {feature: googlesql.LanguageFeatureFeatureSafeFunctionCallWithLambdaArgs, want: false},
+		"function argument defaults":        {feature: googlesql.LanguageFeatureFeatureFunctionArgumentsWithDefaults, want: false},
+		"type annotations on UDF arguments": {feature: googlesql.LanguageFeatureFeatureTypeAnnotationsOnSqlFunctionArguments, want: false},
+		"UUID type":                         {feature: googlesql.LanguageFeatureFeatureUuidType, want: false},
+		"TOKENLIST type":                    {feature: googlesql.LanguageFeatureFeatureTokenizedSearch, want: false},
+		"REPLACE_FIELDS":                    {feature: googlesql.LanguageFeatureFeatureReplaceFields, want: false},
+		"FILTER_FIELDS":                     {feature: googlesql.LanguageFeatureFeatureFilterFields, want: false},
+		"braced proto constructors":         {feature: googlesql.LanguageFeatureFeatureBracedProtoConstructors, want: false},
+		"array equality":                    {feature: googlesql.LanguageFeatureFeatureArrayEquality, want: false},
+		"array ordering":                    {feature: googlesql.LanguageFeatureFeatureArrayOrdering, want: false},
+		"JSON comparison":                   {feature: googlesql.LanguageFeatureFeatureJsonTypeComparison, want: false},
+		"CHECK constraint":                  {feature: googlesql.LanguageFeatureFeatureCheckConstraint, want: false},
+		"legacy row access policy syntax":   {feature: googlesql.LanguageFeatureFeatureAllowLegacyRowAccessPolicySyntax, want: false},
+		"modules":                           {feature: googlesql.LanguageFeatureFeatureExperimentalModules, want: false},
+		"GROUP BY graph path":               {feature: googlesql.LanguageFeatureFeatureGroupByGraphPath, want: false},
+		"graph path search prefix count":    {feature: googlesql.LanguageFeatureFeatureSqlGraphPathSearchPrefixPathCount, want: false},
+		"graph set operation propagation":   {feature: googlesql.LanguageFeatureFeatureSqlGraphSetOperationPropagationMode, want: false},
+		"graph dynamic label properties":    {feature: googlesql.LanguageFeatureFeatureSqlGraphDynamicLabelPropertiesInDdl, want: false},
+		"graph dynamic label extension":     {feature: googlesql.LanguageFeatureFeatureSqlGraphDynamicLabelExtensionInDdl, want: false},
+		"graph dynamic element type":        {feature: googlesql.LanguageFeatureFeatureSqlGraphDynamicElementType, want: false},
+	}
+
+	langOpt, err := newLanguageOptions()
+	if err != nil {
+		t.Fatalf("newLanguageOptions: %v", err)
+	}
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			got, err := langOpt.LanguageFeatureEnabled(tt.feature)
+			if err != nil {
+				t.Fatalf("LanguageFeatureEnabled: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("LanguageFeatureEnabled(%v) = %v, want %v", tt.feature, got, tt.want)
+			}
+		})
+	}
+}
