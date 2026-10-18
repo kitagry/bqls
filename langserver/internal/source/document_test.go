@@ -855,6 +855,229 @@ Storage info
 				{Language: "sql", Value: "b: INT64"},
 			},
 		},
+		"hover column in pipe SET": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "FROM `project.dataset.table` |> SET |id = id + 1",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType, Description: "id description"},
+						{Name: "name", Type: bq.StringFieldType, Description: "name description"},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{Language: "sql", Value: "id: INTEGER (nullable)"},
+				lsp.RawMarkedString("id description"),
+			},
+		},
+		"hover column in pipe DROP": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "FROM `project.dataset.table` |> DROP id, |name",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType, Description: "id description"},
+						{Name: "name", Type: bq.StringFieldType, Description: "name description"},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{Language: "sql", Value: "name: STRING (nullable)"},
+				lsp.RawMarkedString("name description"),
+			},
+		},
+		"hover old name in pipe RENAME": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "FROM `project.dataset.table` |> RENAME |name AS n",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType, Description: "id description"},
+						{Name: "name", Type: bq.StringFieldType, Description: "name description"},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{Language: "sql", Value: "name: STRING (nullable)"},
+				lsp.RawMarkedString("name description"),
+			},
+		},
+		"hover new name in pipe RENAME": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "FROM `project.dataset.table` |> RENAME name AS |n |> WHERE true",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType, Description: "id description"},
+						{Name: "name", Type: bq.StringFieldType, Description: "name description"},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{Language: "sql", Value: "name: STRING (nullable)"},
+				lsp.RawMarkedString("name description"),
+			},
+		},
+		"hover alias in pipe SELECT": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "FROM `project.dataset.table` |> SELECT id AS |z",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType, Description: "id description"},
+						{Name: "name", Type: bq.StringFieldType, Description: "name description"},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{Language: "sql", Value: "id: INTEGER (nullable)"},
+				lsp.RawMarkedString("id description"),
+			},
+		},
+		"hover renamed column in a later pipe DROP": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "FROM `project.dataset.table` |> RENAME name AS n |> DROP |n",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType, Description: "id description"},
+						{Name: "name", Type: bq.StringFieldType, Description: "name description"},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{Language: "sql", Value: "name: STRING (nullable)"},
+				lsp.RawMarkedString("name description"),
+			},
+		},
+		"hover pipe EXTEND alias in a later pipe SET": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "FROM `project.dataset.table` |> EXTEND id + 1 AS b |> SET |b = 2",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType, Description: "id description"},
+						{Name: "name", Type: bq.StringFieldType, Description: "name description"},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{Language: "sql", Value: "b: INT64"},
+			},
+		},
+		"hover pipe DROP column inside a subquery": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT * FROM (FROM `project.dataset.table` |> DROP |name)",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType, Description: "id description"},
+						{Name: "name", Type: bq.StringFieldType, Description: "name description"},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{Language: "sql", Value: "name: STRING (nullable)"},
+				lsp.RawMarkedString("name description"),
+			},
+		},
+		"no hover on a pipe AS table alias": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "FROM `project.dataset.table` |> AS |q",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType, Description: "id description"},
+						{Name: "name", Type: bq.StringFieldType, Description: "name description"},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: nil,
+		},
+		"no column hover on a pipe AS table alias named after a column": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "FROM `project.dataset.table` |> AS |name",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType, Description: "id description"},
+						{Name: "name", Type: bq.StringFieldType, Description: "name description"},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: nil,
+		},
+		"hover GROUP BY alias in pipe AGGREGATE": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "FROM `project.dataset.table` |> AGGREGATE COUNT(*) AS c GROUP BY name AS |n",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType, Description: "id description"},
+						{Name: "name", Type: bq.StringFieldType, Description: "name description"},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{Language: "sql", Value: "n: STRING"},
+			},
+		},
 		"hover record field of dataset-qualified table": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT param.|key FROM dataset.table, UNNEST(params) AS param",

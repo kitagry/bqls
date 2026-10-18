@@ -1221,6 +1221,26 @@ func fixNotBoolClauseError(src string, parsedErr Error) (fixedSrc string, fixOff
 	}}
 }
 
+// addInformationToPipeColumnNotFoundError covers the column name that pipe
+// SET, DROP or RENAME could not find. The length is taken from the identifier
+// because the message does not keep its quoting.
+func addInformationToPipeColumnNotFoundError(src string, node googlesql.ASTNode, parsedErr Error) Error {
+	errOffset, ok := errorByteOffset(src, parsedErr.Position)
+	if !ok {
+		return parsedErr
+	}
+	ident, ok := SearchAstNode[*googlesql.ASTIdentifier](node, errOffset)
+	if !ok {
+		return parsedErr
+	}
+	start, end := locStart(ident), locEnd(ident)
+	if start != errOffset || end <= start || end > len(src) {
+		return parsedErr
+	}
+	parsedErr.TermLength = end - start
+	return parsedErr
+}
+
 func addInformationToNotExistInStructError(src string, node googlesql.ASTNode, parsedErr Error) Error {
 	ind := strings.Index(parsedErr.Msg, "Field name ")
 	if ind == -1 {
