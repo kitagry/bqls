@@ -1528,6 +1528,62 @@ func TestProject_CompleteColumns(t *testing.T) {
 				},
 			},
 		},
+		"Complete _TABLE_SUFFIX of wildcard table": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT | FROM `project.dataset.table_*`",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table_*": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+				},
+				{
+					Kind:    lsp.CIKField,
+					NewText: "_TABLE_SUFFIX",
+					Detail:  "STRING",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "STRING",
+					},
+				},
+			},
+		},
+		"Complete incomplete _TABLE_SUFFIX of wildcard table": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT _TABLE| FROM `project.dataset.table_*`",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table_*": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "_TABLE_SUFFIX",
+					Detail:  "STRING",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "STRING",
+					},
+					TypedPrefix: "_TABLE",
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {

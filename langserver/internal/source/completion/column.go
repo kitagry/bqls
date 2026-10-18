@@ -91,6 +91,11 @@ func (c *completor) createCompletionItemFromColumn(ctx context.Context, incomple
 		return createCompletionItemFromResolvedColumn(column, incompleteColumnName), true
 	}
 
+	// _TABLE_SUFFIX is added by the catalog for wildcard tables, not by the schema.
+	if colName == "_TABLE_SUFFIX" && strings.HasSuffix(tableName, "*") {
+		return createCompletionItemFromResolvedColumn(column, incompleteColumnName), true
+	}
+
 	return CompletionItem{}, false
 }
 
