@@ -60,7 +60,7 @@ func TestHandler_resolveVirtualTextDocumentDetails_and_Preview(t *testing.T) {
 		project: source.NewProjectWithBQClient("/", bqClient, logger),
 	}
 
-	details, err := h.resolveVirtualTextDocumentDetails(t.Context(), "token", lsp.VirtualTextDocumentInfo{
+	details, err := h.resolveVirtualTextDocumentDetails(t.Context(), h.project, "token", lsp.VirtualTextDocumentInfo{
 		ProjectID: "p",
 		DatasetID: "d",
 		TableID:   "t",

@@ -46,10 +46,15 @@ func (h *Handler) scheduleVirtualTextDocument() {
 			})
 			defer h.workDoneProgressEnd(ctx, workDoneToken, lsp.WorkDoneProgressEnd{})
 
+			// Held until the preview is fetched, since fetchPreview uses the
+			// project's BigQuery client.
+			p, release := h.acquireProject()
+			defer release()
+
 			// Details are usually much cheaper to fetch than preview rows, so
 			// publish them as soon as they're ready instead of waiting for
 			// preview too.
-			details, err := h.resolveVirtualTextDocumentDetails(ctx, workDoneToken, info)
+			details, err := h.resolveVirtualTextDocumentDetails(ctx, p, workDoneToken, info)
 			if ctx.Err() != nil {
 				return // superseded by a newer request for the same uri
 			}

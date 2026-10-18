@@ -30,8 +30,14 @@ type Handler struct {
 	logger  *logrus.Logger
 	version string
 
-	bqClient bigquery.Client
-	project  *source.Project
+	// projectMu guards bqClient and project, which background goroutines
+	// read while workspace/didChangeConfiguration may replace them, and
+	// projectUsers, which counts the goroutines still using each project so
+	// a replaced one is closed only after they finish.
+	projectMu    sync.Mutex
+	bqClient     bigquery.Client
+	project      *source.Project
+	projectUsers map[*source.Project]*sync.WaitGroup
 	// newBQClient creates the client for a (re)built project; nil means
 	// bigquery.New. Tests replace it to avoid real credentials.
 	newBQClient func(ctx context.Context, projectID, location string) (bigquery.Client, error)
@@ -124,9 +130,48 @@ func (h *Handler) setupByInitializeParams() error {
 		}
 	}
 
+	h.projectMu.Lock()
+	prev := h.project
+	prevUsers := h.projectUsers[prev]
+	delete(h.projectUsers, prev)
 	h.bqClient = bqClient
 	h.project = p
+	h.projectMu.Unlock()
+
+	if prev != nil {
+		// Waiting here would stall the JSON-RPC handler until in-flight
+		// queries such as dry runs finish.
+		go func() {
+			if prevUsers != nil {
+				prevUsers.Wait()
+			}
+			if err := prev.Close(); err != nil {
+				h.logger.Errorf("failed to close the previous project: %v", err)
+			}
+		}()
+	}
 	return nil
+}
+
+// acquireProject returns the current project for use off the JSON-RPC
+// handler goroutine. release must be called once the project, including
+// anything derived from it, is no longer used.
+func (h *Handler) acquireProject() (p *source.Project, release func()) {
+	h.projectMu.Lock()
+	defer h.projectMu.Unlock()
+	if h.project == nil {
+		return nil, func() {}
+	}
+	users, ok := h.projectUsers[h.project]
+	if !ok {
+		if h.projectUsers == nil {
+			h.projectUsers = make(map[*source.Project]*sync.WaitGroup)
+		}
+		users = &sync.WaitGroup{}
+		h.projectUsers[h.project] = users
+	}
+	users.Add(1)
+	return h.project, users.Done
 }
 
 func (h *Handler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
@@ -152,8 +197,11 @@ func (h *Handler) Close() error {
 	if h.conn != nil {
 		errs = append(errs, h.conn.Close())
 	}
-	if h.project != nil {
-		errs = append(errs, h.project.Close())
+	h.projectMu.Lock()
+	p := h.project
+	h.projectMu.Unlock()
+	if p != nil {
+		errs = append(errs, p.Close())
 	}
 	// Unblock background senders first, then wait for them to leave before
 	// closing the channels they send on.
