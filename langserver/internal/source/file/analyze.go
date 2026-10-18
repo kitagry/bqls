@@ -290,7 +290,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			if len(fo) == 0 {
 				fixedSrc, fo = fixIncompletePipeOperator(fixedSrc, pErr)
 			}
-			errs = append(errs, errorToSrc(src, passSrc, edits, pErr))
+			if !insideInsertedText(passSrc, edits, positionToByteOffset(passSrc, pErr.Position)) {
+				errs = append(errs, errorToSrc(src, passSrc, edits, pErr))
+			}
 			if len(fo) > 0 {
 				fixOffsets = append(fixOffsets, fo...)
 				edits = append(edits, editsOf(fo)...)
@@ -439,6 +441,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			}
 
 			srcErr := errorToSrc(src, errSrc, edits, pErr)
+			if insideInsertedText(errSrc, edits, positionToByteOffset(errSrc, pErr.Position)) {
+				skipError = true
+			}
 			if !skipError {
 				statements = append(statements, StatementResult{Stmt: s, Err: &srcErr})
 			}
@@ -482,6 +487,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 		Statements: statements,
 		ParseTree:  bqparser.Parse(fixedSrc),
 		FixOffsets: fixOffsets,
+		edits:      edits,
 		Errors:     errs,
 		catalog:    catalog,
 	}

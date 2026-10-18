@@ -37,6 +37,8 @@ type ParsedFile struct {
 	ParseTree *bqparser.Node
 
 	FixOffsets []FixOffset
+	// edits are the rewrites from Src to FixedSrc, in the order they were made.
+	edits []sourceEdit
 	// Errors are positioned in Src, unlike the offsets of the nodes.
 	Errors []Error
 
@@ -64,17 +66,7 @@ type StatementResult struct {
 func (p ParsedFile) Close() {}
 
 func (p ParsedFile) TermOffset(pos lsp.Position) int {
-	termOffset := positionToByteOffset(p.Src, pos)
-	return p.fixTermOffsetForNode(termOffset)
-}
-
-func (p ParsedFile) fixTermOffsetForNode(termOffset int) int {
-	for _, fo := range p.FixOffsets {
-		if termOffset > fo.Offset+fo.Length {
-			termOffset += fo.Length
-		}
-	}
-	return termOffset
+	return toFixedOffset(p.edits, positionToByteOffset(p.Src, pos))
 }
 
 func (p ParsedFile) ExtractSQL(locationRange *googlesql.ParseLocationRange) (string, bool) {
@@ -82,8 +74,8 @@ func (p ParsedFile) ExtractSQL(locationRange *googlesql.ParseLocationRange) (str
 		return "", false
 	}
 
-	startOffset := p.fixTermOffsetForSQL(parseLocStart(locationRange))
-	endOffset := p.fixTermOffsetForSQL(parseLocEnd(locationRange))
+	startOffset := toSrcOffset(p.edits, parseLocStart(locationRange))
+	endOffset := toSrcEnd(p.edits, parseLocEnd(locationRange))
 	if startOffset < 0 || endOffset < 0 || startOffset > endOffset || endOffset > len(p.Src) {
 		return "", false
 	}
@@ -106,14 +98,14 @@ func (p ParsedFile) OffsetsToLspRange(startOff, endOff int) (lsp.Range, bool) {
 	}
 
 	return lsp.Range{
-		Start: p.toLspPoint(startOff),
-		End:   p.toLspPoint(endOff),
+		Start: p.toLspPoint(toSrcOffset(p.edits, startOff)),
+		End:   p.toLspPoint(toSrcEnd(p.edits, endOff)),
 	}, true
 }
 
-func (p ParsedFile) toLspPoint(byteOffset int) lsp.Position {
-	offset := p.fixTermOffsetForSQL(byteOffset)
-
+// toLspPoint converts a byte offset in Src to an LSP position.
+func (p ParsedFile) toLspPoint(offset int) lsp.Position {
+	offset = min(max(offset, 0), len(p.Src))
 	toEndText := p.Src[:offset]
 	line := strings.Count(toEndText, "\n")
 	newLineInd := strings.LastIndex(toEndText, "\n")
@@ -127,15 +119,6 @@ func (p ParsedFile) toLspPoint(byteOffset int) lsp.Position {
 		Line:      line,
 		Character: char,
 	}
-}
-
-func (p ParsedFile) fixTermOffsetForSQL(termOffset int) int {
-	for _, fo := range p.FixOffsets {
-		if termOffset > fo.Offset+fo.Length {
-			termOffset -= fo.Length
-		}
-	}
-	return termOffset
 }
 
 func (p ParsedFile) FindTargetStatementNode(termOffset int) (googlesql.ASTStatementNode, bool) {
@@ -228,11 +211,11 @@ func (p *ParsedFile) FindTargetAnalyzeOutput(termOffset int) (*googlesql.Analyze
 }
 
 func (p *ParsedFile) FindIncompleteColumnName(pos lsp.Position) string {
-	targetTerm := p.TermOffset(pos)
+	// Errors and their TermLength are in Src, so the cursor is not mapped.
+	targetTerm := positionToByteOffset(p.Src, pos)
 
 	for _, err := range p.Errors {
 		startOffset := positionToByteOffset(p.Src, err.Position)
-		startOffset = p.fixTermOffsetForNode(startOffset)
 		if startOffset <= targetTerm && targetTerm <= startOffset+err.TermLength {
 			return err.IncompleteColumnName
 		}
@@ -244,10 +227,11 @@ type FixOffset struct {
 	Offset int
 	Length int
 
-	// edits is exactly what the fix-up rewrote. Offset and Length cannot be
-	// inverted exactly, because fix-ups anchor Offset at either the start or
-	// the end of what they rewrote, and the rewritten text cannot be recovered
-	// by diffing either, since a replacement may repeat the text around it.
+	// edits is exactly what the fix-up rewrote, and offsets are mapped only
+	// through it. Offset and Length cannot be inverted exactly, because fix-ups
+	// anchor Offset at either the start or the end of what they rewrote, and
+	// the rewritten text cannot be recovered by diffing either, since a
+	// replacement may repeat the text around it.
 	edits []sourceEdit
 }
 
@@ -286,6 +270,52 @@ func undoEdits(edits []sourceEdit, offset int, isEnd bool) int {
 		}
 	}
 	return offset
+}
+
+// toFixedOffset maps a byte offset in the text before edits to the text after
+// them. An offset at an insertion stays before the inserted text, so that the
+// cursor keeps pointing at what the user wrote.
+func toFixedOffset(edits []sourceEdit, offset int) int {
+	for _, e := range edits {
+		switch {
+		case offset <= e.start:
+		case offset >= e.start+e.oldLen:
+			offset += e.newLen - e.oldLen
+		default:
+			// Inside rewritten text, which may be shorter than the original.
+			offset = e.start + min(offset-e.start, e.newLen)
+		}
+	}
+	return offset
+}
+
+// insideInsertedText reports whether offset in text, the text after edits,
+// points at text a fix-up inserted rather than at text the user wrote. An
+// error there is caused by the fix-up, which only inserts where the user has
+// not finished typing, so the user's own error is already reported at the
+// insertion point.
+func insideInsertedText(text string, edits []sourceEdit, offset int) bool {
+	offset = min(max(offset, 0), len(text))
+	// An error at the end of the script is about the last code before it,
+	// which may be inserted text followed by the user's trailing comment.
+	codeEnd := len(strings.TrimRightFunc(text[:beforeTrailingComments(text, offset)], unicode.IsSpace))
+	return insertedAt(edits, offset) || insertedAt(edits, codeEnd)
+}
+
+func insertedAt(edits []sourceEdit, offset int) bool {
+	for i := len(edits) - 1; i >= 0; i-- {
+		e := edits[i]
+		end := e.start + e.newLen
+		switch {
+		case e.oldLen == 0 && e.newLen > 0 && e.start <= offset && offset <= end:
+			return true
+		case offset > end:
+			offset += e.oldLen - e.newLen
+		case offset > e.start+e.oldLen:
+			offset = e.start + e.oldLen
+		}
+	}
+	return false
 }
 
 // errorToSrc converts err, whose position is in errSrc (src after edits), to
@@ -470,22 +500,65 @@ func fixUnexpectedEndOfScript(src string, parsedErr Error) (fixedSrc string, err
 		},
 	}
 
-	oneLineSrc := strings.Join(strings.Fields(src), " ")
 	for _, target := range targets {
-		targetIndex := -1
-		for i, keyword := range target.keywords {
-			if strings.HasSuffix(oneLineSrc, keyword) {
-				targetIndex = i
-				break
-			}
-		}
-
-		if targetIndex != -1 {
+		if _, ok := trailingKeyword(src[:beforeTrailingComments(src, len(src))], target.keywords); ok {
 			return target.fixFunx(src, parsedErr, target.keywords)
 		}
 	}
 
 	return src, parsedErr, nil
+}
+
+// trailingKeyword returns the keyword that code ends with.
+func trailingKeyword(code string, keywords []string) (string, bool) {
+	oneLineCode := strings.Join(strings.Fields(code), " ")
+	for _, keyword := range keywords {
+		if strings.HasSuffix(oneLineCode, keyword) {
+			return keyword, true
+		}
+	}
+	return "", false
+}
+
+// endInsertionPoint returns where a fix-up inserts text to complete what the
+// user is typing at offset: after the whitespace that follows it, so that a
+// cursor there stays before the inserted text, and before any comment.
+func endInsertionPoint(src string, offset int) int {
+	for offset < len(src) && unicode.IsSpace(rune(src[offset])) {
+		offset++
+	}
+	return beforeTrailingComments(src, offset)
+}
+
+// beforeTrailingComments returns where the comments that precede offset, with
+// only whitespace between them and offset, start, or offset when there are
+// none. Text a fix-up puts at the end of the script must go there, because
+// after a line comment it would be part of the comment.
+func beforeTrailingComments(src string, offset int) int {
+	commentStart := -1
+	for i := 0; i < offset; {
+		switch {
+		case unicode.IsSpace(rune(src[i])):
+			i++
+		case src[i] == '\'' || src[i] == '"' || src[i] == '`':
+			i = skipQuoted(src, i)
+			commentStart = -1
+		default:
+			if next := skipComment(src, i); next != i {
+				if commentStart == -1 {
+					commentStart = i
+				}
+				i = next
+			} else {
+				i++
+				commentStart = -1
+			}
+		}
+	}
+	if commentStart == -1 {
+		return offset
+	}
+	return commentStart
 }
 
 // `WITH t1 AS (SELECT 1)` return error Expected "(" or "," or keyword SELECT but got end of script
@@ -494,6 +567,7 @@ func fixOnlyWithClauseSyntaxError(src string, parsedErr Error) (fixedSrc string,
 	if !ok {
 		return src, parsedErr, nil
 	}
+	errOffset = endInsertionPoint(src, errOffset)
 	return src[:errOffset] + " SELECT 1 " + src[errOffset:], parsedErr, []FixOffset{
 		{
 			Offset: errOffset,
@@ -665,43 +739,30 @@ func fixUnexpectedEndOfScriptWithDeletion(src string, parsedErr Error, targetUne
 		return src, parsedErr, nil
 	}
 
-	oneLineSrc := strings.Join(strings.Fields(src), " ")
-	targetIndex := -1
-	for i, keyword := range targetUnexpectedEndKeyword {
-		if strings.HasSuffix(oneLineSrc, keyword) {
-			targetIndex = i
-			break
-		}
-	}
-
-	if targetIndex == -1 {
+	code := src[:beforeTrailingComments(src, errOffset)]
+	targetKeyword, ok := trailingKeyword(code, targetUnexpectedEndKeyword)
+	if !ok {
 		return src, parsedErr, nil
 	}
 
-	targetKeyword := targetUnexpectedEndKeyword[targetIndex]
-	targetOffset := strings.LastIndex(src[:errOffset], strings.Split(targetKeyword, " ")[0])
+	targetOffset := strings.LastIndex(code, strings.Split(targetKeyword, " ")[0])
 	if targetOffset == -1 {
 		return src, parsedErr, nil
 	}
 
-	fixedSrc = strings.TrimSpace(src[:targetOffset])
+	// Only the end is trimmed, so that the text before the keyword keeps its offsets.
+	kept := strings.TrimRightFunc(src[:targetOffset], unicode.IsSpace)
 	// A pipe operator left without its operation is another syntax error, so
 	// it is removed together with the keyword.
-	if trimmed := strings.TrimSuffix(fixedSrc, "|>"); trimmed != fixedSrc {
-		fixedSrc = strings.TrimRightFunc(trimmed, unicode.IsSpace)
+	if trimmed := strings.TrimSuffix(kept, "|>"); trimmed != kept {
+		kept = strings.TrimRightFunc(trimmed, unicode.IsSpace)
 	}
-	// TrimSpace also drops leading whitespace, which is its own rewrite.
-	leading := targetOffset - len(strings.TrimLeftFunc(src[:targetOffset], unicode.IsSpace))
-	var edits []sourceEdit
-	if leading > 0 {
-		edits = append(edits, sourceEdit{start: 0, oldLen: leading})
-	}
-	edits = append(edits, sourceEdit{start: len(fixedSrc), oldLen: len(src) - leading - len(fixedSrc)})
+	fixedSrc = kept + src[len(code):]
 	return fixedSrc, parsedErr, []FixOffset{
 		{
 			Offset: errOffset,
-			Length: -(errOffset - len(fixedSrc)),
-			edits:  edits,
+			Length: -(len(code) - len(kept)),
+			edits:  []sourceEdit{{start: len(kept), oldLen: len(code) - len(kept)}},
 		},
 	}
 }
@@ -719,16 +780,8 @@ func fixUnexpectedEndOfScriptWithCondition(src string, parsedErr Error, targetUn
 		return src, parsedErr, nil
 	}
 
-	oneLineSrc := strings.Join(strings.Fields(src), " ")
-	targetIndex := -1
-	for i, keyword := range targetUnexpectedEndKeyword {
-		if strings.HasSuffix(oneLineSrc, keyword) {
-			targetIndex = i
-			break
-		}
-	}
-
-	if targetIndex == -1 {
+	errOffset = endInsertionPoint(src, errOffset)
+	if _, ok := trailingKeyword(src[:errOffset], targetUnexpectedEndKeyword); !ok {
 		return src, parsedErr, nil
 	}
 

@@ -589,3 +589,176 @@ func TestFixDot_ReportsPositionsInSource(t *testing.T) {
 		t.Errorf("fixDot error positions diff (-want, +got)\n%s", diff)
 	}
 }
+
+func TestFixUnexpectedEndOfScriptWithDeletion_KeepsLeadingWhitespace(t *testing.T) {
+	src := "\n\n  SELECT * FROM t GROUP BY"
+	errPos, _ := byteOffsetToPosition(src, len(src))
+
+	gotSrc, _, gotFixOffsets := fixUnexpectedEndOfScriptWithDeletion(src, Error{Position: errPos}, []string{"GROUP BY"})
+
+	wantSrc := "\n\n  SELECT * FROM t"
+	if gotSrc != wantSrc {
+		t.Errorf("fixed source = %q, want %q", gotSrc, wantSrc)
+	}
+	wantEdits := []sourceEdit{{start: len(wantSrc), oldLen: len(" GROUP BY")}}
+	if diff := cmp.Diff(wantEdits, editsOf(gotFixOffsets), cmp.AllowUnexported(sourceEdit{})); diff != "" {
+		t.Errorf("edits diff (-want, +got)\n%s", diff)
+	}
+}
+
+func TestFixUnexpectedEndOfScript_TrailingComment(t *testing.T) {
+	tests := map[string]struct {
+		src     string
+		fix     func(src string, parsedErr Error) (string, Error, []FixOffset)
+		wantSrc string
+	}{
+		"condition before a line comment": {
+			src:     "SELECT x FROM t WHERE -- a b",
+			fix:     fixUnexpectedEndOfScript,
+			wantSrc: "SELECT x FROM t WHERE  1=1-- a b",
+		},
+		"condition before a block comment and a line comment": {
+			src:     "SELECT x FROM t WHERE /* a */\n# b",
+			fix:     fixUnexpectedEndOfScript,
+			wantSrc: "SELECT x FROM t WHERE  1=1/* a */\n# b",
+		},
+		"deletion before a line comment": {
+			src:     "SELECT x FROM t GROUP BY -- GROUP",
+			fix:     fixUnexpectedEndOfScript,
+			wantSrc: "SELECT x FROM t-- GROUP",
+		},
+		"SELECT 1 before a line comment": {
+			src:     "WITH t AS (SELECT 1) -- c",
+			fix:     fixOnlyWithClauseSyntaxError,
+			wantSrc: "WITH t AS (SELECT 1)  SELECT 1 -- c",
+		},
+		"comment marker inside a string is not a comment": {
+			src:     "SELECT '--' WHERE",
+			fix:     fixUnexpectedEndOfScript,
+			wantSrc: "SELECT '--' WHERE 1=1",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			errPos, _ := byteOffsetToPosition(tt.src, len(tt.src))
+			gotSrc, _, _ := tt.fix(tt.src, Error{Position: errPos})
+			if gotSrc != tt.wantSrc {
+				t.Errorf("fixed source = %q, want %q", gotSrc, tt.wantSrc)
+			}
+		})
+	}
+}
+
+func TestParsedFile_MapsOffsetsThroughShrinkingReplacement(t *testing.T) {
+	// fixDeclarationError replaces the declared variable with a shorter dummy value.
+	p := ParsedFile{
+		Src:      "SELECT yyyyyy + 1 FROM t",
+		FixedSrc: "SELECT 1 + 1 FROM t",
+		edits:    []sourceEdit{{start: 7, oldLen: len("yyyyyy"), newLen: len("1")}},
+	}
+
+	t.Run("range starting at the replaced term", func(t *testing.T) {
+		got, ok := p.OffsetsToLspRange(7, 12)
+		want := lsp.Range{Start: lsp.Position{Character: 7}, End: lsp.Position{Character: 17}}
+		if !ok {
+			t.Fatal("OffsetsToLspRange returned not ok")
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("OffsetsToLspRange diff (-want, +got)\n%s", diff)
+		}
+	})
+
+	tests := map[string]struct {
+		pos  lsp.Position
+		want int
+	}{
+		"start of the replaced term": {pos: lsp.Position{Character: 7}, want: 7},
+		"end of the replaced term":   {pos: lsp.Position{Character: 13}, want: 8},
+		"after the replaced term":    {pos: lsp.Position{Character: 17}, want: 12},
+		"before the replaced term":   {pos: lsp.Position{Character: 6}, want: 6},
+	}
+	for name, tt := range tests {
+		t.Run("TermOffset/"+name, func(t *testing.T) {
+			if got := p.TermOffset(tt.pos); got != tt.want {
+				t.Errorf("TermOffset(%+v) = %d, want %d", tt.pos, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParsedFile_MapsOffsetsAtInsertionAndDeletion(t *testing.T) {
+	tests := map[string]struct {
+		p         ParsedFile
+		pos       lsp.Position
+		wantTerm  int
+		fixedOff  [2]int
+		wantRange lsp.Range
+	}{
+		"cursor at an insertion stays before the inserted text": {
+			p: ParsedFile{
+				Src:      "SELECT * FROM t WHERE ",
+				FixedSrc: "SELECT * FROM t WHERE  1=1",
+				edits:    []sourceEdit{{start: 22, newLen: len(" 1=1")}},
+			},
+			pos:       lsp.Position{Character: 22},
+			wantTerm:  22,
+			fixedOff:  [2]int{0, 26},
+			wantRange: lsp.Range{End: lsp.Position{Character: 22}},
+		},
+		"cursor in deleted text maps to the deletion": {
+			p: ParsedFile{
+				Src:      "SELECT 1 FROM t GROUP BY",
+				FixedSrc: "SELECT 1 FROM t",
+				edits:    []sourceEdit{{start: 15, oldLen: len(" GROUP BY")}},
+			},
+			pos:       lsp.Position{Character: 24},
+			wantTerm:  15,
+			fixedOff:  [2]int{14, 15},
+			wantRange: lsp.Range{Start: lsp.Position{Character: 14}, End: lsp.Position{Character: 15}},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := tt.p.TermOffset(tt.pos); got != tt.wantTerm {
+				t.Errorf("TermOffset(%+v) = %d, want %d", tt.pos, got, tt.wantTerm)
+			}
+			got, ok := tt.p.OffsetsToLspRange(tt.fixedOff[0], tt.fixedOff[1])
+			if !ok {
+				t.Fatal("OffsetsToLspRange returned not ok")
+			}
+			if diff := cmp.Diff(tt.wantRange, got); diff != "" {
+				t.Errorf("OffsetsToLspRange diff (-want, +got)\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestInsideInsertedText(t *testing.T) {
+	// "SELECT 1 + -- c" became "SELECT 1 +  SELECT 1 -- c" after its first rewrite.
+	text := "SELECT 1 +  SELECT 1 -- c"
+	edits := []sourceEdit{{start: 11, newLen: len(" SELECT 1 ")}}
+
+	tests := map[string]struct {
+		offset int
+		want   bool
+	}{
+		"before the insertion":                     {offset: 9, want: false},
+		"inside the insertion":                     {offset: 12, want: true},
+		"end of script after the trailing comment": {offset: len(text), want: true},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := insideInsertedText(text, edits, tt.offset); got != tt.want {
+				t.Errorf("insideInsertedText(%d) = %v, want %v", tt.offset, got, tt.want)
+			}
+		})
+	}
+
+	t.Run("replacement is not insertion", func(t *testing.T) {
+		if insideInsertedText("SELECT 1 + 1", []sourceEdit{{start: 7, oldLen: 6, newLen: 1}}, 7) {
+			t.Error("a term the user wrote was treated as inserted text")
+		}
+	})
+}
