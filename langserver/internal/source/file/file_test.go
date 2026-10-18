@@ -1,7 +1,9 @@
 package file_test
 
 import (
+	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
 	"github.com/sirupsen/logrus"
+	"google.golang.org/api/googleapi"
 )
 
 func TestProject_ParseFile(t *testing.T) {
@@ -1227,7 +1230,7 @@ func TestProject_ParseFileWithIncompleteTable(t *testing.T) {
 			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
 				ctrl := gomock.NewController(t)
 				bqClient := mock_bigquery.NewMockClient(ctrl)
-				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("not found"))
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, &googleapi.Error{Code: 404, Message: "Not found: Table project:dataset."})
 				return bqClient
 			},
 			expectedErrs: []file.Error{
@@ -1255,6 +1258,56 @@ func TestProject_ParseFileWithIncompleteTable(t *testing.T) {
 			defer got.Close()
 			if diff := cmp.Diff(tt.expectedErrs, got.Errors, cmpopts.IgnoreUnexported()); diff != "" {
 				t.Errorf("ParseFile result diff (-expect, +got)\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestAnalyzer_ParseFileReportsTableLoadFailures(t *testing.T) {
+	tests := map[string]struct {
+		file    string
+		err     error
+		wantMsg string
+	}{
+		"not found stays a plain finding": {
+			file:    "SELECT x FROM `p.d.t`",
+			err:     &googleapi.Error{Code: 404, Message: "Not found: Table p:d.t"},
+			wantMsg: "Table not found: `p.d.t`",
+		},
+		"permission denied": {
+			file:    "SELECT x FROM `p.d.t`",
+			err:     &googleapi.Error{Code: 403, Message: "Access Denied: Table p:d.t"},
+			wantMsg: "Table not found: `p.d.t` (failed to load table metadata: googleapi: Error 403: Access Denied: Table p:d.t)",
+		},
+		"transport failure": {
+			file:    "SELECT x FROM `p.d.t`",
+			err:     &url.Error{Op: "Get", URL: "https://bigquery.googleapis.com", Err: errors.New("connection refused")},
+			wantMsg: `Table not found: ` + "`p.d.t`" + ` (failed to load table metadata: Get "https://bigquery.googleapis.com": connection refused)`,
+		},
+		"dataset-qualified path": {
+			file:    "SELECT x FROM d.t",
+			err:     &googleapi.Error{Code: 401, Message: "Request had invalid authentication credentials."},
+			wantMsg: "Table not found: d.t (failed to load table metadata: googleapi: Error 401: Request had invalid authentication credentials.)",
+		},
+	}
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "p", "d", "t").Return(nil, tt.err).AnyTimes()
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
+			want := []file.Error{{
+				Msg:                  tt.wantMsg,
+				Position:             lsp.Position{Line: 0, Character: 14},
+				TermLength:           len(tt.file) - 14,
+				IncompleteColumnName: tt.file[14:],
+			}}
+			if diff := cmp.Diff(want, got.Errors); diff != "" {
+				t.Errorf("errors diff (-want +got)\n%s", diff)
 			}
 		})
 	}

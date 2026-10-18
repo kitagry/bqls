@@ -29,10 +29,21 @@ type Catalog struct {
 	// aliases holds lowercased "dataset.table" names already registered, because
 	// registering one twice traps in SimpleCatalog, which matches names
 	// case-insensitively.
-	aliases map[string]bool
-	mu      *sync.Mutex
+	aliases map[string]aliasState
+	// loadErrs keeps why a table could not be registered, because the analyzer
+	// only reports "Table not found", which hides auth or network problems.
+	loadErrs map[string]error // key: lowercased "project.dataset.table"
+	mu       *sync.Mutex
 	// subCatalogs tracks nested sub-catalogs for non-backtick path resolution.
 	subCatalogs map[string]*googlesql.SimpleCatalog // key: "project", "project.dataset" or a default-project "dataset"
+}
+
+// aliasState tracks the two registrations of a "dataset.table" alias
+// separately, so that a retry after a partial failure does not register the
+// succeeded one again.
+type aliasState struct {
+	backticked bool
+	unquoted   bool
 }
 
 func NewCatalog(bqClient bigquery.Client) *Catalog {
@@ -55,7 +66,8 @@ func NewCatalog(bqClient bigquery.Client) *Catalog {
 		bqClient:     bqClient,
 		tableMetaMap: make(map[string]*bq.TableMetadata),
 		tables:       make(map[string]*googlesql.SimpleTable),
-		aliases:      make(map[string]bool),
+		aliases:      make(map[string]aliasState),
+		loadErrs:     make(map[string]error),
 		mu:           &sync.Mutex{},
 		subCatalogs:  make(map[string]*googlesql.SimpleCatalog),
 	}
@@ -85,7 +97,8 @@ func (c *Catalog) Clone() *Catalog {
 		bqClient:     c.bqClient,
 		tableMetaMap: make(map[string]*bq.TableMetadata),
 		tables:       make(map[string]*googlesql.SimpleTable),
-		aliases:      make(map[string]bool),
+		aliases:      make(map[string]aliasState),
+		loadErrs:     make(map[string]error),
 		mu:           &sync.Mutex{},
 		subCatalogs:  make(map[string]*googlesql.SimpleCatalog),
 	}
@@ -114,44 +127,79 @@ func (c *Catalog) EnsureTable(path []string) error {
 	if err != nil {
 		return err
 	}
-	tableName := fmt.Sprintf("%s.%s.%s", projectID, datasetID, tableID)
+	key := strings.ToLower(fmt.Sprintf("%s.%s.%s", projectID, datasetID, tableID))
 	// A different casing of a loaded table resolves to the same catalog entry,
 	// so it is reused even though BigQuery may hold it as a separate table.
-	table, ok := c.tables[strings.ToLower(tableName)]
+	table, ok := c.tables[key]
 	if !ok {
 		table, err = c.addTable(path)
 		if err != nil {
+			c.loadErrs[key] = err
 			return err
 		}
 	}
 	// Checked even when the table is already loaded, because it may have been
 	// loaded through its 3-part name first.
 	if defaulted && projectID != "" {
-		c.addDatasetQualifiedAlias(table, datasetID, tableID)
+		if err := c.addDatasetQualifiedAlias(table, datasetID, tableID); err != nil {
+			c.loadErrs[key] = err
+			return err
+		}
 	}
+	delete(c.loadErrs, key)
 	return nil
+}
+
+// TableLoadError returns why the table referenced by name, as written in the
+// query, could not be registered, unless the cause is about the query itself,
+// e.g. the table does not exist.
+func (c *Catalog) TableLoadError(name string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	path := strings.Split(strings.ReplaceAll(name, "`", ""), ".")
+	projectID, datasetID, tableID, _, err := c.pathToProjectTable(path)
+	if err != nil {
+		return nil
+	}
+	err = c.loadErrs[strings.ToLower(fmt.Sprintf("%s.%s.%s", projectID, datasetID, tableID))]
+	if err == nil || !bigquery.IsRuntimeFailure(err) {
+		return nil
+	}
+	return err
 }
 
 // addDatasetQualifiedAlias makes the table resolvable as "dataset.table" for
 // the default project. The same table object is registered so that its name
 // stays "project.dataset.table", which hover, completion and lint rely on.
-func (c *Catalog) addDatasetQualifiedAlias(table *googlesql.SimpleTable, datasetID, tableID string) {
+func (c *Catalog) addDatasetQualifiedAlias(table *googlesql.SimpleTable, datasetID, tableID string) error {
 	key := strings.ToLower(datasetID + "." + tableID)
-	if c.aliases[key] {
-		return
-	}
-	c.aliases[key] = true
+	state := c.aliases[key]
 
 	// Backticked `dataset.table` is looked up as a single name.
-	_ = c.catalog.AddTable2(datasetID+"."+tableID, table)
+	if !state.backticked {
+		if err := c.catalog.AddTable2(datasetID+"."+tableID, table); err != nil {
+			return fmt.Errorf("failed to add table as %s.%s: %w", datasetID, tableID, err)
+		}
+		state.backticked = true
+		c.aliases[key] = state
+	}
 
 	// Unquoted dataset.table → root["dataset"]["table"]. The cache key is shared
 	// with a project of the same name, because the root cannot hold two
 	// sub-catalogs with one name.
-	datasetCat, err := c.getOrCreateSubCatalog(c.catalog, datasetID)
-	if err == nil {
-		_ = datasetCat.AddTable2(tableID, table)
+	if !state.unquoted {
+		datasetCat, err := c.getOrCreateSubCatalog(c.catalog, datasetID)
+		if err != nil {
+			return fmt.Errorf("failed to create sub-catalog(%s): %w", datasetID, err)
+		}
+		if err := datasetCat.AddTable2(tableID, table); err != nil {
+			return fmt.Errorf("failed to add table to sub-catalog(%s): %w", datasetID, err)
+		}
+		state.unquoted = true
+		c.aliases[key] = state
 	}
+	return nil
 }
 
 func (c *Catalog) addTable(path []string) (*googlesql.SimpleTable, error) {
@@ -162,7 +210,7 @@ func (c *Catalog) addTable(path []string) (*googlesql.SimpleTable, error) {
 
 	metadata, err := c.bqClient.GetTableMetadata(context.Background(), projectID, datasetID, tableID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get schema: %w", err)
+		return nil, fmt.Errorf("failed to load table metadata: %w", err)
 	}
 
 	tableName := fmt.Sprintf("%s.%s.%s", projectID, datasetID, tableID)
@@ -364,8 +412,10 @@ func isWildCardTable(path []string) bool {
 }
 
 // PreloadTablesFromAST walks the AST to find all table path expressions and
-// DML target tables, and pre-loads them.
-func (c *Catalog) PreloadTablesFromAST(node *googlesql.ASTScript) {
+// DML target tables, and pre-loads them. It returns the errors that
+// TableLoadError reports, so that the caller can log them.
+func (c *Catalog) PreloadTablesFromAST(node *googlesql.ASTScript) error {
+	var errs []error
 	Walk(node, func(n googlesql.ASTNode) error { //nolint
 		var name string
 		var ok bool
@@ -379,9 +429,12 @@ func (c *Catalog) PreloadTablesFromAST(node *googlesql.ASTScript) {
 		}
 		// Split after joining so that a backticked `p.d.t` becomes three parts.
 		path := strings.Split(name, ".")
-		_ = c.EnsureTable(path)
+		if err := c.EnsureTable(path); err != nil && c.TableLoadError(name) != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+		}
 		return nil
 	})
+	return errors.Join(errs...)
 }
 
 // dmlTargetPath returns the target table of a top-level DML statement, or nil.

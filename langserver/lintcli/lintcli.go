@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -25,7 +24,6 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source"
 	"github.com/sirupsen/logrus"
-	"google.golang.org/api/googleapi"
 )
 
 const (
@@ -336,7 +334,7 @@ func (c *memoClient) GetTableMetadata(ctx context.Context, projectID, datasetID,
 	}
 	md, err := c.Client.GetTableMetadata(ctx, projectID, datasetID, tableID)
 	c.tables[key] = tableResult{md, err}
-	if err != nil && isRuntimeFailure(err) && !slices.Contains(c.failMsgs, err.Error()) {
+	if err != nil && bigquery.IsRuntimeFailure(err) && !slices.Contains(c.failMsgs, err.Error()) {
 		c.failMsgs = append(c.failMsgs, err.Error())
 	}
 	return md, err
@@ -346,17 +344,6 @@ func (c *memoClient) failures() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return slices.Clone(c.failMsgs)
-}
-
-// isRuntimeFailure reports whether err says nothing about the query itself,
-// e.g. missing credentials, denied access, throttling, or an unreachable API.
-func isRuntimeFailure(err error) bool {
-	var apiErr *googleapi.Error
-	if errors.As(err, &apiErr) {
-		return apiErr.Code == http.StatusUnauthorized || apiErr.Code == http.StatusForbidden ||
-			apiErr.Code == http.StatusTooManyRequests || apiErr.Code >= 500
-	}
-	return true
 }
 
 // finding uses 1-based line/column numbers, as editors and CI annotations do.
