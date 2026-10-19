@@ -25,6 +25,9 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 	termOffset := parsedFile.TermOffset(position)
 	targetNode, ok := file.SearchAstNode[*googlesql.ASTPathExpression](parsedFile.Node, termOffset)
 	if !ok {
+		if result, ok := p.termDocumentForPipeColumnIdentifier(ctx, parsedFile, termOffset); ok {
+			return result, nil
+		}
 		p.logger.Debug("not found target node")
 		return nil, nil
 	}
@@ -111,20 +114,8 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 			return nil, fmt.Errorf("failed to find term: %v", term)
 		}
 
-		tableName, _ := column.TableName()
-		tableMetadata, err := p.analyzer.GetTableMetadataFromPath(ctx, tableName)
-		if err != nil {
-			// cannot find table metadata
-			return []lsp.MarkedString{
-				createColumnMarkedString(column),
-			}, nil
-		}
-
-		colName, _ := column.Name()
-		for _, f := range tableMetadata.Schema {
-			if colName == f.Name {
-				return createBigQueryFieldMarkedStrings(f), nil
-			}
+		if result, ok := p.columnDocument(ctx, column); ok {
+			return result, nil
 		}
 	}
 
@@ -136,19 +127,8 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 			return nil, nil
 		}
 
-		tableName, _ := column.TableName()
-		tableMetadata, err := p.analyzer.GetTableMetadataFromPath(ctx, tableName)
-		if err != nil {
-			return []lsp.MarkedString{
-				createColumnMarkedString(column),
-			}, nil
-		}
-
-		colName, _ := column.Name()
-		for _, f := range tableMetadata.Schema {
-			if colName == f.Name {
-				return createBigQueryFieldMarkedStrings(f), nil
-			}
+		if result, ok := p.columnDocument(ctx, column); ok {
+			return result, nil
 		}
 	}
 
@@ -182,6 +162,44 @@ func searchOrderByColumnRef(output *googlesql.AnalyzerOutput, targetNode *google
 		return nil, false
 	}
 	return columnRef, true
+}
+
+// columnDocument describes column with the schema of its table, or only with
+// its type when the table metadata is not available.
+func (p *Project) columnDocument(ctx context.Context, column *googlesql.ResolvedColumn) ([]lsp.MarkedString, bool) {
+	tableName, _ := column.TableName()
+	tableMetadata, err := p.analyzer.GetTableMetadataFromPath(ctx, tableName)
+	if err != nil {
+		return []lsp.MarkedString{
+			createColumnMarkedString(column),
+		}, true
+	}
+
+	colName, _ := column.Name()
+	for _, f := range tableMetadata.Schema {
+		if colName == f.Name {
+			return createBigQueryFieldMarkedStrings(f), true
+		}
+	}
+	return nil, false
+}
+
+// termDocumentForPipeColumnIdentifier describes the column that a bare
+// identifier in a pipe operator names, such as `x` in `|> DROP x`.
+func (p *Project) termDocumentForPipeColumnIdentifier(ctx context.Context, parsedFile file.ParsedFile, termOffset int) ([]lsp.MarkedString, bool) {
+	ident, op, isInput, ok := file.PipeColumnIdentifier(parsedFile.Node, termOffset)
+	if !ok {
+		return nil, false
+	}
+	name, err := ident.GetAsString()
+	if err != nil {
+		return nil, false
+	}
+	column, ok := p.analyzer.PipeColumn(parsedFile, op, name, isInput)
+	if !ok {
+		return nil, false
+	}
+	return p.columnDocument(ctx, column)
 }
 
 func (p *Project) termDocumentFromAstNode(ctx context.Context, targetNode *googlesql.ASTTablePathExpression) ([]lsp.MarkedString, bool) {

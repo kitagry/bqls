@@ -700,6 +700,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			isNotBoolClauseError := strings.Contains(pErr.Msg, "clause should return type BOOL")
 			isLogicalOperandError := logicalOperandErrorRegex.MatchString(pErr.Msg)
 			isNotBoolConditionError := notBoolConditionErrorRegex.MatchString(pErr.Msg)
+			isPipeColumnNotFoundError := strings.HasPrefix(pErr.Msg, "Column name in pipe ") && strings.Contains(pErr.Msg, " not found in input table: ")
 
 			// add information to Error
 			switch {
@@ -729,6 +730,8 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				pErr = addInformationToLogicalOperandError(fixedSrc, s, pErr)
 			case isNotBoolConditionError:
 				pErr = addInformationToNotBoolConditionError(pErr)
+			case isPipeColumnNotFoundError:
+				pErr = addInformationToPipeColumnNotFoundError(fixedSrc, s, pErr)
 			}
 
 			// fix src

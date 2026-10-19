@@ -1161,6 +1161,52 @@ func TestProject_ParseFile(t *testing.T) {
 	}
 }
 
+func TestAnalyzer_ParseFileWithUnknownPipeColumn(t *testing.T) {
+	tests := map[string]struct {
+		file        string
+		expectedErr file.Error
+	}{
+		"SET": {
+			file: "FROM `project.dataset.table` |> SET unknown = 1",
+			expectedErr: file.Error{
+				Msg:        "Column name in pipe SET not found in input table: unknown",
+				Position:   lsp.Position{Line: 0, Character: 36},
+				TermLength: 7,
+			},
+		},
+		"DROP": {
+			file: "FROM `project.dataset.table` |> DROP x, unknown",
+			expectedErr: file.Error{
+				Msg:        "Column name in pipe DROP not found in input table: unknown",
+				Position:   lsp.Position{Line: 0, Character: 40},
+				TermLength: 7,
+			},
+		},
+		"RENAME with a quoted name": {
+			file: "FROM `project.dataset.table` |> RENAME `un known` AS y",
+			expectedErr: file.Error{
+				Msg:        "Column name in pipe RENAME not found in input table: `un known`",
+				Position:   lsp.Position{Line: 0, Character: 39},
+				TermLength: 10,
+			},
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+				Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}},
+			}, nil).MinTimes(0)
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			if diff := cmp.Diff([]file.Error{tt.expectedErr}, got.Errors); diff != "" {
+				t.Errorf("ParseFile errors diff (-expect, +got)\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestAnalyzer_ParseFileWithPipeOperatorUnsupportedByBigQuery(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	bqClient := mock_bigquery.NewMockClient(ctrl)
