@@ -7,4 +7,5 @@ var Analyzers = []*Analyzer{
 	UnusedCTE,
 	UnusedDeclare,
 	PartitionFilter,
+	WildcardTableSuffix,
 }

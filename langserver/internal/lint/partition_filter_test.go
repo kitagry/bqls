@@ -63,6 +63,10 @@ var partitionedTables = map[string]*bq.TableMetadata{
 		TimePartitioning: &bq.TimePartitioning{Type: bq.DayPartitioningType, Field: "dt"},
 		Schema:           bq.Schema{{Name: "x", Type: bq.IntegerFieldType}, {Name: "dt", Type: bq.DateFieldType}},
 	},
+	"p.d.ev_*": {
+		Type:   bq.RegularTable,
+		Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}, {Name: "y", Type: bq.IntegerFieldType}},
+	},
 	"p.d.by_col*": {
 		Type:             bq.RegularTable,
 		TimePartitioning: &bq.TimePartitioning{Type: bq.DayPartitioningType, Field: "dt"},
@@ -87,6 +91,8 @@ func parsePartitioned(t *testing.T, src string) file.ParsedFile {
 		DoAndReturn(func(ctx context.Context, project, dataset, table string) (*bq.TableMetadata, error) {
 			return lookupPartitionedTable(ctx, project+"."+dataset+"."+table)
 		}).AnyTimes()
+	bqClient.EXPECT().DryRunSchema(gomock.Any(), gomock.Any()).
+		Return(bq.Schema{{Name: "table_name", Type: bq.StringFieldType}}, nil).AnyTimes()
 	parsed := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("file:///a.sql", src)
 	if len(parsed.Errors) > 0 {
 		t.Fatalf("unexpected analysis errors: %v", parsed.Errors)
