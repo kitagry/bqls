@@ -1302,16 +1302,16 @@ func TestAnalyzer_ParseFileWithLanguageFeatureSupportedByBigQuery(t *testing.T) 
 func TestAnalyzer_ParseFileWithRowAccessPolicyWithoutGrantTo(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	bqClient := mock_bigquery.NewMockClient(ctrl)
+	bqClient.EXPECT().GetDefaultProject().Return("project").AnyTimes()
+	bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+		Return(&bq.TableMetadata{Schema: bq.Schema{}}, nil).MinTimes(1)
 	analyzer := file.NewAnalyzer(logrus.New(), bqClient)
 
 	got := analyzer.ParseFile("uri", "CREATE ROW ACCESS POLICY p ON `project.dataset.table` FILTER USING (TRUE)")
 	defer got.Close()
 
-	// The target table is reported as not found until #538 is fixed, so only check that GRANT TO is optional.
 	for _, err := range got.Errors {
-		if strings.Contains(err.Msg, "Missing TO <grantee_list> clause") {
-			t.Errorf("ParseFile reported %q, but GRANT TO is optional in BigQuery", err.Msg)
-		}
+		t.Errorf("unexpected error: %s", err.Msg)
 	}
 }
 
