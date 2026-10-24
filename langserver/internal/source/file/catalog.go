@@ -769,8 +769,8 @@ func isWildCardTable(path []string) bool {
 	return strings.HasSuffix(path[len(path)-1], "*")
 }
 
-// PreloadTablesFromAST walks the AST to find all table path expressions and
-// DML target tables, and pre-loads them. It returns the errors that
+// PreloadTablesFromAST walks the AST to find all table path expressions, DML
+// target tables and DDL target tables, and pre-loads them. It returns the errors that
 // TableLoadError reports, so that the caller can log them.
 func (c *Catalog) PreloadTablesFromAST(node *googlesql.ASTScript) error {
 	var errs []error
@@ -780,6 +780,8 @@ func (c *Catalog) PreloadTablesFromAST(node *googlesql.ASTScript) error {
 		if tpe, isTPE := n.(*googlesql.ASTTablePathExpression); isTPE {
 			name, ok = CreateTableNameFromTablePathExpressionNode(tpe)
 		} else if pe := dmlTargetPath(n); pe != nil {
+			name, ok = joinPathExpression(pe)
+		} else if pe := ddlTargetPath(n); pe != nil {
 			name, ok = joinPathExpression(pe)
 		}
 		if !ok {
@@ -843,6 +845,40 @@ func dmlTargetPath(n googlesql.ASTNode) *googlesql.ASTPathExpression {
 		return nil
 	}
 	pe, _ := target.(*googlesql.ASTPathExpression)
+	return pe
+}
+
+// ddlTargetPath returns the existing table named by a DDL statement through a
+// plain path expression rather than an ASTTablePathExpression, or nil.
+func ddlTargetPath(n googlesql.ASTNode) *googlesql.ASTPathExpression {
+	var pe *googlesql.ASTPathExpression
+	var err error
+	switch stmt := n.(type) {
+	case *googlesql.ASTCreateRowAccessPolicyStatement:
+		pe, err = stmt.TargetPath()
+	case *googlesql.ASTDropRowAccessPolicyStatement:
+		pe, err = stmt.TableName()
+	case *googlesql.ASTDropAllRowAccessPoliciesStatement:
+		pe, err = stmt.TableName()
+	case *googlesql.ASTAlterAllRowAccessPoliciesStatement:
+		pe, err = stmt.TableNamePath()
+	case *googlesql.ASTCreateIndexStatement:
+		pe, err = stmt.TableName()
+	case *googlesql.ASTDropIndexStatement:
+		pe, err = stmt.TableName()
+	// DROP SEARCH INDEX and DROP VECTOR INDEX embed ASTDropIndexStatement, so the case above does not match them.
+	case *googlesql.ASTDropSearchIndexStatement:
+		pe, err = stmt.TableName()
+	case *googlesql.ASTDropVectorIndexStatement:
+		pe, err = stmt.TableName()
+	case *googlesql.ASTAlterTableStatement:
+		pe, err = stmt.Path()
+	default:
+		return nil
+	}
+	if err != nil {
+		return nil
+	}
 	return pe
 }
 

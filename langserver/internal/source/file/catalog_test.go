@@ -390,6 +390,53 @@ func TestCatalog_TableSuffixPseudoColumn(t *testing.T) {
 	})
 }
 
+func TestCatalog_PreloadDDLTargets(t *testing.T) {
+	tests := map[string]struct {
+		src string
+	}{
+		"CREATE ROW ACCESS POLICY": {
+			src: "CREATE ROW ACCESS POLICY pol ON p.d.t GRANT TO ('user:a@example.com') FILTER USING (x > 0)",
+		},
+		"CREATE ROW ACCESS POLICY with backticked path": {
+			src: "CREATE ROW ACCESS POLICY pol ON `p.d.t` GRANT TO ('user:a@example.com') FILTER USING (x > 0)",
+		},
+		"DROP ROW ACCESS POLICY": {
+			src: "DROP ROW ACCESS POLICY pol ON p.d.t",
+		},
+		"DROP ALL ROW ACCESS POLICIES": {
+			src: "DROP ALL ROW ACCESS POLICIES ON p.d.t",
+		},
+		"DROP SEARCH INDEX": {
+			src: "DROP SEARCH INDEX idx ON p.d.t",
+		},
+		"DROP VECTOR INDEX": {
+			src: "DROP VECTOR INDEX idx ON p.d.t",
+		},
+		"ALTER TABLE": {
+			src: "ALTER TABLE p.d.t ADD COLUMN y INT64",
+		},
+		"CREATE SEARCH INDEX": {
+			src: "CREATE SEARCH INDEX idx ON p.d.t (ALL COLUMNS)",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "p", "d", "t").
+				Return(&bq.TableMetadata{Schema: bq.Schema{
+					{Name: "x", Type: bq.IntegerFieldType},
+				}}, nil).MinTimes(1)
+
+			parsed := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("file:///a.sql", tt.src)
+			for _, e := range parsed.Errors {
+				t.Errorf("unexpected error: %s", e.Msg)
+			}
+		})
+	}
+}
+
 func TestCatalog_PreloadDMLTargets(t *testing.T) {
 	tests := map[string]struct {
 		src string
