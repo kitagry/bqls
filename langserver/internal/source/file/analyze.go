@@ -507,6 +507,12 @@ func maskOutside(rawText string, start, end int) string {
 }
 
 func (a *Analyzer) parseScript(src string) (*googlesql.ASTScript, error) {
+	return ParseScript(src)
+}
+
+// ParseScript parses src as a script without analyzing it, so that the AST
+// keeps the text as written (declared variables are substituted in ParsedFile.Node).
+func ParseScript(src string) (*googlesql.ASTScript, error) {
 	// Create a fresh LanguageOptions for parsing to avoid WASM object aliasing
 	// issues when the same pointer is used for both parser and analyzer options.
 	langOpt, err := newLanguageOptions()

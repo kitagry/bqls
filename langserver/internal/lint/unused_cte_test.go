@@ -22,6 +22,7 @@ func parseWithTable(t *testing.T, src string) file.ParsedFile {
 	bqClient := mock_bigquery.NewMockClient(ctrl)
 	bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}}}, nil).AnyTimes()
+	bqClient.EXPECT().GetDefaultProject().Return("p").AnyTimes()
 	parsed := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("file:///a.sql", src)
 	if len(parsed.Errors) > 0 {
 		t.Fatalf("unexpected analysis errors: %v", parsed.Errors)
