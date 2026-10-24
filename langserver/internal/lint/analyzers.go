@@ -8,4 +8,5 @@ var Analyzers = []*Analyzer{
 	UnusedDeclare,
 	PartitionFilter,
 	OrderByInSubquery,
+	WildcardTableSuffix,
 }
