@@ -3,6 +3,7 @@ package source_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/bigquery/mock_bigquery"
+	"github.com/kitagry/bqls/langserver/internal/function"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source"
 	"github.com/kitagry/bqls/langserver/internal/source/helper"
@@ -1326,28 +1328,7 @@ Storage info
 				}, nil).MinTimes(0)
 				return bqClient
 			},
-			expectMarkedStrings: []lsp.MarkedString{
-				{
-					Language: "markdown",
-					Value:    "Extracts a JSON scalar value and converts it to a SQL `STRING` value.\nIn addition, this function:Removes the outermost quotes and unescapes the values.\nReturns a SQL `NULL` if a non-scalar value is selected.\nUses double quotes to escape invalid [JSONPath](#JSONPath_format) characters\nin JSON keys. For example: `\"a.b\"`.Arguments:`json_string_expr`: A JSON-formatted string. For example:\n\n```\n'{\"name\": \"Jakob\", \"age\": \"6\"}'\n\n```\n\n`json_expr`: JSON. For example:\n\n```\nJSON '{\"name\": \"Jane\", \"age\": \"6\"}'\n\n```\n\n`json_path`: The [JSONPath](#JSONPath_format). This identifies the data that\nyou want to obtain from the input. If this optional parameter isn't\nprovided, then the JSONPath `$` symbol is applied, which means that all of\nthe data is analyzed.\n\nIf `json_path` returns a JSON `null` or a non-scalar value (in other words,\nif `json_path` refers to an object or an array), then a SQL `NULL` is\nreturned.There are differences between the JSON-formatted string and JSON input types.\nFor details, see [Differences between the JSON and JSON-formatted STRING types](#differences_json_and_string).\n\n[bigquery documentation](https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#json_value)",
-				},
-				{
-					Language: "sql",
-					Value:    "SELECT JSON_VALUE(JSON '{\"name\": \"Jakob\", \"age\": \"6\" }', '$.age') AS scalar_age;\n\n/*------------*\n | scalar_age |\n +------------+\n | 6          |\n *------------*/",
-				},
-				{
-					Language: "sql",
-					Value:    "SELECT JSON_QUERY('{\"name\": \"Jakob\", \"age\": \"6\"}', '$.name') AS json_name,\n  JSON_VALUE('{\"name\": \"Jakob\", \"age\": \"6\"}', '$.name') AS scalar_name,\n  JSON_QUERY('{\"name\": \"Jakob\", \"age\": \"6\"}', '$.age') AS json_age,\n  JSON_VALUE('{\"name\": \"Jakob\", \"age\": \"6\"}', '$.age') AS scalar_age;\n\n/*-----------+-------------+----------+------------*\n | json_name | scalar_name | json_age | scalar_age |\n +-----------+-------------+----------+------------+\n | \"Jakob\"   | Jakob       | \"6\"      | 6          |\n *-----------+-------------+----------+------------*/",
-				},
-				{
-					Language: "sql",
-					Value:    "SELECT JSON_QUERY('{\"fruits\": [\"apple\", \"banana\"]}', '$.fruits') AS json_query,\n  JSON_VALUE('{\"fruits\": [\"apple\", \"banana\"]}', '$.fruits') AS json_value;\n\n/*--------------------+------------*\n | json_query         | json_value |\n +--------------------+------------+\n | [\"apple\",\"banana\"] | NULL       |\n *--------------------+------------*/",
-				},
-				{
-					Language: "sql",
-					Value:    "SELECT JSON_VALUE('{\"a.b\": {\"c\": \"world\"}}', '$.\"a.b\".c') AS hello;\n\n/*-------*\n | hello |\n +-------+\n | world |\n *-------*/",
-				},
-			},
+			expectMarkedStrings: builtinFunctionMarkedStrings(t, "JSON_VALUE"),
 		},
 		"hover function argument": {
 			files: map[lsp.DocumentURI]string{
@@ -1524,4 +1505,25 @@ Storage info
 			}
 		})
 	}
+}
+
+// builtinFunctionMarkedStrings builds the expected hover for a built-in function from the
+// generated docs, so the test checks the hover format rather than the contents of the docs.
+func builtinFunctionMarkedStrings(t *testing.T, name string) []lsp.MarkedString {
+	t.Helper()
+	f, ok := function.FindBuiltInFunction(name)
+	if !ok {
+		t.Fatalf("built-in function %s not found", name)
+	}
+	if f.Description == "" || len(f.ExampleSQLs) == 0 {
+		t.Fatalf("built-in function %s has no description or examples", name)
+	}
+	result := []lsp.MarkedString{{
+		Language: "markdown",
+		Value:    fmt.Sprintf("%s\n\n[bigquery documentation](%s)", f.Description, f.URL),
+	}}
+	for _, sql := range f.ExampleSQLs {
+		result = append(result, lsp.MarkedString{Language: "sql", Value: sql})
+	}
+	return result
 }
