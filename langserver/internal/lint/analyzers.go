@@ -5,5 +5,6 @@ var Analyzers = []*Analyzer{
 	NullComparison,
 	InNull,
 	UnusedCTE,
+	UnusedDeclare,
 	PartitionFilter,
 }
