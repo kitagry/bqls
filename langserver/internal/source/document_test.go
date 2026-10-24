@@ -897,6 +897,27 @@ Storage info
 				lsp.RawMarkedString("name description"),
 			},
 		},
+		"hover column after an unknown column in pipe DROP": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "FROM `project.dataset.table` |> DROP unkno |> RENAME name AS n |> WHERE |n IS NULL",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType, Description: "id description"},
+						{Name: "name", Type: bq.StringFieldType, Description: "name description"},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{Language: "sql", Value: "name: STRING (nullable)"},
+				lsp.RawMarkedString("name description"),
+			},
+		},
 		"hover old name in pipe RENAME": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "FROM `project.dataset.table` |> RENAME |name AS n",

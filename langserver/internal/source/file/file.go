@@ -1241,6 +1241,60 @@ func addInformationToPipeColumnNotFoundError(src string, node googlesql.ASTNode,
 	return parsedErr
 }
 
+// fixPipeColumnNotFound removes the pipe SET, DROP or RENAME item that names
+// a column the input does not have, so that the rest of the statement is
+// still analyzed. When the item is the only one, the whole operator is removed.
+//
+//	FROM t |> DROP x, unknown |> WHERE y
+//
+// becomes
+//
+//	FROM t |> DROP x |> WHERE y
+func fixPipeColumnNotFound(src string, node googlesql.ASTNode, parsedErr Error) (fixedSrc string, fixOffsets []FixOffset) {
+	errOffset, ok := errorByteOffset(src, parsedErr.Position)
+	if !ok {
+		return src, nil
+	}
+	ident, _, isInput, ok := PipeColumnIdentifier(node, errOffset)
+	if !ok || !isInput || locStart(ident) != errOffset {
+		return src, nil
+	}
+	parent, err := ident.Parent()
+	if err != nil {
+		return src, nil
+	}
+
+	start := locStart(ident)
+	end := locEnd(ident)
+	if _, isDropList := parent.(*googlesql.ASTIdentifierList); !isDropList {
+		end = locEnd(parent)
+	}
+	if start < 0 || end <= start || end > len(src) {
+		return src, nil
+	}
+
+	switch prev := strings.TrimRightFunc(src[:start], unicode.IsSpace); {
+	case strings.HasSuffix(prev, ","):
+		start = len(prev) - 1
+	case strings.HasPrefix(strings.TrimLeftFunc(src[end:], unicode.IsSpace), ","):
+		rest := strings.TrimLeftFunc(src[end:], unicode.IsSpace)[len(","):]
+		end = len(src) - len(strings.TrimLeftFunc(rest, unicode.IsSpace))
+	default:
+		pipes := pipeOperatorOffsets(src[:start])
+		if len(pipes) == 0 {
+			return src, nil
+		}
+		start = len(strings.TrimRightFunc(src[:pipes[len(pipes)-1]], unicode.IsSpace))
+	}
+
+	fixedSrc = src[:start] + src[end:]
+	return fixedSrc, []FixOffset{{
+		Offset: start,
+		Length: -(end - start),
+		edits:  []sourceEdit{{start: start, oldLen: end - start, newLen: 0}},
+	}}
+}
+
 func addInformationToNotExistInStructError(src string, node googlesql.ASTNode, parsedErr Error) Error {
 	ind := strings.Index(parsedErr.Msg, "Field name ")
 	if ind == -1 {

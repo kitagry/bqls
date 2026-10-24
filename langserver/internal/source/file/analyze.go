@@ -762,6 +762,10 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				}
 			}
 
+			if isPipeColumnNotFoundError {
+				fixedSrc, fo = fixPipeColumnNotFound(fixedSrc, s, pErr)
+			}
+
 			if isEmptyPipeAggregateError {
 				fixedSrc, fo = fixIncompletePipeOperator(fixedSrc, pErr)
 			}
