@@ -18,7 +18,10 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/function/internal/docparse"
 )
 
-const docsDir = "googlesql_docs"
+const (
+	docsDir              = "googlesql_docs"
+	bigQueryFunctionList = "bigquery_functions.tsv"
+)
 
 // docFiles lists the vendored pages that are in scope: function references
 // that BigQuery also documents, under the same page name. Operators,
@@ -49,8 +52,17 @@ var docFiles = []string{
 }
 
 func main() {
-	var functions []docparse.Function
-	seen := map[string]string{}
+	listFile, err := os.Open(bigQueryFunctionList)
+	if err != nil {
+		log.Fatal(err)
+	}
+	list, err := docparse.ParseFunctionList(listFile)
+	listFile.Close()
+	if err != nil {
+		log.Fatalf("%s: %v", bigQueryFunctionList, err)
+	}
+
+	var pages []docparse.Page
 	for _, name := range docFiles {
 		src, err := os.ReadFile(filepath.Join(docsDir, name+".md"))
 		if err != nil {
@@ -63,18 +75,16 @@ func main() {
 		if len(fs) == 0 {
 			log.Fatalf("%s: no functions found", name)
 		}
-		for _, f := range fs {
-			if prev, ok := seen[f.Name]; ok {
-				log.Printf("skip duplicate %s in %s (already in %s)", f.Name, name, prev)
-				continue
-			}
-			seen[f.Name] = name
-			functions = append(functions, f)
-		}
+		pages = append(pages, docparse.Page{Name: name, Functions: fs})
 	}
+
+	functions, report := docparse.Select(pages, list)
 	if len(functions) == 0 {
 		log.Fatal("no functions found; refusing to overwrite builtin_function.go")
 	}
+	log.Printf("%d functions generated", len(functions))
+	log.Printf("dropped (documented by GoogleSQL, not in BigQuery): %s", strings.Join(report.NotInBigQuery, " "))
+	log.Printf("no description (in BigQuery, not documented by GoogleSQL): %s", strings.Join(report.NotInDocs, " "))
 
 	generate(functions)
 }
