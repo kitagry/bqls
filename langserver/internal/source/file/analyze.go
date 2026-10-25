@@ -651,7 +651,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 							continue
 						}
 						name, _ := ident.GetAsString()
-						declarationMap[name] = dummyValue
+						declarationMap[strings.ToLower(name)] = dummyValue
 					}
 				}
 				continue
@@ -745,7 +745,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			skipError := false
 			if isUnrecognizedNameError || isNotExistInStructError || isNotFoundInsideError {
 				errTermOffset := positionToByteOffset(fixedSrc, pErr.Position)
-				if defaultVal, ok := declarationMap[pErr.IncompleteColumnName]; isUnrecognizedNameError && ok {
+				if defaultVal, ok := declarationMap[strings.ToLower(pErr.IncompleteColumnName)]; isUnrecognizedNameError && ok {
 					fixedSrc, fo = fixDeclarationError(fixedSrc, pErr, defaultVal)
 					if len(fo) > 0 {
 						skipError = true
@@ -875,7 +875,7 @@ func countDeclaredVariableReferences(node *googlesql.ASTScript) int {
 				continue
 			}
 			name, _ := ident.GetAsString()
-			declared[name] = true
+			declared[strings.ToLower(name)] = true
 		}
 		return nil
 	})
@@ -889,7 +889,7 @@ func countDeclaredVariableReferences(node *googlesql.ASTScript) int {
 			return nil
 		}
 		name, _ := ident.GetAsString()
-		if declared[name] {
+		if declared[strings.ToLower(name)] {
 			count++
 		}
 		return nil
