@@ -161,7 +161,7 @@
 		"vscode-languageclient": "^9.0.1"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.5.6",
+		"@biomejs/biome": "^2.5.9",
 		"@types/node": "^26.1.2",
 		"@types/vscode": "^1.85.0",
 		"@vscode/vsce": "^3.9.2",
