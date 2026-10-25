@@ -49,7 +49,8 @@ func ParseFunctionList(r io.Reader) (map[string]string, error) {
 }
 
 // Select keeps only the functions that exist in the BigQuery list and uses the
-// BigQuery documentation URL for them. When several pages document the same
+// BigQuery documentation URL for them. BigQuery functions without GoogleSQL
+// documentation are appended with only a name and URL. When several pages document the same
 // name, the page BigQuery uses for it wins, otherwise the first one. The result
 // is ordered by the first appearance of each name.
 func Select(pages []Page, list map[string]string) ([]Function, Report) {
@@ -89,5 +90,10 @@ func Select(pages []Page, list map[string]string) ([]Function, Report) {
 		}
 	}
 	slices.Sort(report.NotInDocs)
+	// Keep BigQuery functions that GoogleSQL does not document, with the link only,
+	// so that completion still offers them and hover can point to the BigQuery docs.
+	for _, name := range report.NotInDocs {
+		result = append(result, Function{Name: name, URL: list[name]})
+	}
 	return result, report
 }

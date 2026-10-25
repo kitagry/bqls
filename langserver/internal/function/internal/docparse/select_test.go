@@ -70,6 +70,8 @@ func TestSelect(t *testing.T) {
 		{Name: "ABS", Description: "abs", URL: list["ABS"]},
 		// No page matches: the first candidate wins.
 		{Name: "EXTRACT", Description: "datetime", URL: list["EXTRACT"]},
+		// In the BigQuery list but not documented by GoogleSQL: name and URL only.
+		{Name: "MAX_BY", URL: list["MAX_BY"]},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Select() functions mismatch (-want +got):\n%s", diff)

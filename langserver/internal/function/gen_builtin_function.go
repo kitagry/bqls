@@ -23,10 +23,10 @@ const (
 	bigQueryFunctionList = "bigquery_functions.tsv"
 )
 
-// docFiles lists the vendored pages that are in scope: function references
-// that BigQuery also documents, under the same page name. Operators,
-// differential privacy, graph, protocol buffer, HLL, range and time series
-// functions are intentionally left out because BigQuery does not support them.
+// docFiles lists the vendored function reference pages to read. Functions that
+// BigQuery does not support are dropped by bigquery_functions.tsv, so this list
+// only needs to leave out pages that are not function references (operators,
+// differential privacy, graph, protocol buffer, table functions, ...).
 var docFiles = []string{
 	"aggregate_functions",
 	"approximate_aggregate_functions",
@@ -38,15 +38,18 @@ var docFiles = []string{
 	"debugging_functions",
 	"geography_functions",
 	"hash_functions",
+	"hll_functions",
 	"interval_functions",
 	"json_functions",
 	"mathematical_functions",
 	"navigation_functions",
 	"net_functions",
 	"numbering_functions",
+	"range-functions",
 	"security_functions",
 	"statistical_aggregate_functions",
 	"string_functions",
+	"time-series-functions",
 	"time_functions",
 	"timestamp_functions",
 }

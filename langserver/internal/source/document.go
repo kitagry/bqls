@@ -247,17 +247,22 @@ func (p *Project) functionDocumentation(fn *googlesql.Function) ([]lsp.MarkedStr
 	fnName, _ := fn.Name()
 	fnSQLName, _ := fn.SQLName()
 	builtinFunction, ok := function.FindBuiltInFunction(fnName)
-	if !ok {
+	if !ok || builtinFunction.Description == "" {
 		sigs, _ := fn.Signatures()
 		sigStrs := make([]string, 0, len(sigs))
 		for _, sig := range sigs {
 			s, _ := sig.DebugString(fnSQLName, true)
 			sigStrs = append(sigStrs, s)
 		}
+		value := fmt.Sprintf("## %s\n\n%s", fnSQLName, strings.Join(sigStrs, "\n"))
+		if ok && builtinFunction.URL != "" {
+			// The function is known to BigQuery but has no description here: link to its documentation.
+			value += fmt.Sprintf("\n\n[bigquery documentation](%s)", builtinFunction.URL)
+		}
 		return []lsp.MarkedString{
 			{
 				Language: "markdown",
-				Value:    fmt.Sprintf("## %s\n\n%s", fnSQLName, strings.Join(sigStrs, "\n")),
+				Value:    value,
 			},
 		}, true
 	}
@@ -291,6 +296,12 @@ func (p *Project) termDocumentFromASTFunctionCall(fnCallNode *googlesql.ASTFunct
 	builtinFn, ok := function.FindBuiltInFunction(fnName)
 	if !ok {
 		return nil, false
+	}
+	if builtinFn.Description == "" {
+		return []lsp.MarkedString{{
+			Language: "markdown",
+			Value:    fmt.Sprintf("[bigquery documentation](%s)", builtinFn.URL),
+		}}, true
 	}
 	result := make([]lsp.MarkedString, 0, len(builtinFn.ExampleSQLs)+1)
 	result = append(result, lsp.MarkedString{

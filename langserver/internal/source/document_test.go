@@ -1330,6 +1330,34 @@ Storage info
 			},
 			expectMarkedStrings: builtinFunctionMarkedStrings(t, "JSON_VALUE"),
 		},
+		"hover function without description known by analyzer": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT |GENERATE_UUID()",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				return mock_bigquery.NewMockClient(gomock.NewController(t))
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{
+					Language: "markdown",
+					Value:    "## GENERATE_UUID\n\nGENERATE_UUID() -> STRING\n\n[bigquery documentation](" + builtinFunctionURL(t, "GENERATE_UUID") + ")",
+				},
+			},
+		},
+		"hover function without description unknown to analyzer": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT |MAX_BY('a', 1)",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				return mock_bigquery.NewMockClient(gomock.NewController(t))
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{
+					Language: "markdown",
+					Value:    "[bigquery documentation](" + builtinFunctionURL(t, "MAX_BY") + ")",
+				},
+			},
+		},
 		"hover function argument": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT JSON_VALUE(|json, '$.name') FROM `project.dataset.table`",
@@ -1526,4 +1554,13 @@ func builtinFunctionMarkedStrings(t *testing.T, name string) []lsp.MarkedString 
 		result = append(result, lsp.MarkedString{Language: "sql", Value: sql})
 	}
 	return result
+}
+
+func builtinFunctionURL(t *testing.T, name string) string {
+	t.Helper()
+	f, ok := function.FindBuiltInFunction(name)
+	if !ok || f.URL == "" {
+		t.Fatalf("built-in function %s has no URL", name)
+	}
+	return f.URL
 }
