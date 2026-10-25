@@ -8,7 +8,7 @@ require (
 )
 
 require (
-	cloud.google.com/go/bigquery v1.79.0
+	cloud.google.com/go/bigquery v1.85.0
 	github.com/goccy/go-googlesql v0.4.0
 	github.com/golang/mock v1.6.0
 	github.com/sirupsen/logrus v1.9.3
