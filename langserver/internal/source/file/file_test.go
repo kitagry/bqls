@@ -1769,6 +1769,18 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 			},
 			expectedErrs: []file.Error{},
 		},
+		"Reference differs in case from the declaration": {
+			file:         "DECLARE Foo INT64 DEFAULT 1;\nSELECT foo",
+			expectedErrs: []file.Error{},
+		},
+		"Declaration is lower case and reference is upper case": {
+			file:         "DECLARE foo INT64 DEFAULT 1;\nSELECT FOO",
+			expectedErrs: []file.Error{},
+		},
+		"References in mixed case": {
+			file:         "DECLARE Foo INT64 DEFAULT 1;\nSELECT foo, FOO, Foo, fOO",
+			expectedErrs: []file.Error{},
+		},
 		"Parse without default value": {
 			file: "DECLARE target_id INT64;\n" +
 				"SELECT * FROM `project.dataset.table` WHERE id = target_id",

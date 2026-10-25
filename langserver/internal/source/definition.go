@@ -126,7 +126,7 @@ func (p *Project) listupTargetVariableDeclarationEntries(parsedFile file.ParsedF
 				continue
 			}
 			declName, err := declIdent.GetAsString()
-			if err != nil || declName != identName {
+			if err != nil || !strings.EqualFold(declName, identName) {
 				continue
 			}
 			loc, err := declIdent.GetParseLocationRange()

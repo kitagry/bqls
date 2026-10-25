@@ -41,6 +41,9 @@ func TestUnusedDeclare(t *testing.T) {
 		"used in SELECT": {
 			src: "DECLARE x INT64 DEFAULT 1;\nSELECT x",
 		},
+		"used with different case": {
+			src: "DECLARE Foo INT64 DEFAULT 1;\nSELECT foo",
+		},
 		"used in a WHERE of a table query": {
 			src: "DECLARE x INT64 DEFAULT 1;\nSELECT * FROM p.d.t WHERE x = 1",
 		},
