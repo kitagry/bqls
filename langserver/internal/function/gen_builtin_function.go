@@ -1,6 +1,7 @@
 //go:build ignore
 
-// This program is run via "go generate" to generate builtin functions.
+// This program is run via "go generate" to generate builtin functions from the
+// GoogleSQL function reference vendored in googlesql_docs/ (no network access).
 
 package main
 
@@ -9,60 +10,89 @@ import (
 	"fmt"
 	"go/format"
 	"log"
-	"net/http"
 	"os"
-	"regexp"
-	"slices"
+	"path/filepath"
 	"strings"
 	"text/template"
 
-	md "github.com/JohannesKaufmann/html-to-markdown"
-	"github.com/PuerkitoBio/goquery"
+	"github.com/kitagry/bqls/langserver/internal/function/internal/docparse"
 )
 
-type function struct {
-	Name        string
-	Method      string
-	Description string
-	ExampleSQLs []string
-	URL         string
+const (
+	docsDir              = "googlesql_docs"
+	bigQueryFunctionList = "bigquery_functions.tsv"
+)
+
+// docFiles lists the vendored function reference pages to read. Functions that
+// BigQuery does not support are dropped by bigquery_functions.tsv, so this list
+// only needs to leave out pages that are not function references (operators,
+// differential privacy, graph, protocol buffer, table functions, ...).
+var docFiles = []string{
+	"aggregate_functions",
+	"approximate_aggregate_functions",
+	"array_functions",
+	"bit_functions",
+	"conversion_functions",
+	"date_functions",
+	"datetime_functions",
+	"debugging_functions",
+	"geography_functions",
+	"hash_functions",
+	"hll_functions",
+	"interval_functions",
+	"json_functions",
+	"mathematical_functions",
+	"navigation_functions",
+	"net_functions",
+	"numbering_functions",
+	"range-functions",
+	"security_functions",
+	"statistical_aggregate_functions",
+	"string_functions",
+	"time-series-functions",
+	"time_functions",
+	"timestamp_functions",
 }
 
 func main() {
-	urls := []string{
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/approximate_aggregate_functions",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/array_functions",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/bit_functions",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/table-functions-built-in",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/conversion_functions",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/date_functions",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/datetime_functions",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/debugging_functions",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/interval_functions",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/navigation_functions",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/net_functions",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/numbering_functions",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/search_functions",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/security_functions",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/statistical_aggregate_functions",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/string_functions",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/time_functions",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/timestamp_functions",
-		"https://cloud.google.com/bigquery/docs/reference/standard-sql/utility-functions",
+	listFile, err := os.Open(bigQueryFunctionList)
+	if err != nil {
+		log.Fatal(err)
+	}
+	list, err := docparse.ParseFunctionList(listFile)
+	listFile.Close()
+	if err != nil {
+		log.Fatalf("%s: %v", bigQueryFunctionList, err)
 	}
 
-	functions := make([]function, 0)
-	for _, url := range urls {
-		functions = append(functions, loadFunctions(url)...)
+	var pages []docparse.Page
+	for _, name := range docFiles {
+		src, err := os.ReadFile(filepath.Join(docsDir, name+".md"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		fs, err := docparse.Parse(src, docparse.BigQueryDocsBase+name)
+		if err != nil {
+			log.Fatalf("%s: %v", name, err)
+		}
+		if len(fs) == 0 {
+			log.Fatalf("%s: no functions found", name)
+		}
+		pages = append(pages, docparse.Page{Name: name, Functions: fs})
 	}
+
+	functions, report := docparse.Select(pages, list)
+	if len(functions) == 0 {
+		log.Fatal("no functions found; refusing to overwrite builtin_function.go")
+	}
+	log.Printf("%d functions generated", len(functions))
+	log.Printf("dropped (documented by GoogleSQL, not in BigQuery): %s", strings.Join(report.NotInBigQuery, " "))
+	log.Printf("no description (in BigQuery, not documented by GoogleSQL): %s", strings.Join(report.NotInDocs, " "))
 
 	generate(functions)
 }
 
-func generate(functions []function) {
+func generate(functions []docparse.Function) {
 	funcMap := template.FuncMap{
 		"escape": func(s string) string {
 			out := strings.ReplaceAll(s, "\\", "\\\\")
@@ -111,105 +141,3 @@ var BuiltInFunctions = []BuiltInFunction{
 		},
 {{end}}}
 `
-
-const sectionHeader = "h2"
-
-var docRegexp = regexp.MustCompile(`\[([\w\s]+)\]\(/bigquery/docs/(.+)\)`)
-
-func loadFunctions(url string) []function {
-	resp, err := http.Get(url)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		log.Fatal(err)
-	}
-	methods := make([]string, 0)
-	doc.Find("div.devsite-article-body").Find("tbody").Children().Each(func(i int, s *goquery.Selection) {
-		code := s.Find("code").First()
-		if code.Text() != "" {
-			methods = append(methods, code.Text())
-		}
-	})
-	methods = slices.Compact(methods)
-
-	functions := make([]function, 0)
-	for _, method := range methods {
-		document := doc.Find(fmt.Sprintf("%s[data-text=%s]", sectionHeader, method))
-		if !document.Is(sectionHeader) {
-			continue
-		}
-		name := document.Text()
-		functionURL := fmt.Sprintf("%s#%s", url, strings.ToLower(method))
-
-		methodSelection := document.Next().Next()
-		method := strings.TrimSpace(methodSelection.Text())
-
-		descriptionSelection := methodSelection
-		i := 0
-		for !descriptionSelection.Is(sectionHeader) && i < 10 {
-			if descriptionSelection.Text() == "Description" {
-				break
-			}
-			descriptionSelection = descriptionSelection.Next()
-			i++
-		}
-		descriptionSelection = descriptionSelection.Next()
-
-		var description string
-		i = 0
-		converter := md.NewConverter("", true, nil)
-		for !descriptionSelection.Children().First().Is("strong") && i < 10 {
-			descHTML, err := descriptionSelection.Html()
-			if err != nil {
-				log.Fatalf("failed to get html of description: %v", err)
-			}
-
-			descMarkdown, err := converter.ConvertString(descHTML)
-			if err != nil {
-				log.Fatalf("failed to convert html of description to markdown: %v", err)
-			}
-
-			description += descMarkdown
-			descriptionSelection = descriptionSelection.Next()
-			i++
-		}
-		description = strings.TrimSpace(description)
-
-		exampleSelection := descriptionSelection
-		i = 0
-		for !exampleSelection.Is(sectionHeader) && i < 10 {
-			if exampleSelection.Text() == "Example" || exampleSelection.Text() == "Examples" {
-				break
-			}
-			exampleSelection = exampleSelection.Next()
-			i++
-		}
-
-		examples := make([]string, 0)
-		i = 0
-		for !exampleSelection.Is(sectionHeader) && i < 15 {
-			if code := exampleSelection.Find("code"); code != nil {
-				codeParent := code.Parent()
-				if codeParent.Is("pre") {
-					examples = append(examples, strings.TrimSpace(code.Text()))
-				}
-			}
-			exampleSelection = exampleSelection.Next()
-			i++
-		}
-
-		functions = append(functions, function{
-			Name:        name,
-			Method:      method,
-			Description: docRegexp.ReplaceAllString(description, "[$1](https://cloud.google.com/bigquery/docs/$2)"),
-			ExampleSQLs: examples,
-			URL:         functionURL,
-		})
-	}
-
-	return functions
-}

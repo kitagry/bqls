@@ -2,6 +2,7 @@ package completion
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	googlesql "github.com/goccy/go-googlesql"
@@ -39,16 +40,27 @@ func (c *completor) completeBuiltinFunction(ctx context.Context, parsedFile file
 	result := make([]CompletionItem, 0)
 	for _, f := range function.BuiltInFunctions {
 		if strings.HasPrefix(f.Name, incompleteColumnName) {
+			doc := f.Description
+			if doc == "" {
+				doc = documentationLink(f.URL)
+			}
 			result = append(result, CompletionItem{
 				Kind:        lsp.CIKFunction,
 				NewText:     f.Name,
 				TypedPrefix: incompleteColumnName,
 				Documentation: lsp.MarkupContent{
 					Kind:  lsp.MKMarkdown,
-					Value: f.Description,
+					Value: doc,
 				},
 			})
 		}
 	}
 	return result
+}
+
+func documentationLink(url string) string {
+	if url == "" {
+		return ""
+	}
+	return fmt.Sprintf("[bigquery documentation](%s)", url)
 }

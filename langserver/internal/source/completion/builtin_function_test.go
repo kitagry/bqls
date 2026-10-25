@@ -35,6 +35,25 @@ func TestCompletor_CompleteBuiltinFunction(t *testing.T) {
 			},
 			expectCompletionItems: []CompletionItem{}, // empty
 		},
+		"Complete a function without description with a link to the BigQuery documentation": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT GENERATE_UUID|",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				return mock_bigquery.NewMockClient(gomock.NewController(t))
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:        lsp.CIKFunction,
+					NewText:     "GENERATE_UUID",
+					TypedPrefix: "GENERATE_UUID",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKMarkdown,
+						Value: "[bigquery documentation](https://docs.cloud.google.com/bigquery/docs/reference/standard-sql/utility-functions#generate_uuid)",
+					},
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {
