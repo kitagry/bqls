@@ -14,7 +14,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/text v0.43.0
-	google.golang.org/api v0.304.0
+	google.golang.org/api v0.308.0
 	modernc.org/sqlite v1.55.0
 )
 
@@ -63,7 +63,7 @@ require (
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/genproto v0.0.0-20260715232425-e75dac1f907d // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260715232425-e75dac1f907d // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20261005182115-fad411399dd8 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261019180522-ce908d29299b // indirect
 	google.golang.org/grpc v1.84.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	modernc.org/libc v1.74.1 // indirect
