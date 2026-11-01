@@ -40,31 +40,12 @@ func runUnusedJoin(pass *Pass) {
 }
 
 func isUnusedJoin(join *googlesql.ResolvedJoinScan, uses map[int32]int) bool {
-	typ, err := join.JoinType()
-	if err != nil {
-		return false
-	}
-	var side googlesql.ResolvedScanNode
-	switch typ {
-	case googlesql.ResolvedJoinScanEnums_JoinTypeLeft:
-		side, err = join.RightScan()
-	case googlesql.ResolvedJoinScanEnums_JoinTypeRight:
-		side, err = join.LeftScan()
-	default:
-		return false
-	}
-	if err != nil || side == nil {
-		return false
-	}
-	// ColumnList is defined on each concrete scan type, not on ResolvedScanNode.
-	scan, ok := side.(interface {
-		ColumnList() ([]*googlesql.ResolvedColumn, error)
-	})
+	side, ok := optionalSide(join)
 	if !ok {
 		return false
 	}
-	cols, err := scan.ColumnList()
-	if err != nil {
+	cols, ok := scanColumns(side)
+	if !ok {
 		return false
 	}
 
@@ -108,6 +89,37 @@ func columnUses(n googlesql.ResolvedNode) map[int32]int {
 		return nil
 	})
 	return uses
+}
+
+// optionalSide returns the side of a LEFT / RIGHT JOIN whose columns are NULL
+// in the rows added for unmatched rows of the other side.
+func optionalSide(join *googlesql.ResolvedJoinScan) (googlesql.ResolvedScanNode, bool) {
+	typ, err := join.JoinType()
+	if err != nil {
+		return nil, false
+	}
+	var side googlesql.ResolvedScanNode
+	switch typ {
+	case googlesql.ResolvedJoinScanEnums_JoinTypeLeft:
+		side, err = join.RightScan()
+	case googlesql.ResolvedJoinScanEnums_JoinTypeRight:
+		side, err = join.LeftScan()
+	default:
+		return nil, false
+	}
+	return side, err == nil && side != nil
+}
+
+func scanColumns(scan googlesql.ResolvedScanNode) ([]*googlesql.ResolvedColumn, bool) {
+	// ColumnList is defined on each concrete scan type, not on ResolvedScanNode.
+	s, ok := scan.(interface {
+		ColumnList() ([]*googlesql.ResolvedColumn, error)
+	})
+	if !ok {
+		return nil, false
+	}
+	cols, err := s.ColumnList()
+	return cols, err == nil
 }
 
 func reportUnusedJoin(pass *Pass, join *googlesql.ResolvedJoinScan) {

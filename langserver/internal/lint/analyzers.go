@@ -4,6 +4,7 @@ package lint
 var Analyzers = []*Analyzer{
 	NullComparison,
 	InNull,
+	NotInNullable,
 	UnusedCTE,
 	UnusedDeclare,
 	PartitionFilter,
@@ -11,7 +12,9 @@ var Analyzers = []*Analyzer{
 	UnusedJoin,
 	WildcardTableSuffix,
 	CrossJoin,
+	UnionColumnOrder,
 	BytesProcessedThreshold,
 	SelectStar,
+	LeftJoinAsInner,
 	VariableColumnShadow,
 }
