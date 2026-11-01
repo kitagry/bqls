@@ -36,6 +36,7 @@ gcloud auth application-default login
 | `bqls.path`         | Path to the `bqls` executable.                                                   | `bqls`  |
 | `bqls.projectId`    | BigQuery project ID. If empty, `bqls` falls back to `gcloud config get project`. | `""`    |
 | `bqls.location`     | BigQuery location (e.g. `US`, `asia-northeast1`). If empty, `bqls` uses `US`.    | `""`    |
+| `bqls.lint.rules`   | Enable or disable lint rules by name, e.g. `{"null-comparison": false}`. See [Lint](https://github.com/kitagry/bqls/blob/main/docs/lint.md). | `{}`    |
 | `bqls.trace.server` | Trace communication between VSCode and the language server.                      | `off`   |
 
 ## Development
