@@ -7,6 +7,8 @@ var Analyzers = []*Analyzer{
 	NotInNullable,
 	UnusedCTE,
 	UnusedDeclare,
+	UnusedTempFunction,
+	UnusedTempFunctionArgument,
 	PartitionFilter,
 	PartitionFilterNotPrunable,
 	OrderByInSubquery,
