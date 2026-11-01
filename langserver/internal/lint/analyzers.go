@@ -11,4 +11,5 @@ var Analyzers = []*Analyzer{
 	WildcardTableSuffix,
 	CrossJoin,
 	BytesProcessedThreshold,
+	SelectStar,
 }
