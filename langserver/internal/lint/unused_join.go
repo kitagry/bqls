@@ -122,6 +122,20 @@ func scanColumns(scan googlesql.ResolvedScanNode) ([]*googlesql.ResolvedColumn, 
 	return cols, err == nil
 }
 
+func scanColumnIDs(scan googlesql.ResolvedScanNode) (map[int32]bool, bool) {
+	cols, ok := scanColumns(scan)
+	if !ok {
+		return nil, false
+	}
+	ids := make(map[int32]bool, len(cols))
+	for _, c := range cols {
+		if id, err := c.ColumnId(); err == nil {
+			ids[id] = true
+		}
+	}
+	return ids, true
+}
+
 func reportUnusedJoin(pass *Pass, join *googlesql.ResolvedJoinScan) {
 	loc, err := join.GetParseLocationRangeOrNULL()
 	if err != nil || loc == nil {
