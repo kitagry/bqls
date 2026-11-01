@@ -11,6 +11,7 @@ var Analyzers = []*Analyzer{
 	OrderByInSubquery,
 	UnusedJoin,
 	WildcardTableSuffix,
+	WildcardTableSuffixNotConstant,
 	CrossJoin,
 	BytesProcessedThreshold,
 	SelectStar,

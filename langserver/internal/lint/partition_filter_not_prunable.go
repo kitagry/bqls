@@ -49,90 +49,117 @@ func checkPartitionFilterPrunable(pass *Pass, flow *columnFlow, scan *googlesql.
 		return
 	}
 	partitionColumns := partitionColumnNames(meta)
-	names := make(map[int32]string)
-	var partitionIDs, otherIDs []int32
-	for _, c := range cols {
-		colName, err := c.Name()
-		id, err2 := c.ColumnId()
-		if err != nil || err2 != nil {
-			return
-		}
-		names[id] = colName
-		if slices.ContainsFunc(partitionColumns, func(p string) bool { return strings.EqualFold(p, colName) }) {
-			partitionIDs = append(partitionIDs, id)
-		} else {
-			otherIDs = append(otherIDs, id)
-		}
-	}
-	if len(partitionIDs) == 0 {
+	j, ok := newPrunableJudge(flow, cols, func(name string) bool {
+		return slices.ContainsFunc(partitionColumns, func(p string) bool { return strings.EqualFold(p, name) })
+	})
+	if !ok {
 		return
 	}
-	j := prunableJudge{
-		partition:      make(map[int32]string),
-		derived:        flow.derivedFrom(partitionIDs),
-		other:          flow.aliasedFrom(otherIDs),
-		rangePartition: meta.RangePartitioning != nil,
-	}
-	for _, id := range partitionIDs {
-		for a := range flow.aliasedFrom([]int32{id}) {
-			j.partition[a] = names[id]
-		}
-	}
+	j.rangePartition = meta.RangePartitioning != nil
 
-	type finding struct {
-		expr   googlesql.ResolvedExprNode
-		column string
-		reason string
+	findings, ok := j.findings(flow)
+	if !ok {
+		return
 	}
-	var findings []finding
-	for i, expr := range flow.conjunctExprs {
-		ids := flow.conjuncts[i]
-		if !slices.ContainsFunc(ids, func(id int32) bool { return j.derived[id] }) {
-			continue
-		}
-		// A value computed from the partition column may still prune, e.g.
-		// DATE_ADD in a CTE, and this rule does not follow such computations.
-		if slices.ContainsFunc(ids, func(id int32) bool { return j.derived[id] && j.partition[id] == "" }) {
-			return
-		}
-		column, reason, ok := j.unprunable(expr, ids)
-		if !ok {
-			return
-		}
-		findings = append(findings, finding{expr, column, reason})
-	}
-
 	consequence := "it may scan all partitions"
 	if requiresPartitionFilter(meta) {
 		consequence = "BigQuery will reject the query because the table requires a partition filter"
 	}
 	for _, f := range findings {
-		at := resolvedOffsets(f.expr)
-		if at.start < 0 || reported[at] {
-			continue
-		}
-		r, ok := pass.File.OffsetsToLspRange(at.start, at.end)
-		if !ok {
-			continue
-		}
-		reported[at] = true
-		pass.Report(Diagnostic{
-			Range:    r,
-			Message:  fmt.Sprintf("Filter on partition column `%s` of `%s` cannot prune partitions because %s; %s", f.column, name, f.reason, consequence),
-			Severity: SeverityWarning,
-		})
+		reportOnce(pass, f.expr, reported,
+			fmt.Sprintf("Filter on partition column `%s` of `%s` cannot prune partitions because %s; %s", f.column, name, f.reason, consequence))
 	}
 }
 
+type unprunableTerm struct {
+	expr   googlesql.ResolvedExprNode
+	column string
+	reason string
+}
+
+// findings returns every filter term on the judged column, or false when
+// any of them might limit the scan, since one such AND term is enough.
+func (j prunableJudge) findings(flow *columnFlow) ([]unprunableTerm, bool) {
+	var terms []unprunableTerm
+	for i, expr := range flow.conjunctExprs {
+		ids := flow.conjuncts[i]
+		if !slices.ContainsFunc(ids, func(id int32) bool { return j.derived[id] }) {
+			continue
+		}
+		// A value computed from the column may still limit the scan, e.g.
+		// DATE_ADD in a CTE, and this rule does not follow such computations.
+		if slices.ContainsFunc(ids, func(id int32) bool { return j.derived[id] && j.judged[id] == "" }) {
+			return nil, false
+		}
+		column, reason, ok := j.unprunable(expr, ids)
+		if !ok {
+			return nil, false
+		}
+		terms = append(terms, unprunableTerm{expr, column, reason})
+	}
+	return terms, true
+}
+
+// reportOnce reports at expr unless a diagnostic is already there, which
+// happens when one term filters several scans.
+func reportOnce(pass *Pass, expr googlesql.ResolvedExprNode, reported map[offsets]bool, message string) {
+	at := resolvedOffsets(expr)
+	if at.start < 0 || reported[at] {
+		return
+	}
+	r, ok := pass.File.OffsetsToLspRange(at.start, at.end)
+	if !ok {
+		return
+	}
+	reported[at] = true
+	pass.Report(Diagnostic{Range: r, Message: message, Severity: SeverityWarning})
+}
+
+// prunableJudge judges filter terms on a column that BigQuery uses to limit
+// the data a scan reads: a partition column or _TABLE_SUFFIX.
 type prunableJudge struct {
-	// partition maps the partition column and its plain copies to the
-	// partition column's name.
-	partition map[int32]string
-	// derived is every column computed from the partition column.
+	// judged maps the judged column and its plain copies to the judged
+	// column's name.
+	judged map[int32]string
+	// derived is every column computed from the judged column.
 	derived map[int32]bool
 	// other is every other column of the same scan and its plain copies.
 	other          map[int32]bool
 	rangePartition bool
+}
+
+// newPrunableJudge judges the scan columns cols for which judged is true,
+// or returns false when the scan reads none of them.
+func newPrunableJudge(flow *columnFlow, cols []*googlesql.ResolvedColumn, judged func(name string) bool) (prunableJudge, bool) {
+	names := make(map[int32]string)
+	var judgedIDs, otherIDs []int32
+	for _, c := range cols {
+		name, err := c.Name()
+		id, err2 := c.ColumnId()
+		if err != nil || err2 != nil {
+			return prunableJudge{}, false
+		}
+		names[id] = name
+		if judged(name) {
+			judgedIDs = append(judgedIDs, id)
+		} else {
+			otherIDs = append(otherIDs, id)
+		}
+	}
+	if len(judgedIDs) == 0 {
+		return prunableJudge{}, false
+	}
+	j := prunableJudge{
+		judged:  make(map[int32]string),
+		derived: flow.derivedFrom(judgedIDs),
+		other:   flow.aliasedFrom(otherIDs),
+	}
+	for _, id := range judgedIDs {
+		for a := range flow.aliasedFrom([]int32{id}) {
+			j.judged[a] = names[id]
+		}
+	}
+	return j, true
 }
 
 var prunableComparisons = map[string]bool{
@@ -145,7 +172,7 @@ var prunableComparisons = map[string]bool{
 var prunableFormats = map[string]bool{"%F": true, "%Y-%m-%d": true, "%Y%m%d": true}
 
 // unprunable reports the column and the documented reason why a filter term
-// on the partition column cannot prune, or false when it might prune.
+// on the judged column cannot limit the scan, or false when it might.
 func (j prunableJudge) unprunable(expr googlesql.ResolvedExprNode, ids []int32) (string, string, bool) {
 	call, ok := expr.(*googlesql.ResolvedFunctionCall)
 	if !ok {
@@ -159,7 +186,7 @@ func (j prunableJudge) unprunable(expr googlesql.ResolvedExprNode, ids []int32) 
 	if err != nil {
 		return "", "", false
 	}
-	column := j.firstPartitionColumn(ids)
+	column := j.firstJudgedColumn(ids)
 
 	if fn == "$or" {
 		for _, d := range splitOperands(expr, "$or") {
@@ -176,7 +203,7 @@ func (j prunableJudge) unprunable(expr googlesql.ResolvedExprNode, ids []int32) 
 	var side googlesql.ResolvedExprNode
 	subquery := false
 	for _, a := range args {
-		if slices.ContainsFunc(referencedColumnIDs(a), func(id int32) bool { return j.partition[id] != "" }) {
+		if slices.ContainsFunc(referencedColumnIDs(a), func(id int32) bool { return j.judged[id] != "" }) {
 			if side != nil {
 				return "", "", false
 			}
@@ -195,7 +222,7 @@ func (j prunableJudge) unprunable(expr googlesql.ResolvedExprNode, ids []int32) 
 	return j.unprunableSide(side, column)
 }
 
-// unprunableSide judges the comparison operand that holds the partition column.
+// unprunableSide judges the comparison operand that holds the judged column.
 func (j prunableJudge) unprunableSide(side googlesql.ResolvedExprNode, column string) (string, string, bool) {
 	call, ok := side.(*googlesql.ResolvedFunctionCall)
 	if !ok {
@@ -209,14 +236,14 @@ func (j prunableJudge) unprunableSide(side googlesql.ResolvedExprNode, column st
 		return "", "", false
 	}
 	args, err := call.ArgumentList()
-	if err != nil || !slices.ContainsFunc(args, j.isPartitionRef) {
+	if err != nil || !slices.ContainsFunc(args, j.isJudgedRef) {
 		return "", "", false
 	}
 	switch fn {
 	case "$add", "$subtract":
 		return column, "it is not isolated on one side of the comparison", true
 	case "$extract":
-		if len(args) < 2 || !j.isPartitionRef(args[0]) {
+		if len(args) < 2 || !j.isJudgedRef(args[0]) {
 			return "", "", false
 		}
 		part, ok := literalString(args[1])
@@ -225,7 +252,7 @@ func (j prunableJudge) unprunableSide(side googlesql.ResolvedExprNode, column st
 		}
 		return column, fmt.Sprintf("EXTRACT(%s) is not supported for pruning", part), true
 	case "format_date", "format_datetime", "format_timestamp":
-		if len(args) < 2 || !j.isPartitionRef(args[1]) {
+		if len(args) < 2 || !j.isJudgedRef(args[1]) {
 			return "", "", false
 		}
 		format, ok := args[0].(*googlesql.ResolvedLiteral)
@@ -245,17 +272,17 @@ func (j prunableJudge) unprunableSide(side googlesql.ResolvedExprNode, column st
 	return "", "", false
 }
 
-func (j prunableJudge) isPartitionRef(e googlesql.ResolvedExprNode) bool {
+func (j prunableJudge) isJudgedRef(e googlesql.ResolvedExprNode) bool {
 	if _, ok := e.(*googlesql.ResolvedColumnRef); !ok {
 		return false
 	}
 	ids := referencedColumnIDs(e)
-	return len(ids) == 1 && j.partition[ids[0]] != ""
+	return len(ids) == 1 && j.judged[ids[0]] != ""
 }
 
-func (j prunableJudge) firstPartitionColumn(ids []int32) string {
+func (j prunableJudge) firstJudgedColumn(ids []int32) string {
 	for _, id := range ids {
-		if name := j.partition[id]; name != "" {
+		if name := j.judged[id]; name != "" {
 			return name
 		}
 	}
