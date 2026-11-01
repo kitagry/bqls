@@ -14,4 +14,5 @@ var Analyzers = []*Analyzer{
 	UnionColumnOrder,
 	BytesProcessedThreshold,
 	SelectStar,
+	LeftJoinAsInner,
 }
