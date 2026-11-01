@@ -4,6 +4,7 @@ package lint
 var Analyzers = []*Analyzer{
 	NullComparison,
 	InNull,
+	NotInNullable,
 	UnusedCTE,
 	UnusedDeclare,
 	PartitionFilter,
