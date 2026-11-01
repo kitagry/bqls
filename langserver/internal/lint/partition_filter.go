@@ -50,6 +50,11 @@ type columnFlow struct {
 	// conjuncts holds, for each AND-separated term of every filtering
 	// predicate, the column ids it references.
 	conjuncts [][]int32
+	// conjunctExprs holds the expression of each term in conjuncts.
+	conjunctExprs []googlesql.ResolvedExprNode
+	// aliases is the subset of derived where the new column is a plain copy
+	// of the value, such as a renamed select item or a CTE column.
+	aliases map[int32][]int32
 	// used is every column id whose value the statement consumes.
 	used map[int32]bool
 }
@@ -68,6 +73,7 @@ func analyzeColumnFlow(stmt googlesql.ResolvedStatementNode) (*columnFlow, bool)
 	flow := &columnFlow{
 		dmlTargets: make(map[offsets]bool),
 		derived:    make(map[int32][]int32),
+		aliases:    make(map[int32][]int32),
 		filtered:   make(map[int32]bool),
 		used:       make(map[int32]bool),
 	}
@@ -82,8 +88,9 @@ func analyzeColumnFlow(stmt googlesql.ResolvedStatementNode) (*columnFlow, bool)
 		for _, id := range referencedColumnIDs(expr) {
 			flow.filtered[id] = true
 		}
-		for _, c := range splitConjuncts(expr) {
+		for _, c := range splitOperands(expr, "$and") {
 			flow.conjuncts = append(flow.conjuncts, referencedColumnIDs(c))
+			flow.conjunctExprs = append(flow.conjunctExprs, c)
 		}
 	}
 	addTarget := func(scan *googlesql.ResolvedTableScan, err error) {
@@ -105,12 +112,24 @@ func analyzeColumnFlow(stmt googlesql.ResolvedStatementNode) (*columnFlow, bool)
 			flow.derived[f] = append(flow.derived[f], id)
 		}
 	}
+	alias := func(col *googlesql.ResolvedColumn, from int32) {
+		derive(col, []int32{from})
+		if id, err := col.ColumnId(); err == nil {
+			flow.aliases[from] = append(flow.aliases[from], id)
+		}
+	}
 	deriveComputed := func(n computedColumn) {
 		col, err := n.Column()
 		expr, err2 := n.Expr()
 		if err != nil || err2 != nil {
 			ok = false
 			return
+		}
+		if _, isRef := expr.(*googlesql.ResolvedColumnRef); isRef {
+			if ids := referencedColumnIDs(expr); len(ids) == 1 {
+				alias(col, ids[0])
+				return
+			}
 		}
 		derive(col, referencedColumnIDs(expr))
 	}
@@ -252,7 +271,11 @@ func analyzeColumnFlow(stmt googlesql.ResolvedStatementNode) (*columnFlow, bool)
 			return nil, false
 		}
 		for i, c := range out {
-			derive(c, columnIDs(in[i:i+1]))
+			id, err := in[i].ColumnId()
+			if err != nil {
+				return nil, false
+			}
+			alias(c, id)
 		}
 	}
 	return flow, ok
@@ -333,13 +356,14 @@ func referencedColumnIDs(expr googlesql.ResolvedNode) []int32 {
 	return ids
 }
 
-func splitConjuncts(expr googlesql.ResolvedExprNode) []googlesql.ResolvedExprNode {
+// splitOperands flattens nested calls of the associative operator op.
+func splitOperands(expr googlesql.ResolvedExprNode, op string) []googlesql.ResolvedExprNode {
 	call, ok := expr.(*googlesql.ResolvedFunctionCall)
 	if !ok {
 		return []googlesql.ResolvedExprNode{expr}
 	}
 	name, ok := functionName(call)
-	if !ok || name != "$and" {
+	if !ok || name != op {
 		return []googlesql.ResolvedExprNode{expr}
 	}
 	args, err := call.ArgumentList()
@@ -348,7 +372,7 @@ func splitConjuncts(expr googlesql.ResolvedExprNode) []googlesql.ResolvedExprNod
 	}
 	var terms []googlesql.ResolvedExprNode
 	for _, a := range args {
-		terms = append(terms, splitConjuncts(a)...)
+		terms = append(terms, splitOperands(a, op)...)
 	}
 	return terms
 }
@@ -375,6 +399,15 @@ func (f *columnFlow) reaches(id int32, targets map[int32]bool) bool {
 
 // derivedFrom returns ids together with every column computed from them.
 func (f *columnFlow) derivedFrom(ids []int32) map[int32]bool {
+	return closure(ids, f.derived)
+}
+
+// aliasedFrom returns ids together with every plain copy of them.
+func (f *columnFlow) aliasedFrom(ids []int32) map[int32]bool {
+	return closure(ids, f.aliases)
+}
+
+func closure(ids []int32, edges map[int32][]int32) map[int32]bool {
 	seen := make(map[int32]bool, len(ids))
 	queue := slices.Clone(ids)
 	for _, id := range ids {
@@ -383,7 +416,7 @@ func (f *columnFlow) derivedFrom(ids []int32) map[int32]bool {
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
-		for _, next := range f.derived[cur] {
+		for _, next := range edges[cur] {
 			if !seen[next] {
 				seen[next] = true
 				queue = append(queue, next)
@@ -393,36 +426,43 @@ func (f *columnFlow) derivedFrom(ids []int32) map[int32]bool {
 	return seen
 }
 
-func checkPartitionFilter(pass *Pass, flow *columnFlow, scan *googlesql.ResolvedTableScan) {
-	loc, err := scan.GetParseLocationRangeOrNULL()
-	if err != nil || loc == nil {
-		return
-	}
-	if flow.dmlTargets[offsets{file.ParseLocStart(loc), file.ParseLocEnd(loc)}] {
-		return
+// partitionedTable returns the table a scan reads when it is a partitioned
+// table whose filters both partition rules judge, i.e. not a DML target.
+func partitionedTable(pass *Pass, flow *columnFlow, scan *googlesql.ResolvedTableScan) (string, *bq.TableMetadata, bool) {
+	at := resolvedOffsets(scan)
+	if at.start < 0 || flow.dmlTargets[at] {
+		return "", nil, false
 	}
 	table, err := scan.Table()
 	if err != nil || table == nil {
-		return
+		return "", nil, false
 	}
 	name, err := table.Name()
 	if err != nil || strings.HasSuffix(name, "*") {
-		return
+		return "", nil, false
 	}
 	meta, err := pass.LookupTable(pass.Context, name)
-	if err != nil || meta == nil || meta.Type != bq.RegularTable {
+	if err != nil || meta == nil || meta.Type != bq.RegularTable || len(partitionColumnNames(meta)) == 0 {
+		return "", nil, false
+	}
+	return name, meta, true
+}
+
+func requiresPartitionFilter(meta *bq.TableMetadata) bool {
+	return meta.RequirePartitionFilter || meta.TimePartitioning != nil && meta.TimePartitioning.RequirePartitionFilter
+}
+
+func checkPartitionFilter(pass *Pass, flow *columnFlow, scan *googlesql.ResolvedTableScan) {
+	name, meta, ok := partitionedTable(pass, flow, scan)
+	if !ok {
 		return
 	}
 	partitionColumns := partitionColumnNames(meta)
-	if len(partitionColumns) == 0 {
-		return
-	}
-
 	cols, err := scan.ColumnList()
 	if err != nil {
 		return
 	}
-	required := meta.RequirePartitionFilter || meta.TimePartitioning != nil && meta.TimePartitioning.RequirePartitionFilter
+	required := requiresPartitionFilter(meta)
 	// BigQuery reads no partition, e.g. for COUNT(*), when no column is
 	// consumed, yet still rejects such a query on a table requiring a filter.
 	if !required && !slices.ContainsFunc(columnIDs(cols), func(id int32) bool { return flow.reaches(id, flow.used) }) {
@@ -444,7 +484,7 @@ func checkPartitionFilter(pass *Pass, flow *columnFlow, scan *googlesql.Resolved
 		}
 	}
 
-	at := tablePathOffsets(pass.File.Node, offsets{file.ParseLocStart(loc), file.ParseLocEnd(loc)})
+	at := tablePathOffsets(pass.File.Node, resolvedOffsets(scan))
 	r, ok := pass.File.OffsetsToLspRange(at.start, at.end)
 	if !ok {
 		return

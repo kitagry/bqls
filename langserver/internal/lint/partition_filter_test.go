@@ -49,6 +49,11 @@ var partitionedTables = map[string]*bq.TableMetadata{
 		TimePartitioning: &bq.TimePartitioning{Type: bq.DayPartitioningType, Field: "ts"},
 		Schema:           bq.Schema{{Name: "x", Type: bq.IntegerFieldType}, {Name: "ts", Type: bq.TimestampFieldType}},
 	},
+	"p.d.ts_pair": {
+		Type:             bq.RegularTable,
+		TimePartitioning: &bq.TimePartitioning{Type: bq.DayPartitioningType, Field: "ts"},
+		Schema:           bq.Schema{{Name: "ts", Type: bq.TimestampFieldType}, {Name: "ts2", Type: bq.TimestampFieldType}},
+	},
 	"p.d.ranged": {
 		Type:              bq.RegularTable,
 		RangePartitioning: &bq.RangePartitioning{Field: "id", Range: &bq.RangePartitioningRange{Start: 0, End: 100, Interval: 10}},
