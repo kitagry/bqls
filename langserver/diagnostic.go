@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 
+	bq "cloud.google.com/go/bigquery"
+
 	"github.com/kitagry/bqls/langserver/internal/lint"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
@@ -85,7 +87,7 @@ func (h *Handler) scheduleDryRun() {
 				}
 			}()
 
-			diagnostics, totalProcessed, err := h.dryrun(ctx, uri)
+			diagnostics, js, err := h.dryrun(ctx, uri)
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					return
@@ -103,6 +105,10 @@ func (h *Handler) scheduleDryRun() {
 					h.logger.Debugf(`failed to send "textDocument/publishDiagnostics" for %s: %v`, uri, err)
 				}
 			}
+			if js == nil || js.Statistics == nil {
+				return
+			}
+			totalProcessed := helper.BytesConvert(js.Statistics.TotalBytesProcessed)
 			err = h.showMessage(ctx, lsp.Info, fmt.Sprintf("This query will process %s when run.", totalProcessed))
 			if err != nil {
 				h.logger.Debugf(`failed to send "window/showMessageRequest": %v`, err)
@@ -171,26 +177,26 @@ func lintDiagnosticsToLsp(conv helper.PositionConverter, diags []lint.Diagnostic
 	return result
 }
 
-func (h *Handler) dryrun(ctx context.Context, uri lsp.DocumentURI) (errs map[lsp.DocumentURI][]lsp.Diagnostic, totalProcessed string, err error) {
+// dryrun publishes through diagnose rather than from js directly, because
+// Diagnose picks up the stored dry-run result only while the text is
+// unchanged, so this and scheduleDiagnostics publish the same set whichever
+// finishes last.
+func (h *Handler) dryrun(ctx context.Context, uri lsp.DocumentURI) (map[lsp.DocumentURI][]lsp.Diagnostic, *bq.JobStatus, error) {
 	p, release := h.acquireProject()
 	js, err := p.Dryrun(ctx, uri)
 	release()
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	if js == nil {
-		return nil, "", err
+		return nil, nil, nil
 	}
-	defer js.Done()
 
-	errs, _ = h.diagnose(ctx, uri)
+	diagnostics, _ := h.diagnose(ctx, uri)
 	for _, err := range js.Errors {
 		h.logger.Info("error location", err.Location)
 	}
-
-	totalProcessed = helper.BytesConvert(js.Statistics.TotalBytesProcessed)
-
-	return errs, totalProcessed, nil
+	return diagnostics, js, nil
 }
 
 func convertErrorsToDiagnostics(src string, errs []file.Error) []lsp.Diagnostic {
