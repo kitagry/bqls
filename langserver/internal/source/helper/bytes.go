@@ -2,9 +2,10 @@ package helper
 
 import (
 	"fmt"
-	"math"
 	"strings"
 )
+
+var byteUnits = []string{"bytes", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"}
 
 // BytesConvert formats a byte count with binary units, e.g. "1.50 KiB".
 func BytesConvert(bytes int64) string {
@@ -12,20 +13,23 @@ func BytesConvert(bytes int64) string {
 		return "0 bytes"
 	}
 
-	// Floats keep math.MinInt64 from overflowing on negation, and the sign
-	// is split off because the logarithm of a negative count is NaN.
-	sign, abs := "", float64(bytes)
-	if abs < 0 {
-		sign, abs = "-", -abs
+	// Floats keep math.MinInt64 from overflowing on negation.
+	sign, v := "", float64(bytes)
+	if v < 0 {
+		sign, v = "-", -v
 	}
-	base := math.Floor(math.Log(abs) / math.Log(1024))
-	units := []string{"bytes", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB"}
-
-	stringVal := fmt.Sprintf("%.2f", abs/math.Pow(1024, base))
-	stringVal = strings.TrimSuffix(stringVal, ".00")
-	return fmt.Sprintf("%s%s %v",
-		sign,
-		stringVal,
-		units[int(base)],
-	)
+	unit := 0
+	for v >= 1024 && unit < len(byteUnits)-1 {
+		v /= 1024
+		unit++
+	}
+	s := fmt.Sprintf("%.2f", v)
+	// Values just below a boundary, such as 1048575 bytes, round to "1024.00";
+	// they read better as 1 of the next unit.
+	if s == "1024.00" && unit < len(byteUnits)-1 {
+		v /= 1024
+		unit++
+		s = fmt.Sprintf("%.2f", v)
+	}
+	return fmt.Sprintf("%s%s %s", sign, strings.TrimSuffix(s, ".00"), byteUnits[unit])
 }
