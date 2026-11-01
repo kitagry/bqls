@@ -95,23 +95,55 @@ func variablesInScope(scopes []variableScope, stmt offsets) map[string]bool {
 }
 
 func checkVariableColumnShadow(pass *Pass, call *googlesql.ResolvedFunctionCall, vars map[string]bool) {
-	name, ok := functionName(call)
-	if !ok || !selfComparisonFunctions[name] {
-		return
-	}
-	args, err := call.ArgumentList()
-	if err != nil || len(args) != 2 {
-		return
-	}
-	left, ok := columnRefID(args[0])
+	args, ok := selfComparisonOperands(call)
 	if !ok {
 		return
 	}
-	right, ok := columnRefID(args[1])
-	if !ok || left != right {
+	arg, ident, ok := shadowingOperand(pass, args, vars)
+	if !ok {
 		return
 	}
+	loc, err := arg.GetParseLocationRangeOrNULL()
+	if err != nil || loc == nil {
+		return
+	}
+	r, ok := pass.File.ToLspRange(loc)
+	if !ok {
+		return
+	}
+	pass.Report(Diagnostic{
+		Range: r,
+		Message: fmt.Sprintf("`%[1]s` refers to the column, not the variable `%[1]s`, because a column takes precedence over a variable of the same name; this compares the column with itself. Rename the variable (e.g. `v_%[1]s`) to use it here",
+			ident),
+		Severity: SeverityWarning,
+	})
+}
 
+// selfComparisonOperands returns the operands of a comparison of a column
+// with itself.
+func selfComparisonOperands(call *googlesql.ResolvedFunctionCall) ([]googlesql.ResolvedExprNode, bool) {
+	name, ok := functionName(call)
+	if !ok || !selfComparisonFunctions[name] {
+		return nil, false
+	}
+	args, err := call.ArgumentList()
+	if err != nil || len(args) != 2 {
+		return nil, false
+	}
+	left, ok := columnRefID(args[0])
+	if !ok {
+		return nil, false
+	}
+	right, ok := columnRefID(args[1])
+	if !ok || left != right {
+		return nil, false
+	}
+	return args, true
+}
+
+// shadowingOperand returns the operand written as the bare name of a variable
+// in vars, and that name.
+func shadowingOperand(pass *Pass, args []googlesql.ResolvedExprNode, vars map[string]bool) (googlesql.ResolvedExprNode, string, bool) {
 	// The right operand is checked first since `column = variable` is the
 	// usual way to write the filter.
 	for _, arg := range []googlesql.ResolvedExprNode{args[1], args[0]} {
@@ -124,21 +156,11 @@ func checkVariableColumnShadow(pass *Pass, call *googlesql.ResolvedFunctionCall,
 			continue
 		}
 		ident, ok := bareIdentifier(written)
-		if !ok || !vars[strings.ToLower(ident)] {
-			continue
+		if ok && vars[strings.ToLower(ident)] {
+			return arg, ident, true
 		}
-		r, ok := pass.File.ToLspRange(loc)
-		if !ok {
-			return
-		}
-		pass.Report(Diagnostic{
-			Range: r,
-			Message: fmt.Sprintf("`%[1]s` refers to the column, not the variable `%[1]s`, because a column takes precedence over a variable of the same name; this compares the column with itself. Rename the variable (e.g. `v_%[1]s`) to use it here",
-				ident),
-			Severity: SeverityWarning,
-		})
-		return
 	}
+	return nil, "", false
 }
 
 func columnRefID(expr googlesql.ResolvedExprNode) (int32, bool) {

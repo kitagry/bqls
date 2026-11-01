@@ -154,8 +154,17 @@ func unusedDeclareDeletion(src string, decl offsets, vars []declaredVariable, i 
 		del := offsets{vars[i-1].ident.end, v.ident.end}
 		return del, isSeparator(src, del.start, v.ident.start)
 	}
+	return statementDeletion(src, decl)
+}
 
-	end := decl.end
+// statementDeletion returns the span that removes the statement with its
+// semicolon and the whitespace after it. It gives up whenever a user comment
+// would be deleted or left describing something else.
+func statementDeletion(src string, stmt offsets) (offsets, bool) {
+	if !inBounds(src, stmt) {
+		return offsets{}, false
+	}
+	end := stmt.end
 	semi := end
 	for semi < len(src) && (src[semi] == ' ' || src[semi] == '\t') {
 		semi++
@@ -163,11 +172,11 @@ func unusedDeclareDeletion(src string, decl offsets, vars []declaredVariable, i 
 	if semi < len(src) && src[semi] == ';' {
 		end = semi + 1
 	}
-	if hasTrailingComment(src, end) || hasCommentLineAbove(src, decl.start) {
+	if hasTrailingComment(src, end) || hasCommentLineAbove(src, stmt.start) {
 		return offsets{}, false
 	}
 	for end < len(src) && isSQLSpace(src[end]) {
 		end++
 	}
-	return offsets{decl.start, end}, true
+	return offsets{stmt.start, end}, true
 }
