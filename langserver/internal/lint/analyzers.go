@@ -15,6 +15,7 @@ var Analyzers = []*Analyzer{
 	WildcardTableSuffixNotConstant,
 	CrossJoin,
 	UnionColumnOrder,
+	InsertColumnOrder,
 	BytesProcessedThreshold,
 	SelectStar,
 	LeftJoinAsInner,
