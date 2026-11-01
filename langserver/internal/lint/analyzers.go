@@ -10,4 +10,5 @@ var Analyzers = []*Analyzer{
 	OrderByInSubquery,
 	WildcardTableSuffix,
 	BytesProcessedThreshold,
+	SelectStar,
 }
