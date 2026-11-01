@@ -34,6 +34,8 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | **Unused code** | | | | | |
 | [`unused-cte`](#unused-cte) | on | information | yes | | `WITH` entries that are never referenced |
 | [`unused-declare`](#unused-declare) | on | information | yes | | `DECLARE` variables that are never referenced |
+| [`unused-temp-function`](#unused-temp-function) | on | information | yes | | `CREATE TEMP FUNCTION` definitions that are never called |
+| [`unused-temp-function-argument`](#unused-temp-function-argument) | on | information | | | Arguments of SQL temp functions that the body never references |
 | [`unused-join`](#unused-join) | on | information | | | `LEFT` / `RIGHT JOIN`s whose optional side is never used outside the join condition |
 
 Bare `x = NULL` / `x != NULL` is rejected by BigQuery itself ("Operands of = cannot be literal NULL"); bqls offers an `IS [NOT] NULL` quick fix on that error.
@@ -163,6 +165,18 @@ A `WITH` entry that is never referenced (a recursive CTE's self reference does n
 #### `unused-declare`
 
 A `DECLARE` variable whose name appears nowhere else in the script. Any identifier with the same name counts as a reference, including a `SET` target, so a variable that is only assigned is not reported. The quick fix removes the declaration (or just that name from `DECLARE x, y ...` when another variable stays).
+
+#### `unused-temp-function`
+
+A `CREATE TEMP FUNCTION` whose name appears nowhere else in the script. As in `unused-declare`, any identifier with the same name counts as a call, and so does the name as a word of a string literal, which may be a query run by `EXECUTE IMMEDIATE`. A function that only an unused function calls counts as used until that function is removed. The quick fix removes the statement.
+
+Not reported: a file that consists only of function definitions (it may be a library of functions for later queries of the same session), and persistent `CREATE FUNCTION dataset.f`, whose callers live outside the file.
+
+#### `unused-temp-function-argument`
+
+An argument of a SQL temp function that the body never references. Any identifier in the body with the argument's name counts as a reference, including a same-named column or alias. No quick fix, since removing an argument breaks every call site.
+
+Not reported: JavaScript and other non-SQL functions, whose body bqls cannot analyze, and persistent `CREATE FUNCTION dataset.f`, which may keep an argument for its callers.
 
 #### `unused-join`
 
