@@ -23,6 +23,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`union-column-order`](#union-column-order) | on | warning | | | Set operation inputs whose columns are the first input's columns in a different order |
 | [`left-join-as-inner`](#left-join-as-inner) | on | warning | | | `LEFT` / `RIGHT JOIN`s whose `WHERE` clause rejects the NULL rows of the optional side |
 | [`variable-column-shadow`](#variable-column-shadow) | on | warning | | | A column compared with itself because its bare name was meant as a same-named `DECLARE` variable |
+| [`join-key-implicit-cast`](#join-key-implicit-cast) | on | warning | | | `ON` / `USING` join keys of different types, so one side is implicitly cast (e.g. `INT64` to `FLOAT64`) |
 | **Cost** | | | | | |
 | [`partition-filter`](#partition-filter) | on | warning | | | Partitioned tables read without a filter on the partition column |
 | [`partition-filter-not-prunable`](#partition-filter-not-prunable) | off | warning | | | Partition column filters written in a form BigQuery documents as unable to prune partitions |
@@ -81,6 +82,12 @@ Not reported: `IS NULL`, `COALESCE` / `IFNULL` / `IF` and other functions, `OR`,
 A comparison (`=`, `!=`, `<`, `<=`, `>`, `>=`, `IS [NOT] DISTINCT FROM`) of a column with itself where one side is written as the bare name of a `DECLARE` variable in scope, e.g. `DECLARE user_id INT64; SELECT * FROM t WHERE user_id = user_id` (or `t.user_id = user_id`). A column takes precedence over a variable of the same name, so the variable is never read and the condition is always true (or always false) for non-NULL rows. Qualifying the column does not help; rename the variable.
 
 Other uses of a name shared by a variable and a column (e.g. `GROUP BY user_id`) are not reported, since the column is likely intended there; neither are `IF` / `WHILE` conditions.
+
+#### `join-key-implicit-cast`
+
+A join key comparison in `ON` or `USING` between columns of different types, so BigQuery implicitly casts one side, e.g. `INT64` with `FLOAT64` or `NUMERIC`, `NUMERIC` with `FLOAT64`, or `DATE` with `DATETIME` (`a.order_id = b.order_id` where one is `INT64` and the other `FLOAT64`). Mismatched key types usually point to a schema design mistake, and a cast to `FLOAT64` is lossy: it cannot represent every `INT64` or `NUMERIC` value exactly, so different keys may compare equal. Give both columns the same type, or write an explicit `CAST` to state the intent. Reported on the comparison (on the `JOIN` keyword for `USING`).
+
+Only a top-level `AND` term of `=` or `IS NOT DISTINCT FROM` between a column of each join input counts, where the analyzer inserted the cast. Not reported: comparisons with literals, query parameters or computed values (`a.id = 1.5`, `a.id = b.id + 0`), explicit `CAST` / `SAFE_CAST` on either side, terms under `OR`, other comparisons (`<`, `!=`, ...), comma joins filtered in `WHERE`, and `MERGE ... ON`.
 
 ### Cost
 
