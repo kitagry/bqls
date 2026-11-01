@@ -8,6 +8,7 @@ var Analyzers = []*Analyzer{
 	UnusedDeclare,
 	PartitionFilter,
 	OrderByInSubquery,
+	UnusedJoin,
 	WildcardTableSuffix,
 	CrossJoin,
 	BytesProcessedThreshold,
