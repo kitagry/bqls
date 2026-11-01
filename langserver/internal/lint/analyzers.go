@@ -19,4 +19,5 @@ var Analyzers = []*Analyzer{
 	SelectStar,
 	LeftJoinAsInner,
 	VariableColumnShadow,
+	SelfComparison,
 }
