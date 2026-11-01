@@ -22,6 +22,7 @@ var Analyzers = []*Analyzer{
 	SelectStar,
 	LeftJoinAsInner,
 	VariableColumnShadow,
+	JoinKeyImplicitCast,
 	SelfComparison,
 	MissingOrderBy,
 	NondeterministicCTE,
