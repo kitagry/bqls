@@ -23,6 +23,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`union-column-order`](#union-column-order) | on | warning | | | Set operation inputs whose columns are the first input's columns in a different order |
 | [`left-join-as-inner`](#left-join-as-inner) | on | warning | | | `LEFT` / `RIGHT JOIN`s whose `WHERE` clause rejects the NULL rows of the optional side |
 | [`variable-column-shadow`](#variable-column-shadow) | on | warning | | | A column compared with itself because its bare name was meant as a same-named `DECLARE` variable |
+| [`self-comparison`](#self-comparison) | on | warning | | | Comparisons whose two sides are the same column, e.g. `a.id = a.id` meant as `a.id = b.id` |
 | **Cost** | | | | | |
 | [`partition-filter`](#partition-filter) | on | warning | | | Partitioned tables read without a filter on the partition column |
 | [`partition-filter-not-prunable`](#partition-filter-not-prunable) | off | warning | | | Partition column filters written in a form BigQuery documents as unable to prune partitions |
@@ -81,6 +82,12 @@ Not reported: `IS NULL`, `COALESCE` / `IFNULL` / `IF` and other functions, `OR`,
 A comparison (`=`, `!=`, `<`, `<=`, `>`, `>=`, `IS [NOT] DISTINCT FROM`) of a column with itself where one side is written as the bare name of a `DECLARE` variable in scope, e.g. `DECLARE user_id INT64; SELECT * FROM t WHERE user_id = user_id` (or `t.user_id = user_id`). A column takes precedence over a variable of the same name, so the variable is never read and the condition is always true (or always false) for non-NULL rows. Qualifying the column does not help; rename the variable.
 
 Other uses of a name shared by a variable and a column (e.g. `GROUP BY user_id`) are not reported, since the column is likely intended there; neither are `IF` / `WHILE` conditions.
+
+#### `self-comparison`
+
+A comparison (`=`, `!=` / `<>`, `<`, `<=`, `>`, `>=`, `IS [NOT] DISTINCT FROM`) whose two sides are references to the same column, e.g. `a JOIN b ON a.id = a.id` or `WHERE x = x`. The result does not depend on the column's value, only on whether it is NULL, so one side is almost always a typo for another column (`b.id`). Both sides must resolve to the same column, so a self join `t AS a JOIN t AS b ON a.id = b.id` is fine. For `=` the message also suggests `x IS NOT NULL`, in case a NULL check was meant; there is no quick fix, since the typo is far more likely.
+
+Not reported: `FLOAT64` columns (`x != x` is a way to test for NaN), expressions that are not plain column references (`x = x + 0`, `s.f = s.f`), comparisons the analyzer adds itself (`JOIN ... USING`), and comparisons that `variable-column-shadow` reports (one side written as the bare name of a `DECLARE` variable in scope).
 
 ### Cost
 
