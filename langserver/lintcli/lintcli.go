@@ -63,6 +63,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	format := fset.String("format", "text", "output format: text, json, or github")
 	configPath := fset.String("config", "", "config file to use instead of looking up "+lint.ConfigFileName+" from each file's directory to the repository root")
 	fix := fset.Bool("fix", false, "apply suggested fixes, write the files back (stdin: print the fixed SQL), and report what is left")
+	dryRun := fset.Bool("dry-run", false, "dry-run each query on BigQuery so that rules using its estimate, such as bytes-processed-threshold, can run")
 	var toggles []ruleToggle
 	fset.Func("enable", "enable a rule (repeatable)", func(s string) error {
 		toggles = append(toggles, ruleToggle{s, true})
@@ -151,6 +152,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	var findings []finding
 	var fixedStdin *string
 	writeFailed := false
+	dryRunFailed := false
 	for i, in := range inputs {
 		if err := p.UpdateFile(in.uri, in.src, 1); err != nil {
 			fmt.Fprintf(stderr, "bqls lint: %s: %v\n", in.name, err)
@@ -179,6 +181,16 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 				fixedStdin = &fixed
 			}
 		}
+		// Lint does not run on text with analysis errors, and BigQuery would
+		// only reject it, so the dry-run would be a wasted job.
+		if *dryRun && len(diags.Errors) == 0 {
+			if _, err := p.Dryrun(ctx, in.uri); err != nil {
+				fmt.Fprintf(stderr, "bqls lint: %s: dry-run failed: %v\n", in.name, err)
+				dryRunFailed = true
+			} else {
+				diags, _ = p.Diagnose(ctx, in.uri, cfgs[i])
+			}
+		}
 		findings = append(findings, toFindings(in, diags)...)
 		p.DeleteFile(in.uri)
 	}
@@ -200,7 +212,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		fmt.Fprintf(stderr, "bqls lint: failed to fetch table metadata: %s\n", msg)
 		code = exitFailure
 	}
-	if len(readErrs) > 0 || writeFailed {
+	if len(readErrs) > 0 || writeFailed || dryRunFailed {
 		code = exitFailure
 	}
 	return code
@@ -243,12 +255,16 @@ Flags:
 	fset.SetOutput(w)
 	fset.PrintDefaults()
 	fmt.Fprint(w, "\nRules:\n")
+	width := 0
+	for _, a := range lint.Analyzers {
+		width = max(width, len(a.Name))
+	}
 	for _, a := range lint.Analyzers {
 		state := "off"
 		if a.DefaultEnabled {
 			state = "on"
 		}
-		fmt.Fprintf(w, "  %-18s (default %s) %s\n", a.Name, state, a.Doc)
+		fmt.Fprintf(w, "  %-*s (default %s) %s\n", width, a.Name, state, a.Doc)
 	}
 }
 
