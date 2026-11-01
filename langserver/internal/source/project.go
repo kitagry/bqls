@@ -25,6 +25,15 @@ type Project struct {
 
 	diagnoseMu    sync.Mutex
 	diagnoseCache map[lsp.DocumentURI]*diagnoseEntry
+	// dryRuns is guarded by diagnoseMu.
+	dryRuns map[lsp.DocumentURI]dryRunResult
+}
+
+// dryRunResult remembers the text a dry-run ran on, because its estimate is
+// only valid for exactly that text.
+type dryRunResult struct {
+	src    string
+	status *bq.JobStatus
 }
 
 type File struct {
@@ -45,6 +54,7 @@ func NewProject(ctx context.Context, rootPath string, bqClient bigquery.Client, 
 		analyzer: analyzer,
 
 		diagnoseCache: make(map[lsp.DocumentURI]*diagnoseEntry),
+		dryRuns:       make(map[lsp.DocumentURI]dryRunResult),
 	}
 }
 
@@ -59,6 +69,7 @@ func NewProjectWithBQClient(rootPath string, bqClient bigquery.Client, logger *l
 		analyzer: analyzer,
 
 		diagnoseCache: make(map[lsp.DocumentURI]*diagnoseEntry),
+		dryRuns:       make(map[lsp.DocumentURI]dryRunResult),
 	}
 }
 
@@ -86,7 +97,10 @@ func (p *Project) OpenFiles() []lsp.DocumentURI {
 
 func (p *Project) DeleteFile(uri lsp.DocumentURI) {
 	p.cache.Delete(uri)
-	p.InvalidateDiagnostics(uri)
+	p.diagnoseMu.Lock()
+	defer p.diagnoseMu.Unlock()
+	delete(p.diagnoseCache, uri)
+	delete(p.dryRuns, uri)
 }
 
 func (p *Project) Dryrun(ctx context.Context, uri lsp.DocumentURI) (*bq.JobStatus, error) {
@@ -101,7 +115,25 @@ func (p *Project) Dryrun(ctx context.Context, uri lsp.DocumentURI) (*bq.JobStatu
 		return nil, err
 	}
 
-	return result.LastStatus(), nil
+	status := result.LastStatus()
+	if status != nil {
+		p.storeDryRun(uri, sql.RawText, status)
+	}
+	return status, nil
+}
+
+// storeDryRun keeps status for Diagnose. A failed dry-run stores nothing and
+// leaves an earlier result in place, which is still correct because Diagnose
+// uses it only for the exact text it ran on.
+func (p *Project) storeDryRun(uri lsp.DocumentURI, src string, status *bq.JobStatus) {
+	p.diagnoseMu.Lock()
+	defer p.diagnoseMu.Unlock()
+	// The text may have been edited or closed while BigQuery answered, and
+	// then the estimate would never be used again.
+	if sql := p.cache.Get(uri); sql == nil || sql.RawText != src {
+		return
+	}
+	p.dryRuns[uri] = dryRunResult{src: src, status: status}
 }
 
 func (p *Project) Run(ctx context.Context, uri lsp.DocumentURI) (bigquery.BigqueryJob, error) {

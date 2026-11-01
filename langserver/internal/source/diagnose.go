@@ -29,8 +29,9 @@ type Diagnostics struct {
 // computing so concurrent callers for the same input wait instead of
 // re-analyzing.
 type diagnoseEntry struct {
-	src string
-	cfg lint.Config
+	src    string
+	cfg    lint.Config
+	dryRun *bq.JobStatus
 
 	mu     sync.Mutex
 	done   bool
@@ -39,8 +40,10 @@ type diagnoseEntry struct {
 
 // Diagnose analyzes uri once and derives both analysis errors and lint
 // diagnostics from that single parse. It returns false when uri is not open.
-// Results are reused until the text or cfg changes, because code actions
-// request them on every cursor move.
+// Results are reused until the text, cfg, or the dry-run result for the text
+// changes, because code actions request them on every cursor move. The last
+// successful Dryrun is passed to lint only while the text is unchanged since,
+// as its estimate says nothing about other text.
 func (p *Project) Diagnose(ctx context.Context, uri lsp.DocumentURI, cfg lint.Config) (Diagnostics, bool) {
 	sql := p.cache.Get(uri)
 	if sql == nil {
@@ -53,7 +56,7 @@ func (p *Project) Diagnose(ctx context.Context, uri lsp.DocumentURI, cfg lint.Co
 	if e.done {
 		return e.result, true
 	}
-	result := p.diagnose(ctx, uri, sql.RawText, cfg)
+	result := p.diagnose(ctx, uri, sql.RawText, cfg, e.dryRun)
 	// A cancelled run may have skipped table lookups, so its result is incomplete.
 	if ctx.Err() == nil {
 		e.result, e.done = result, true
@@ -69,11 +72,15 @@ func (p *Project) diagnoseEntry(uri lsp.DocumentURI, src string, cfg lint.Config
 	if p.cache.Get(uri) == nil {
 		return &diagnoseEntry{}
 	}
-	if e, ok := p.diagnoseCache[uri]; ok && e.src == src && e.cfg.Equal(cfg) {
+	var dryRun *bq.JobStatus
+	if d, ok := p.dryRuns[uri]; ok && d.src == src {
+		dryRun = d.status
+	}
+	if e, ok := p.diagnoseCache[uri]; ok && e.src == src && e.cfg.Equal(cfg) && e.dryRun == dryRun {
 		return e
 	}
 	// Clone so a caller mutating its config map cannot change the cache key.
-	e := &diagnoseEntry{src: src, cfg: cfg.Clone()}
+	e := &diagnoseEntry{src: src, cfg: cfg.Clone(), dryRun: dryRun}
 	p.diagnoseCache[uri] = e
 	return e
 }
@@ -87,7 +94,7 @@ func (p *Project) InvalidateDiagnostics(uri lsp.DocumentURI) {
 	delete(p.diagnoseCache, uri)
 }
 
-func (p *Project) diagnose(ctx context.Context, uri lsp.DocumentURI, src string, cfg lint.Config) Diagnostics {
+func (p *Project) diagnose(ctx context.Context, uri lsp.DocumentURI, src string, cfg lint.Config, dryRun *bq.JobStatus) Diagnostics {
 	parsedFile := p.analyzer.ParseFile(uri, src)
 	defer parsedFile.Close()
 
@@ -96,7 +103,7 @@ func (p *Project) diagnose(ctx context.Context, uri lsp.DocumentURI, src string,
 			return meta, nil
 		}
 		return p.lookupTable(ctx, path)
-	}}
+	}, DryRun: dryRun}
 	return Diagnostics{
 		Src:        src,
 		Errors:     parsedFile.Errors,
