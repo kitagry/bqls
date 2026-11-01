@@ -5,8 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
-	"strings"
 
 	"github.com/kitagry/bqls/langserver/internal/lint"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
@@ -190,25 +188,9 @@ func (h *Handler) dryrun(ctx context.Context, uri lsp.DocumentURI) (errs map[lsp
 		h.logger.Info("error location", err.Location)
 	}
 
-	totalProcessed = bytesConvert(js.Statistics.TotalBytesProcessed)
+	totalProcessed = helper.BytesConvert(js.Statistics.TotalBytesProcessed)
 
 	return errs, totalProcessed, nil
-}
-
-func bytesConvert(bytes int64) string {
-	if bytes == 0 {
-		return "0 bytes"
-	}
-
-	base := math.Floor(math.Log(float64(bytes)) / math.Log(1024))
-	units := []string{"bytes", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB"}
-
-	stringVal := fmt.Sprintf("%.2f", float64(bytes)/math.Pow(1024, base))
-	stringVal = strings.TrimSuffix(stringVal, ".00")
-	return fmt.Sprintf("%s %v",
-		stringVal,
-		units[int(base)],
-	)
 }
 
 func convertErrorsToDiagnostics(src string, errs []file.Error) []lsp.Diagnostic {
