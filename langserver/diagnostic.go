@@ -97,7 +97,11 @@ func (h *Handler) scheduleDryRun() {
 				if errors.Is(err, context.Canceled) {
 					return
 				}
-				sendErr := h.showMessage(ctx, lsp.MTError, errors.Unwrap(err).Error())
+				msg := err
+				if u := errors.Unwrap(err); u != nil {
+					msg = u
+				}
+				sendErr := h.showMessage(ctx, lsp.MTError, msg.Error())
 				if sendErr != nil {
 					h.logger.Errorf("failed to dryrun: %v", err)
 				}
