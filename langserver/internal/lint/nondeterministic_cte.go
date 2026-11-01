@@ -119,11 +119,11 @@ func (g *cteGraph) walk(n googlesql.ResolvedNode, ctx walkCtx) {
 			return
 		}
 		_, recursive := sub.(*googlesql.ResolvedRecursiveScan)
-		ctx = walkCtx{in: &cteNode{name: name, recursive: recursive, cols: scanColumnIDs(sub)}}
+		ctx = walkCtx{in: &cteNode{name: name, recursive: recursive, cols: orderedScanColumnIDs(sub)}}
 		g.ctes[name] = ctx.in
 	case *googlesql.ResolvedWithRefScan:
 		if name, err := n.WithQueryName(); err == nil {
-			g.refs = append(g.refs, cteRef{target: name, in: ctx.in, cols: scanColumnIDs(n)})
+			g.refs = append(g.refs, cteRef{target: name, in: ctx.in, cols: orderedScanColumnIDs(n)})
 		}
 	case *googlesql.ResolvedFunctionCall:
 		if name, ok := functionName(n); ok {
@@ -200,7 +200,7 @@ func (g *cteGraph) walkSubqueryExpr(n *googlesql.ResolvedSubqueryExpr, ctx walkC
 	if err != nil || sub == nil {
 		return
 	}
-	for _, id := range scanColumnIDs(sub) {
+	for _, id := range orderedScanColumnIDs(sub) {
 		g.uses = append(g.uses, columnUse{col: id, in: ctx.in, computed: ctx.computed})
 	}
 }
@@ -210,7 +210,7 @@ func (g *cteGraph) recordSetOp(n *googlesql.ResolvedSetOperationScan, ctx walkCt
 	if err != nil {
 		return
 	}
-	op := setOp{in: ctx.in, cols: scanColumnIDs(n)}
+	op := setOp{in: ctx.in, cols: orderedScanColumnIDs(n)}
 	for _, item := range items {
 		cols, err := item.OutputColumnList()
 		if err != nil || len(cols) != len(op.cols) {
@@ -377,7 +377,9 @@ func reportNondeterministicCTE(pass *Pass, c nondeterministicCall, n int) {
 	})
 }
 
-func scanColumnIDs(scan googlesql.ResolvedScanNode) []int32 {
+// orderedScanColumnIDs keeps column order, which WITH references and set
+// operations match by position.
+func orderedScanColumnIDs(scan googlesql.ResolvedScanNode) []int32 {
 	cols, ok := scanColumns(scan)
 	if !ok {
 		return nil
