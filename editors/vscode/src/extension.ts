@@ -355,7 +355,9 @@ function createNodeInstallerDeps(): InstallerDeps {
 
 // An object holds an optional `enabled` and the rule's own options, which the
 // server validates, so they are passed through untyped.
-type LintRuleSetting = boolean | ({ enabled?: boolean } & Record<string, unknown>);
+type LintRuleSetting =
+	| boolean
+	| ({ enabled?: boolean } & Record<string, unknown>);
 
 function buildSettings(): {
 	project_id: string;
