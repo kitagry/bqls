@@ -21,8 +21,11 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`not-in-nullable`](#not-in-nullable) | on | warning | | | `x NOT IN (subquery)` over a `NULLABLE` table column, which yields no rows once that column holds a NULL |
 | [`cross-join`](#cross-join) | on | warning | | | Joins without a join condition, which return the Cartesian product of both sides |
 | [`union-column-order`](#union-column-order) | on | warning | | | Set operation inputs whose columns are the first input's columns in a different order |
+| [`insert-column-order`](#insert-column-order) | on | warning | | | `INSERT ... SELECT` queries whose columns are the target columns in a different order |
 | [`left-join-as-inner`](#left-join-as-inner) | on | warning | | | `LEFT` / `RIGHT JOIN`s whose `WHERE` clause rejects the NULL rows of the optional side |
 | [`variable-column-shadow`](#variable-column-shadow) | on | warning | | | A column compared with itself because its bare name was meant as a same-named `DECLARE` variable |
+| [`self-comparison`](#self-comparison) | on | warning | | | Comparisons whose two sides are the same column, e.g. `a.id = a.id` meant as `a.id = b.id` |
+| [`missing-order-by`](#missing-order-by) | off | warning | | | `ROW_NUMBER()` filters, `ARRAY_AGG` / `STRING_AGG` with `LIMIT`, and indexed `ARRAY_AGG` results without `ORDER BY`, which pick arbitrary rows |
 | [`timestamp-string-literal`](#timestamp-string-literal) | off | warning | | | String literals without a time zone compared with a `TIMESTAMP`, which are read as UTC |
 | **Cost** | | | | | |
 | [`partition-filter`](#partition-filter) | on | warning | | | Partitioned tables read without a filter on the partition column |
@@ -35,6 +38,8 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | **Unused code** | | | | | |
 | [`unused-cte`](#unused-cte) | on | information | yes | | `WITH` entries that are never referenced |
 | [`unused-declare`](#unused-declare) | on | information | yes | | `DECLARE` variables that are never referenced |
+| [`unused-temp-function`](#unused-temp-function) | on | information | yes | | `CREATE TEMP FUNCTION` definitions that are never called |
+| [`unused-temp-function-argument`](#unused-temp-function-argument) | on | information | | | Arguments of SQL temp functions that the body never references |
 | [`unused-join`](#unused-join) | on | information | | | `LEFT` / `RIGHT JOIN`s whose optional side is never used outside the join condition |
 
 Bare `x = NULL` / `x != NULL` is rejected by BigQuery itself ("Operands of = cannot be literal NULL"); bqls offers an `IS [NOT] NULL` quick fix on that error.
@@ -69,6 +74,12 @@ A set operation input (`UNION ALL`, `UNION DISTINCT`, `INTERSECT`, `EXCEPT`) who
 
 Skipped: `CORRESPONDING` / `BY NAME`, inputs with `*` or `SELECT AS STRUCT`, pipe `|> UNION ALL`, inputs that read exactly the same tables (`SELECT src, dst FROM edges UNION ALL SELECT dst, src FROM edges` is how a relation is made symmetric), and unreferenced CTEs.
 
+#### `insert-column-order`
+
+An `INSERT ... SELECT` whose query lists the target columns in a different order. `INSERT` matches the query's columns to the target columns by position, not by name, so when the types agree the values are silently swapped. The targets are the column list when the statement has one (`INSERT INTO t (a, b) SELECT b, a ...`), and otherwise every column of the table in schema order, which the statement does not show (`INSERT INTO t SELECT b, a ...` where `t` has columns `a, b`). Names are compared as in `union-column-order`, and queries whose names merely differ from the targets are not reported. Reported on the select list.
+
+Skipped: queries with `*` or pipe syntax, a set operation matching `BY NAME` / `CORRESPONDING`, `INSERT ... VALUES`, and queries that read the target table itself (`INSERT INTO edges SELECT dst, src FROM edges` is how a relation is made symmetric).
+
 #### `left-join-as-inner`
 
 A `LEFT JOIN` (or `RIGHT JOIN`) whose `WHERE` clause filters the optional side with a condition that rejects NULL, so the unmatched rows the outer join adds are dropped again and it behaves as an `INNER JOIN` (e.g. `a LEFT JOIN b ON a.id = b.id WHERE b.status = 'active'`). Move the condition into the `ON` clause to keep the unmatched rows, or write `INNER JOIN`. Reported on the `JOIN` keyword.
@@ -82,6 +93,26 @@ Not reported: `IS NULL`, `COALESCE` / `IFNULL` / `IF` and other functions, `OR`,
 A comparison (`=`, `!=`, `<`, `<=`, `>`, `>=`, `IS [NOT] DISTINCT FROM`) of a column with itself where one side is written as the bare name of a `DECLARE` variable in scope, e.g. `DECLARE user_id INT64; SELECT * FROM t WHERE user_id = user_id` (or `t.user_id = user_id`). A column takes precedence over a variable of the same name, so the variable is never read and the condition is always true (or always false) for non-NULL rows. Qualifying the column does not help; rename the variable.
 
 Other uses of a name shared by a variable and a column (e.g. `GROUP BY user_id`) are not reported, since the column is likely intended there; neither are `IF` / `WHILE` conditions.
+
+#### `self-comparison`
+
+A comparison (`=`, `!=` / `<>`, `<`, `<=`, `>`, `>=`, `IS [NOT] DISTINCT FROM`) whose two sides are references to the same column, e.g. `a JOIN b ON a.id = a.id` or `WHERE x = x`. The result does not depend on the column's value, only on whether it is NULL, so one side is almost always a typo for another column (`b.id`). Both sides must resolve to the same column, so a self join `t AS a JOIN t AS b ON a.id = b.id` is fine. For `=` the message also suggests `x IS NOT NULL`, in case a NULL check was meant; there is no quick fix, since the typo is far more likely.
+
+Not reported: `FLOAT64` columns (`x != x` is a way to test for NaN), expressions that are not plain column references (`x = x + 0`, `s.f = s.f`), comparisons the analyzer adds itself (`JOIN ... USING`), and comparisons that `variable-column-shadow` reports (one side written as the bare name of a `DECLARE` variable in scope).
+
+#### `missing-order-by`
+
+An order-dependent operation without `ORDER BY`, whose result can change from run to run because BigQuery does not guarantee row order. Reported on the function name:
+
+- `ROW_NUMBER()` whose window has no `ORDER BY` and whose value a `WHERE`, `QUALIFY`, `HAVING` or `JOIN ... ON` condition reads, e.g. `QUALIFY ROW_NUMBER() OVER (PARTITION BY id) = 1`, which keeps an arbitrary row per `id`. The value is followed through aliases, subqueries and CTEs.
+- `ARRAY_AGG`, `STRING_AGG` and `ARRAY_CONCAT_AGG` with `LIMIT` but no `ORDER BY`, which keep arbitrary elements.
+- `ARRAY_AGG` without `ORDER BY` (or analytic `ARRAY_AGG` whose window has no `ORDER BY`) whose result is indexed with `[OFFSET(n)]`, `[ORDINAL(n)]`, `[SAFE_OFFSET(n)]` or `[SAFE_ORDINAL(n)]`.
+
+Other numbering and navigation functions (`RANK`, `LAG`, `LEAD`, `FIRST_VALUE`, `NTH_VALUE`, ...) are not listed because BigQuery already rejects them without a window `ORDER BY`.
+
+Not reported: `ROW_NUMBER()` that no condition reads (e.g. a surrogate id), order-insensitive aggregates (`COUNT`, `SUM`, `ANY_VALUE`, ...), `ARRAY_AGG` / `STRING_AGG` without `LIMIT` that is not indexed, and duplicates that look the same to the rest of the statement: rows whose `PARTITION BY` keys cover every column the statement uses (e.g. `PARTITION BY TO_JSON_STRING(t)`, or `SELECT id ... QUALIFY ROW_NUMBER() OVER (PARTITION BY id) = 1`), and aggregate arguments that read only `GROUP BY` keys. Statements bqls cannot trace (e.g. recursive CTEs, table functions) and view definitions are skipped.
+
+Off by default: whether the result actually changes depends on whether rows sharing a key differ, which bqls cannot see, and deduplicating rows known to be identical by key alone (e.g. after at-least-once ingestion) is a common, intentional idiom. No quick fix, since the column to order by cannot be guessed.
 
 #### `timestamp-string-literal`
 
@@ -172,6 +203,18 @@ A `WITH` entry that is never referenced (a recursive CTE's self reference does n
 #### `unused-declare`
 
 A `DECLARE` variable whose name appears nowhere else in the script. Any identifier with the same name counts as a reference, including a `SET` target, so a variable that is only assigned is not reported. The quick fix removes the declaration (or just that name from `DECLARE x, y ...` when another variable stays).
+
+#### `unused-temp-function`
+
+A `CREATE TEMP FUNCTION` whose name appears nowhere else in the script. As in `unused-declare`, any identifier with the same name counts as a call, and so does the name as a word of a string literal, which may be a query run by `EXECUTE IMMEDIATE`. A function that only an unused function calls counts as used until that function is removed. The quick fix removes the statement.
+
+Not reported: a file that consists only of function definitions (it may be a library of functions for later queries of the same session), and persistent `CREATE FUNCTION dataset.f`, whose callers live outside the file.
+
+#### `unused-temp-function-argument`
+
+An argument of a SQL temp function that the body never references. Any identifier in the body with the argument's name counts as a reference, including a same-named column or alias. No quick fix, since removing an argument breaks every call site.
+
+Not reported: JavaScript and other non-SQL functions, whose body bqls cannot analyze, and persistent `CREATE FUNCTION dataset.f`, which may keep an argument for its callers.
 
 #### `unused-join`
 

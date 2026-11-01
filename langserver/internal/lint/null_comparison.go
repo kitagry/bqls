@@ -141,7 +141,9 @@ func NullReplacement(op string) (string, bool) {
 	return "", false
 }
 
-func functionName(call *googlesql.ResolvedFunctionCall) (string, bool) {
+func functionName(call interface {
+	Function() (*googlesql.Function, error)
+}) (string, bool) {
 	fn, err := call.Function()
 	if err != nil || fn == nil {
 		return "", false
