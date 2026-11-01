@@ -114,7 +114,7 @@ func (h *Handler) scheduleDryRun() {
 			if js.Statistics == nil {
 				return
 			}
-			totalProcessed := helper.BytesConvert(js.Statistics.TotalBytesProcessed)
+			totalProcessed := helper.ByteSize(js.Statistics.TotalBytesProcessed).String()
 			err = h.showMessage(ctx, lsp.Info, fmt.Sprintf("This query will process %s when run.", totalProcessed))
 			if err != nil {
 				h.logger.Debugf(`failed to send "window/showMessageRequest": %v`, err)

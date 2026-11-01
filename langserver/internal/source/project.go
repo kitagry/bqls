@@ -218,11 +218,11 @@ func buildBigQueryJobMarkedString(job bigquery.BigqueryJob) ([]lsp.MarkedString,
 		}
 	}
 
-	sb.WriteString(fmt.Sprintf("* Bytes processed: %s\n", helper.BytesConvert(status.Statistics.TotalBytesProcessed)))
+	sb.WriteString(fmt.Sprintf("* Bytes processed: %s\n", helper.ByteSize(status.Statistics.TotalBytesProcessed)))
 
 	switch details := status.Statistics.Details.(type) {
 	case *bq.QueryStatistics:
-		sb.WriteString(fmt.Sprintf("* Bytes billed: %s\n", helper.BytesConvert(details.TotalBytesBilled)))
+		sb.WriteString(fmt.Sprintf("* Bytes billed: %s\n", helper.ByteSize(details.TotalBytesBilled)))
 		sb.WriteString(fmt.Sprintf("* Slot milliseconds: %d\n", details.SlotMillis))
 	}
 

@@ -21,7 +21,7 @@ var BytesProcessedThreshold = &Analyzer{
 }
 
 type BytesProcessedThresholdOptions struct {
-	MaxBytes ByteSize `json:"max_bytes"`
+	MaxBytes helper.ByteSize `json:"max_bytes"`
 }
 
 func (o *BytesProcessedThresholdOptions) Validate() error {
@@ -37,7 +37,7 @@ func runBytesProcessedThreshold(pass *Pass) {
 	}
 	opts := pass.Options.(*BytesProcessedThresholdOptions)
 	processed := pass.DryRun.Statistics.TotalBytesProcessed
-	if processed <= int64(opts.MaxBytes) {
+	if helper.ByteSize(processed) <= opts.MaxBytes {
 		return
 	}
 	r, ok := firstStatementLine(pass.File)
@@ -47,7 +47,7 @@ func runBytesProcessedThreshold(pass *Pass) {
 	pass.Report(Diagnostic{
 		Range: r,
 		Message: fmt.Sprintf("This query will process %s, which exceeds the threshold of %s",
-			helper.BytesConvert(processed), helper.BytesConvert(int64(opts.MaxBytes))),
+			helper.ByteSize(processed), opts.MaxBytes),
 	})
 }
 

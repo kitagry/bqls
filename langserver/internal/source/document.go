@@ -922,7 +922,7 @@ func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([
 
 	p := message.NewPrinter(language.English)
 	sb.WriteString(p.Sprintf("* Number of rows: %d\n", metadata.NumRows))
-	fmt.Fprintf(&sb, "* Total logical bytes: %s\n", helper.BytesConvert(metadata.NumBytes))
+	fmt.Fprintf(&sb, "* Total logical bytes: %s\n", helper.ByteSize(metadata.NumBytes))
 
 	projectID, datasetID, tableID, ok := extractTableIDsFromMedatada(metadata)
 	if ok {
