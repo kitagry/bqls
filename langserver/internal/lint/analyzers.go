@@ -13,4 +13,5 @@ var Analyzers = []*Analyzer{
 	CrossJoin,
 	BytesProcessedThreshold,
 	SelectStar,
+	LeftJoinAsInner,
 }
