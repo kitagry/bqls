@@ -47,6 +47,9 @@ type columnFlow struct {
 	derived map[int32][]int32
 	// filtered is every column id referenced by a filtering predicate.
 	filtered map[int32]bool
+	// conjuncts holds, for each AND-separated term of every filtering
+	// predicate, the column ids it references.
+	conjuncts [][]int32
 	// used is every column id whose value the statement consumes.
 	used map[int32]bool
 }
@@ -78,6 +81,9 @@ func analyzeColumnFlow(stmt googlesql.ResolvedStatementNode) (*columnFlow, bool)
 		}
 		for _, id := range referencedColumnIDs(expr) {
 			flow.filtered[id] = true
+		}
+		for _, c := range splitConjuncts(expr) {
+			flow.conjuncts = append(flow.conjuncts, referencedColumnIDs(c))
 		}
 	}
 	addTarget := func(scan *googlesql.ResolvedTableScan, err error) {
@@ -327,6 +333,26 @@ func referencedColumnIDs(expr googlesql.ResolvedNode) []int32 {
 	return ids
 }
 
+func splitConjuncts(expr googlesql.ResolvedExprNode) []googlesql.ResolvedExprNode {
+	call, ok := expr.(*googlesql.ResolvedFunctionCall)
+	if !ok {
+		return []googlesql.ResolvedExprNode{expr}
+	}
+	name, ok := functionName(call)
+	if !ok || name != "$and" {
+		return []googlesql.ResolvedExprNode{expr}
+	}
+	args, err := call.ArgumentList()
+	if err != nil {
+		return []googlesql.ResolvedExprNode{expr}
+	}
+	var terms []googlesql.ResolvedExprNode
+	for _, a := range args {
+		terms = append(terms, splitConjuncts(a)...)
+	}
+	return terms
+}
+
 func columnIDs(cols []*googlesql.ResolvedColumn) []int32 {
 	ids := make([]int32, 0, len(cols))
 	for _, c := range cols {
@@ -339,14 +365,24 @@ func columnIDs(cols []*googlesql.ResolvedColumn) []int32 {
 
 // reaches reports whether id, or any column computed from it, is in targets.
 func (f *columnFlow) reaches(id int32, targets map[int32]bool) bool {
-	seen := map[int32]bool{id: true}
-	queue := []int32{id}
+	for d := range f.derivedFrom([]int32{id}) {
+		if targets[d] {
+			return true
+		}
+	}
+	return false
+}
+
+// derivedFrom returns ids together with every column computed from them.
+func (f *columnFlow) derivedFrom(ids []int32) map[int32]bool {
+	seen := make(map[int32]bool, len(ids))
+	queue := slices.Clone(ids)
+	for _, id := range ids {
+		seen[id] = true
+	}
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
-		if targets[cur] {
-			return true
-		}
 		for _, next := range f.derived[cur] {
 			if !seen[next] {
 				seen[next] = true
@@ -354,7 +390,7 @@ func (f *columnFlow) reaches(id int32, targets map[int32]bool) bool {
 			}
 		}
 	}
-	return false
+	return seen
 }
 
 func checkPartitionFilter(pass *Pass, flow *columnFlow, scan *googlesql.ResolvedTableScan) {
