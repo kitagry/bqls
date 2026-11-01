@@ -142,7 +142,7 @@
 						]
 					},
 					"default": {},
-					"markdownDescription": "Enable or disable lint rules by name, e.g. `{\"null-comparison\": false}`. A rule can also take an object with an optional `enabled` and the rule's options, e.g. `{\"bytes-processed-threshold\": {\"enabled\": true, \"max_bytes\": 107374182400}}`. Rules not listed use their default."
+					"markdownDescription": "Enable or disable lint rules by name, e.g. `{\"null-comparison\": false}`. A rule can also take an object with an optional `enabled` and the rule's options, e.g. `{\"bytes-processed-threshold\": {\"enabled\": true, \"max_bytes\": \"100GiB\"}}`. Rules not listed use their default."
 				},
 				"bqls.trace.server": {
 					"type": "string",

@@ -86,6 +86,16 @@ func TestBytesProcessedThreshold(t *testing.T) {
 			},
 			dryRun: dryRunProcessing(1536),
 		},
+		"above a max_bytes with a unit": {
+			src: "SELECT 1",
+			cfg: lint.Config{
+				Rules:   map[string]bool{"bytes-processed-threshold": true},
+				Options: map[string]json.RawMessage{"bytes-processed-threshold": json.RawMessage(`{"max_bytes":"100GiB"}`)},
+			},
+			dryRun: dryRunProcessing(101 << 30),
+			want: []lint.Diagnostic{bytesProcessedThreshold(rng(0, 0, 0, 8),
+				"This query will process 101 GiB, which exceeds the threshold of 100 GiB")},
+		},
 		"disabled by default": {
 			src:    "SELECT 1",
 			dryRun: dryRunProcessing(2 * tib),
@@ -125,4 +135,33 @@ func TestBytesProcessedThreshold_NegativeMaxBytes(t *testing.T) {
 			t.Errorf("Run() = %+v, want no diagnostics for invalid options", got)
 		}
 	})
+}
+
+func TestBytesProcessedThreshold_MaxBytesInConfigFile(t *testing.T) {
+	tests := map[string]struct {
+		maxBytes string
+		wantErr  string
+	}{
+		"binary unit":  {maxBytes: "100GiB"},
+		"integer":      {maxBytes: "107374182400"},
+		"unknown unit": {maxBytes: "100G", wantErr: `unknown unit "G"`},
+	}
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			cfg, err := lint.ParseConfigFile([]byte("lint:\n  rules:\n    bytes-processed-threshold:\n      enabled: true\n      max_bytes: " + tt.maxBytes + "\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = cfg.Validate(lint.Analyzers)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("Validate() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("Validate() = %v, want it to contain %q", err, tt.wantErr)
+			}
+		})
+	}
 }
