@@ -21,9 +21,11 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`not-in-nullable`](#not-in-nullable) | on | warning | | | `x NOT IN (subquery)` over a `NULLABLE` table column, which yields no rows once that column holds a NULL |
 | [`cross-join`](#cross-join) | on | warning | | | Joins without a join condition, which return the Cartesian product of both sides |
 | [`union-column-order`](#union-column-order) | on | warning | | | Set operation inputs whose columns are the first input's columns in a different order |
+| [`insert-column-order`](#insert-column-order) | on | warning | | | `INSERT ... SELECT` queries whose columns are the target columns in a different order |
 | [`left-join-as-inner`](#left-join-as-inner) | on | warning | | | `LEFT` / `RIGHT JOIN`s whose `WHERE` clause rejects the NULL rows of the optional side |
 | [`variable-column-shadow`](#variable-column-shadow) | on | warning | | | A column compared with itself because its bare name was meant as a same-named `DECLARE` variable |
 | [`join-key-implicit-cast`](#join-key-implicit-cast) | on | warning | | | `ON` / `USING` join keys of different types, so one side is implicitly cast (e.g. `INT64` to `FLOAT64`) |
+| [`self-comparison`](#self-comparison) | on | warning | | | Comparisons whose two sides are the same column, e.g. `a.id = a.id` meant as `a.id = b.id` |
 | **Cost** | | | | | |
 | [`partition-filter`](#partition-filter) | on | warning | | | Partitioned tables read without a filter on the partition column |
 | [`partition-filter-not-prunable`](#partition-filter-not-prunable) | off | warning | | | Partition column filters written in a form BigQuery documents as unable to prune partitions |
@@ -69,6 +71,12 @@ A set operation input (`UNION ALL`, `UNION DISTINCT`, `INTERSECT`, `EXCEPT`) who
 
 Skipped: `CORRESPONDING` / `BY NAME`, inputs with `*` or `SELECT AS STRUCT`, pipe `|> UNION ALL`, inputs that read exactly the same tables (`SELECT src, dst FROM edges UNION ALL SELECT dst, src FROM edges` is how a relation is made symmetric), and unreferenced CTEs.
 
+#### `insert-column-order`
+
+An `INSERT ... SELECT` whose query lists the target columns in a different order. `INSERT` matches the query's columns to the target columns by position, not by name, so when the types agree the values are silently swapped. The targets are the column list when the statement has one (`INSERT INTO t (a, b) SELECT b, a ...`), and otherwise every column of the table in schema order, which the statement does not show (`INSERT INTO t SELECT b, a ...` where `t` has columns `a, b`). Names are compared as in `union-column-order`, and queries whose names merely differ from the targets are not reported. Reported on the select list.
+
+Skipped: queries with `*` or pipe syntax, a set operation matching `BY NAME` / `CORRESPONDING`, `INSERT ... VALUES`, and queries that read the target table itself (`INSERT INTO edges SELECT dst, src FROM edges` is how a relation is made symmetric).
+
 #### `left-join-as-inner`
 
 A `LEFT JOIN` (or `RIGHT JOIN`) whose `WHERE` clause filters the optional side with a condition that rejects NULL, so the unmatched rows the outer join adds are dropped again and it behaves as an `INNER JOIN` (e.g. `a LEFT JOIN b ON a.id = b.id WHERE b.status = 'active'`). Move the condition into the `ON` clause to keep the unmatched rows, or write `INNER JOIN`. Reported on the `JOIN` keyword.
@@ -88,6 +96,12 @@ Other uses of a name shared by a variable and a column (e.g. `GROUP BY user_id`)
 A join key comparison in `ON` or `USING` between columns of different types, so BigQuery implicitly casts one side, e.g. `INT64` with `FLOAT64` or `NUMERIC`, `NUMERIC` with `FLOAT64`, or `DATE` with `DATETIME` (`a.order_id = b.order_id` where one is `INT64` and the other `FLOAT64`). Mismatched key types usually point to a schema design mistake, and a cast to `FLOAT64` is lossy: it cannot represent every `INT64` or `NUMERIC` value exactly, so different keys may compare equal. Give both columns the same type, or write an explicit `CAST` to state the intent. Reported on the comparison (on the `JOIN` keyword for `USING`).
 
 Only a top-level `AND` term of `=` or `IS NOT DISTINCT FROM` between a column of each join input counts, where the analyzer inserted the cast. Not reported: comparisons with literals, query parameters or computed values (`a.id = 1.5`, `a.id = b.id + 0`), explicit `CAST` / `SAFE_CAST` on either side, terms under `OR`, other comparisons (`<`, `!=`, ...), comma joins filtered in `WHERE`, and `MERGE ... ON`.
+
+#### `self-comparison`
+
+A comparison (`=`, `!=` / `<>`, `<`, `<=`, `>`, `>=`, `IS [NOT] DISTINCT FROM`) whose two sides are references to the same column, e.g. `a JOIN b ON a.id = a.id` or `WHERE x = x`. The result does not depend on the column's value, only on whether it is NULL, so one side is almost always a typo for another column (`b.id`). Both sides must resolve to the same column, so a self join `t AS a JOIN t AS b ON a.id = b.id` is fine. For `=` the message also suggests `x IS NOT NULL`, in case a NULL check was meant; there is no quick fix, since the typo is far more likely.
+
+Not reported: `FLOAT64` columns (`x != x` is a way to test for NaN), expressions that are not plain column references (`x = x + 0`, `s.f = s.f`), comparisons the analyzer adds itself (`JOIN ... USING`), and comparisons that `variable-column-shadow` reports (one side written as the bare name of a `DECLARE` variable in scope).
 
 ### Cost
 
