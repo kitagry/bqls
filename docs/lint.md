@@ -1,0 +1,274 @@
+# Lint
+
+bqls reports lint findings for queries that analyze without errors. The language server publishes them as diagnostics (source `bqls-lint`, code = rule name), and [`bqls lint`](#cli) runs the same rules from the command line, e.g. in CI.
+
+- [Rules](#rules)
+- [Configuration](#configuration)
+  - [Editor settings](#editor-settings)
+  - [Config file](#config-file)
+  - [Ignoring a finding](#ignoring-a-finding)
+- [CLI](#cli)
+
+## Rules
+
+Findings are reported as warnings, except those marked *information* below. A quick fix is offered as an LSP code action and applied by `bqls lint --fix`.
+
+| Rule | Default | Severity | Quick fix | Options | Reports |
+| --- | --- | --- | --- | --- | --- |
+| **Correctness** | | | | | |
+| [`null-comparison`](#null-comparison) | on | warning | yes | | `= NULL` / `!= NULL` comparisons, which always yield NULL |
+| [`in-null`](#in-null) | on | warning | | | `IN (NULL)` / `NOT IN (NULL)` lists of only NULLs, which always yield NULL |
+| [`not-in-nullable`](#not-in-nullable) | on | warning | | | `x NOT IN (subquery)` over a `NULLABLE` table column, which yields no rows once that column holds a NULL |
+| [`cross-join`](#cross-join) | on | warning | | | Joins without a join condition, which return the Cartesian product of both sides |
+| [`union-column-order`](#union-column-order) | on | warning | | | Set operation inputs whose columns are the first input's columns in a different order |
+| [`insert-column-order`](#insert-column-order) | on | warning | | | `INSERT ... SELECT` queries whose columns are the target columns in a different order |
+| [`left-join-as-inner`](#left-join-as-inner) | on | warning | | | `LEFT` / `RIGHT JOIN`s whose `WHERE` clause rejects the NULL rows of the optional side |
+| [`variable-column-shadow`](#variable-column-shadow) | on | warning | | | A column compared with itself because its bare name was meant as a same-named `DECLARE` variable |
+| **Cost** | | | | | |
+| [`partition-filter`](#partition-filter) | on | warning | | | Partitioned tables read without a filter on the partition column |
+| [`partition-filter-not-prunable`](#partition-filter-not-prunable) | off | warning | | | Partition column filters written in a form BigQuery documents as unable to prune partitions |
+| [`wildcard-table-suffix`](#wildcard-table-suffix) | on | warning | | | Wildcard table queries that never filter on `_TABLE_SUFFIX` |
+| [`wildcard-table-suffix-not-constant`](#wildcard-table-suffix-not-constant) | off | warning | | | `_TABLE_SUFFIX` filters that BigQuery documents as unable to limit the tables scanned |
+| [`order-by-in-subquery`](#order-by-in-subquery) | on | warning | yes | | `ORDER BY` in a subquery, CTE or derived table whose order cannot reach the result |
+| [`select-star`](#select-star) | off | warning | | `min_columns` | `SELECT *` that reads at least `min_columns` columns of a table |
+| [`bytes-processed-threshold`](#bytes-processed-threshold) | off | warning | | `max_bytes` | Files whose dry-run estimate exceeds `max_bytes` |
+| **Unused code** | | | | | |
+| [`unused-cte`](#unused-cte) | on | information | yes | | `WITH` entries that are never referenced |
+| [`unused-declare`](#unused-declare) | on | information | yes | | `DECLARE` variables that are never referenced |
+| [`unused-join`](#unused-join) | on | information | | | `LEFT` / `RIGHT JOIN`s whose optional side is never used outside the join condition |
+
+Bare `x = NULL` / `x != NULL` is rejected by BigQuery itself ("Operands of = cannot be literal NULL"); bqls offers an `IS [NOT] NULL` quick fix on that error.
+
+### Correctness
+
+#### `null-comparison`
+
+`x = CAST(NULL AS T)` / `!=` always yields NULL. The quick fix rewrites it to `IS [NOT] NULL`.
+
+#### `in-null`
+
+`x IN (NULL)` / `x NOT IN (NULL)` whose list holds only NULLs (including `CAST(NULL AS T)` and `SAFE_CAST(NULL AS T)`) always yields NULL. No quick fix, since `IS [NOT] NULL` is not equivalent.
+
+#### `not-in-nullable`
+
+`x NOT IN (SELECT col ...)` where `col` is a `NULLABLE` column of a table: once the subquery returns a NULL, `NOT IN` yields NULL (never TRUE) for every row, so a `WHERE` keeps none. Rewrite it with `NOT EXISTS`, or filter the subquery with `col IS NOT NULL`.
+
+Unlike `in-null`, which reports a literal list of only NULLs, this rule depends on the table schema, so it needs table metadata. To avoid false positives, the column is followed only while it is passed through unchanged (column references, aliases, joins, `GROUP BY` keys, CTEs and derived tables).
+
+Not reported: a computed value (`IFNULL`, `COALESCE`, aggregates, arithmetic, struct fields), `UNION` and other set operations, `UNNEST`, `REQUIRED` columns, views and other non-table sources, and a column that any `WHERE` / `HAVING` / `QUALIFY` / `JOIN ... ON` condition in the statement mentions (e.g. `IS NOT NULL`, `=`, `>`).
+
+#### `cross-join`
+
+An inner join with no join condition (a comma join `FROM a, b` or `JOIN b ON TRUE`), which returns every combination of rows from both sides. A join counts as conditioned when a `WHERE` / `HAVING` / `JOIN ... ON` term mentions both sides, or each side is compared with another table (`FROM a, b, c WHERE a.id = c.a_id AND b.id = c.b_id`); column flow is followed through CTEs and subqueries.
+
+Not reported: an explicit `CROSS JOIN`, `UNNEST`, outer and lateral joins, a side that yields at most one row (an aggregate without `GROUP BY`, `SELECT` without `FROM`, `LIMIT 1`, also through CTEs), pipe `|> JOIN`, statements bqls cannot trace, view definitions, and unreferenced CTEs. Write `CROSS JOIN` to mark an intended product.
+
+#### `union-column-order`
+
+A set operation input (`UNION ALL`, `UNION DISTINCT`, `INTERSECT`, `EXCEPT`) whose columns are the first input's columns in a different order. Set operations match columns by position, so when the types agree the values are silently swapped. Names are the explicit aliases or the implicit alias of a column path (`t.a` is `a`); a column without a name (`SELECT x + 1`) is left out of the comparison, and inputs whose names merely differ are not reported. Reported on the select list of the reordered input.
+
+Skipped: `CORRESPONDING` / `BY NAME`, inputs with `*` or `SELECT AS STRUCT`, pipe `|> UNION ALL`, inputs that read exactly the same tables (`SELECT src, dst FROM edges UNION ALL SELECT dst, src FROM edges` is how a relation is made symmetric), and unreferenced CTEs.
+
+#### `insert-column-order`
+
+An `INSERT ... SELECT` whose query lists the target columns in a different order. `INSERT` matches the query's columns to the target columns by position, not by name, so when the types agree the values are silently swapped. The targets are the column list when the statement has one (`INSERT INTO t (a, b) SELECT b, a ...`), and otherwise every column of the table in schema order, which the statement does not show (`INSERT INTO t SELECT b, a ...` where `t` has columns `a, b`). Names are compared as in `union-column-order`, and queries whose names merely differ from the targets are not reported. Reported on the select list.
+
+Skipped: queries with `*` or pipe syntax, a set operation matching `BY NAME` / `CORRESPONDING`, `INSERT ... VALUES`, and queries that read the target table itself (`INSERT INTO edges SELECT dst, src FROM edges` is how a relation is made symmetric).
+
+#### `left-join-as-inner`
+
+A `LEFT JOIN` (or `RIGHT JOIN`) whose `WHERE` clause filters the optional side with a condition that rejects NULL, so the unmatched rows the outer join adds are dropped again and it behaves as an `INNER JOIN` (e.g. `a LEFT JOIN b ON a.id = b.id WHERE b.status = 'active'`). Move the condition into the `ON` clause to keep the unmatched rows, or write `INNER JOIN`. Reported on the `JOIN` keyword.
+
+A top-level `AND` term counts when it is certainly NULL or FALSE for such a row: `=`, `!=`, `<`, `<=`, `>`, `>=`, `LIKE`, `IN (...)` / `BETWEEN` on the tested value, `NOT` of those, `IS NOT NULL`, `IS TRUE`, `IS FALSE`, or a bare boolean column, where the column may be wrapped in `CAST`, struct field access or arithmetic.
+
+Not reported: `IS NULL`, `COALESCE` / `IFNULL` / `IF` and other functions, `OR`, `IS [NOT] DISTINCT FROM`, subqueries, conditions in `ON` or `HAVING` or an outer query, `FULL` and `UNNEST` joins, and a `USING` column (it is the preserved side's).
+
+#### `variable-column-shadow`
+
+A comparison (`=`, `!=`, `<`, `<=`, `>`, `>=`, `IS [NOT] DISTINCT FROM`) of a column with itself where one side is written as the bare name of a `DECLARE` variable in scope, e.g. `DECLARE user_id INT64; SELECT * FROM t WHERE user_id = user_id` (or `t.user_id = user_id`). A column takes precedence over a variable of the same name, so the variable is never read and the condition is always true (or always false) for non-NULL rows. Qualifying the column does not help; rename the variable.
+
+Other uses of a name shared by a variable and a column (e.g. `GROUP BY user_id`) are not reported, since the column is likely intended there; neither are `IF` / `WHILE` conditions.
+
+### Cost
+
+#### `partition-filter`
+
+A time- or range-partitioned table that is read without any filter on its partition column (`_PARTITIONTIME` / `_PARTITIONDATE` for ingestion-time partitioning), so the query may scan every partition. A filter anywhere in the statement on the column or a value derived from it (through CTEs, subqueries, and `UNION`) counts.
+
+Skipped: statements bqls cannot trace (e.g. recursive CTEs, table functions), view definitions, DML targets, wildcard tables, unreferenced CTEs, and reads that consume no column (e.g. `SELECT COUNT(*)`, unless the table requires a partition filter).
+
+#### `partition-filter-not-prunable`
+
+Off by default. A filter on a partition column written in a form the [BigQuery documentation](https://cloud.google.com/bigquery/docs/querying-partitioned-tables) lists as unable to prune partitions:
+
+- an `OR` with a branch that does not filter the partition column
+- a comparison with a scalar subquery
+- a comparison with another column of the same table (`ts >= ts2`)
+- arithmetic on the column (`ts + INTERVAL 1 DAY > ...`)
+- `EXTRACT` of a part other than `YEAR`
+- `FORMAT_DATE` / `FORMAT_DATETIME` / `FORMAT_TIMESTAMP` with a literal format other than `%F`, `%Y-%m-%d` or `%Y%m%d`
+- any function over an integer-range partitioning column
+
+Reported only when no other term on the partition column (joined by `AND`) might prune, so `dt >= '2020-01-01' AND EXTRACT(MONTH FROM dt) = 3` is fine.
+
+Not reported: forms the documentation says do prune (e.g. `DATE(ts)`, `TIMESTAMP_TRUNC`, `DATE_ADD`, `CURRENT_TIMESTAMP()`, query parameters), forms it does not mention (e.g. `CAST(dt AS STRING)`, `dt IN (SELECT ...)`, join conditions against another table), filters on values computed from the column in a CTE or subquery (plain aliases are followed), and whatever `partition-filter` skips (including the case with no filter at all).
+
+Off by default because the documentation, not the optimizer, is the source of these patterns, and bqls cannot confirm pruning per table.
+
+#### `wildcard-table-suffix`
+
+A wildcard table (`` `p.d.events_*` ``) that is queried without any filter on `_TABLE_SUFFIX`, so it scans every matching table. Filters are judged as in `partition-filter`: a `WHERE` / `JOIN ... ON` condition that mentions `_TABLE_SUFFIX` or a value derived from it (through CTEs, subqueries, and `UNION`) counts, even on one side of an `OR`. Unlike `partition-filter`, `SELECT COUNT(*)` is still reported.
+
+Skipped: statements bqls cannot trace, view definitions, and unreferenced CTEs.
+
+#### `wildcard-table-suffix-not-constant`
+
+Off by default. A filter on `_TABLE_SUFFIX` that is not a constant expression, which the [BigQuery documentation](https://cloud.google.com/bigquery/docs/querying-wildcard-tables) says does not limit the tables a wildcard table query scans: a comparison with a scalar subquery, a comparison with another column of the same table, or an `OR` with a branch that does not filter `_TABLE_SUFFIX`.
+
+Judged as in `partition-filter-not-prunable`: reported only when no other term on `_TABLE_SUFFIX` (joined by `AND`) might limit the scan, so `_TABLE_SUFFIX BETWEEN '40' AND '60' AND _TABLE_SUFFIX = (SELECT ...)` is fine.
+
+Not reported: functions over `_TABLE_SUFFIX` (e.g. `PARSE_DATE('%Y%m%d', _TABLE_SUFFIX)`), `_TABLE_SUFFIX IN (SELECT ...)`, join conditions against another table, values computed from `_TABLE_SUFFIX` in a CTE or subquery (plain aliases are followed), JavaScript UDFs, and whatever `wildcard-table-suffix` skips (including the case with no filter at all).
+
+Off by default for the same reason as `partition-filter-not-prunable`.
+
+#### `order-by-in-subquery`
+
+An `ORDER BY` without `LIMIT` in a subquery, CTE or derived table whose order cannot reach the result (BigQuery does not preserve row order), so it only costs a sort. The quick fix removes the clause.
+
+Not reported when the order may matter: `LIMIT`, `ARRAY(SELECT ...)`, scalar subqueries, set operations, or a consumer that is limited, aggregated (e.g. `ARRAY_AGG`) or windowed. DML, `CREATE TABLE AS SELECT` and pipe `ORDER BY` are skipped.
+
+#### `select-star`
+
+Off by default. A bare `*` or `t.*` that reads at least `min_columns` columns of a table in the same `SELECT`'s `FROM`, since BigQuery bills every column read (`LIMIT` does not help). Only columns the statement actually consumes count, so `SELECT a FROM (SELECT * FROM t)` or `EXISTS (SELECT * ...)` is not reported. When a dry-run result is available, its bytes estimate for the whole file is added to the message.
+
+Skipped: `* EXCEPT (...)` / `* REPLACE (...)` (the columns were chosen deliberately), a `*` over a CTE or subquery (the `*` inside it that reads the table is reported instead), DML, `CREATE TABLE AS SELECT`, `EXPORT DATA`, view definitions, and statements bqls cannot trace.
+
+Off by default because whether reading every column is wasteful depends on the query's intent, and a sensible `min_columns` differs per team.
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `min_columns` | `50` | The number of consumed columns at which a `*` is reported. Must be a positive integer. |
+
+#### `bytes-processed-threshold`
+
+Off by default. The dry-run estimate of the whole file exceeds `max_bytes`.
+
+Needs a dry-run result: the language server dry-runs a file when it is saved, and `bqls lint` only with `--dry-run`. Without one, or after the file is edited since the dry-run, the rule reports nothing.
+
+Reported on the first line of the first statement, so a `-- bqls:ignore bytes-processed-threshold` comment must be on the line directly above that line (or trailing on it).
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `max_bytes` | `1TiB` | A byte count (`1000000`) or a number with a unit (`100GiB`, `1.5TiB`): `B`, `KiB`, `MiB`, `GiB`, `TiB`, `PiB`, `EiB` (powers of 1024) or `KB` … `EB` (powers of 1000), case-insensitive. Single-letter units such as `100G` are rejected as ambiguous. Must not be negative. |
+
+### Unused code
+
+#### `unused-cte`
+
+A `WITH` entry that is never referenced (a recursive CTE's self reference does not count). The quick fix removes the entry.
+
+#### `unused-declare`
+
+A `DECLARE` variable whose name appears nowhere else in the script. Any identifier with the same name counts as a reference, including a `SET` target, so a variable that is only assigned is not reported. The quick fix removes the declaration (or just that name from `DECLARE x, y ...` when another variable stays).
+
+#### `unused-join`
+
+A `LEFT JOIN` (or `RIGHT JOIN`) whose optional side contributes no column outside its own `ON` / `USING` condition, so it only adds cost — or duplicates rows when several rows match, which is rarely intended. A column counts as used when any expression reads it or a `SELECT` list outputs it (including `SELECT *`), even in a subquery whose result is not read further. Reported on the `JOIN` keyword.
+
+`INNER`, `CROSS`, comma and `FULL` joins are not reported, since they filter, multiply or add rows; neither are `UNNEST` joins.
+
+## Configuration
+
+Each rule is either `true` / `false` or an object with an optional `enabled` and the rule's [options](#rules). Rules that are not listed use their default. Unknown rules and options are errors.
+
+Precedence: `--enable` / `--disable` flags or the editor's `lint` setting > [`.bqls.yaml`](#config-file) > rule defaults. Rule options are merged key by key, so a setting only needs the options it changes.
+
+### Editor settings
+
+Rules can be toggled with the `lint` setting (also via `workspace/didChangeConfiguration`):
+
+```lua
+settings = {
+  project_id = "YOUR_PROJECT_ID",
+  lint = { rules = { ["null-comparison"] = false } },
+}
+```
+
+In VSCode, use the `bqls.lint.rules` setting.
+
+### Config file
+
+To share lint settings between your editor and CI, put a `.bqls.yaml` in your repository. Both the language server and `bqls lint` look for it from the SQL file's directory up to the repository root (the directory containing `.git`); the nearest one wins.
+
+```yaml
+lint:
+  rules:
+    unused-cte: false
+    bytes-processed-threshold:   # a rule can also take an object
+      enabled: true
+      max_bytes: 100GiB          # rule-specific options
+```
+
+The file takes the same form as the editor's `lint` setting. Unknown keys under `lint` are errors too; with an invalid file, `bqls lint` exits with `2` and the language server logs the error and ignores the file. The language server rereads the file when it changes.
+
+### Ignoring a finding
+
+To silence a single occurrence, add a `bqls:ignore` comment. A comment on its own line applies to the next line; a trailing comment applies to its own line, and so does a block comment followed by code (`/* bqls:ignore */ SELECT ...`). List several rules separated by spaces or commas, or omit rule names to ignore every rule. Text after `--` following the rule list is ignored, so you can leave a reason.
+
+```sql
+-- bqls:ignore null-comparison
+SELECT * FROM t WHERE x = CAST(NULL AS INT64)
+SELECT * FROM t WHERE y = CAST(NULL AS INT64) -- bqls:ignore
+-- bqls:ignore unused-join, cross-join -- the lookup table has one row
+```
+
+The language server also offers an "Ignore *rule* on this line" code action on each finding, which adds the comment (or appends the rule to an existing `bqls:ignore` line above).
+
+## CLI
+
+`bqls lint` runs the same analysis and lint rules as the language server, without an editor. Table schemas are fetched with Application Default Credentials; no query is run unless `--dry-run` is given.
+
+```console
+$ bqls lint [flags] <file|dir|->...
+$ bqls lint --project my-project queries/
+queries/report.sql:3:6: info: CTE `tmp` is defined but never used (unused-cte)
+queries/report.sql:8:7: error: Unrecognized name: y
+```
+
+Directories are searched recursively for `*.sql` files (skipping directories whose name starts with `.`, such as `.git`), and `-` reads from stdin. Flags must come before files. Run `bqls lint --help` for the full list of rules. Each file uses the nearest [`.bqls.yaml`](#config-file) (stdin uses the one found from the working directory).
+
+| Flag | Description |
+| --- | --- |
+| `--project` | BigQuery project ID. Defaults to `gcloud config get project`. |
+| `--location` | BigQuery location. Defaults to `US`. |
+| `--enable <rule>` / `--disable <rule>` | Turn a rule on or off. Repeatable; the last one wins. Takes precedence over the config file. |
+| `--config <path>` | Use this config file for every input instead of looking up `.bqls.yaml`. |
+| `--fix` | Apply the quick fixes (the first one of each finding) and write the files back, then report the findings that are left. With `-`, the fixed SQL is printed to stdout and the findings go to stderr. A fix that overlaps another fix in the same file is skipped (noted on stderr) and its finding is reported; running `--fix` again applies it. |
+| `--dry-run` | Dry-run each file that analyzes without errors (after `--fix`, if given), so that rules using the estimate such as `bytes-processed-threshold` can report. This creates a dry-run query job per file, which is free but needs `bigquery.jobs.create` (e.g. `roles/bigquery.jobUser`). A failed dry-run is printed to stderr and makes the exit code `2`; the other findings are still printed. |
+| `--format text\|json\|github` | `text` (default) prints `path:line:col: severity: message (rule)`. `json` prints an array of `{file, line, column, endLine, endColumn, severity, rule, message}`. `github` prints [workflow commands](https://docs.github.com/en/actions/reference/workflow-commands-for-github-actions) that show up as annotations on pull requests. |
+
+Lines and columns are 1-based and the end position is exclusive. Columns are currently off on lines containing non-ASCII text ([#375](https://github.com/kitagry/bqls/issues/375)). Analysis errors are reported with severity `error` and no rule. With `--format github`, file paths are made relative to `$GITHUB_WORKSPACE` so annotations attach to the diff.
+
+Exit codes: `0` nothing found, `1` any lint finding or analysis error (with `--fix`, any that is left after fixing), `2` usage or runtime error (bad flags, invalid config file, unreadable or unwritable file, authentication/permission/network failure while fetching table metadata, failed `--dry-run`). An unreadable file does not stop the others from being linted; their findings are still printed and the exit code is `2`.
+
+GitHub Actions example. The service account only needs to read table metadata (e.g. `roles/bigquery.metadataViewer`), plus `roles/bigquery.jobUser` with `--dry-run`. Pass `--project` explicitly, since the fallback to `gcloud config get project` only works where gcloud is installed and configured. Instead of `go install`, you can download a binary from [GitHub Releases](https://github.com/kitagry/bqls/releases) (the `lint` subcommand needs a release that includes it).
+
+```yaml
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.SERVICE_ACCOUNT }}
+      - run: go install github.com/kitagry/bqls@latest
+      - run: bqls lint --project my-project --format github .
+```
