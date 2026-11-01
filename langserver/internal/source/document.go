@@ -922,7 +922,7 @@ func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([
 
 	p := message.NewPrinter(language.English)
 	sb.WriteString(p.Sprintf("* Number of rows: %d\n", metadata.NumRows))
-	fmt.Fprintf(&sb, "* Total logical bytes: %s\n", bytesConvert(metadata.NumBytes))
+	fmt.Fprintf(&sb, "* Total logical bytes: %s\n", helper.ByteSize(metadata.NumBytes))
 
 	projectID, datasetID, tableID, ok := extractTableIDsFromMedatada(metadata)
 	if ok {
@@ -935,22 +935,6 @@ func buildBigQueryTableMetadataMarkedString(metadata *bigquery.TableMetadata) ([
 	// BuildFieldSchema data instead, to avoid showing the same schema twice
 	// in two different formats.
 	return []lsp.MarkedString{lsp.RawMarkedString(sb.String())}, nil
-}
-
-func bytesConvert(bytes int64) string {
-	if bytes == 0 {
-		return "0 bytes"
-	}
-
-	base := math.Floor(math.Log(float64(bytes)) / math.Log(1024))
-	units := []string{"bytes", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB"}
-
-	stringVal := fmt.Sprintf("%.2f", float64(bytes)/math.Pow(1024, base))
-	stringVal = strings.TrimSuffix(stringVal, ".00")
-	return fmt.Sprintf("%s %v",
-		stringVal,
-		units[int(base)],
-	)
 }
 
 func extractTableIDsFromMedatada(metadata *bigquery.TableMetadata) (projectID, datasetID, tableID string, ok bool) {

@@ -5,8 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
-	"strings"
+
+	bq "cloud.google.com/go/bigquery"
 
 	"github.com/kitagry/bqls/langserver/internal/lint"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
@@ -45,6 +45,11 @@ func (h *Handler) scheduleDiagnostics() {
 			diagnostics, err := h.diagnose(ctx, uri)
 			if err != nil {
 				h.logger.Println(err)
+				return
+			}
+			// A newer request for uri is running and will publish; this
+			// result may predate the text or dry-run result that one sees.
+			if ctx.Err() != nil {
 				return
 			}
 
@@ -87,7 +92,7 @@ func (h *Handler) scheduleDryRun() {
 				}
 			}()
 
-			diagnostics, totalProcessed, err := h.dryrun(ctx, uri)
+			js, err := h.dryrun(ctx, uri)
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					return
@@ -99,12 +104,17 @@ func (h *Handler) scheduleDryRun() {
 				return
 			}
 
-			for uri, d := range diagnostics {
-				err := h.publishDiagnostics(ctx, uri, d)
-				if err != nil {
-					h.logger.Debugf(`failed to send "textDocument/publishDiagnostics" for %s: %v`, uri, err)
-				}
+			if js == nil {
+				return
 			}
+			// Publishing goes through scheduleDiagnostics, which cancels an
+			// older run for uri that may have started before the dry-run
+			// result was stored and would otherwise publish without it last.
+			h.requestDiagnostics(ctx, uri)
+			if js.Statistics == nil {
+				return
+			}
+			totalProcessed := helper.ByteSize(js.Statistics.TotalBytesProcessed).String()
 			err = h.showMessage(ctx, lsp.Info, fmt.Sprintf("This query will process %s when run.", totalProcessed))
 			if err != nil {
 				h.logger.Debugf(`failed to send "window/showMessageRequest": %v`, err)
@@ -173,42 +183,35 @@ func lintDiagnosticsToLsp(conv helper.PositionConverter, diags []lint.Diagnostic
 	return result
 }
 
-func (h *Handler) dryrun(ctx context.Context, uri lsp.DocumentURI) (errs map[lsp.DocumentURI][]lsp.Diagnostic, totalProcessed string, err error) {
+func (h *Handler) dryrun(ctx context.Context, uri lsp.DocumentURI) (*bq.JobStatus, error) {
 	p, release := h.acquireProject()
 	js, err := p.Dryrun(ctx, uri)
 	release()
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	if js == nil {
-		return nil, "", err
+	if js != nil {
+		for _, err := range js.Errors {
+			h.logger.Info("error location", err.Location)
+		}
 	}
-	defer js.Done()
-
-	errs, _ = h.diagnose(ctx, uri)
-	for _, err := range js.Errors {
-		h.logger.Info("error location", err.Location)
-	}
-
-	totalProcessed = bytesConvert(js.Statistics.TotalBytesProcessed)
-
-	return errs, totalProcessed, nil
+	return js, nil
 }
 
-func bytesConvert(bytes int64) string {
-	if bytes == 0 {
-		return "0 bytes"
+// requestDiagnostics queues uri for scheduleDiagnostics without blocking past
+// Close or the cancellation of ctx, since diagnosticRequest is a small
+// buffered channel.
+func (h *Handler) requestDiagnostics(ctx context.Context, uri lsp.DocumentURI) {
+	h.closeMu.RLock()
+	defer h.closeMu.RUnlock()
+	if h.closed {
+		return
 	}
-
-	base := math.Floor(math.Log(float64(bytes)) / math.Log(1024))
-	units := []string{"bytes", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB"}
-
-	stringVal := fmt.Sprintf("%.2f", float64(bytes)/math.Pow(1024, base))
-	stringVal = strings.TrimSuffix(stringVal, ".00")
-	return fmt.Sprintf("%s %v",
-		stringVal,
-		units[int(base)],
-	)
+	select {
+	case h.diagnosticRequest <- uri:
+	case <-h.closing:
+	case <-ctx.Done():
+	}
 }
 
 func convertErrorsToDiagnostics(src string, errs []file.Error) []lsp.Diagnostic {

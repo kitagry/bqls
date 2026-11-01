@@ -91,17 +91,8 @@ func (h *Handler) rediagnoseOpenFiles() {
 	// Sent asynchronously because diagnosticRequest is a small buffered
 	// channel and blocking here would stall the JSON-RPC handler.
 	go func() {
-		h.closeMu.RLock()
-		defer h.closeMu.RUnlock()
-		if h.closed {
-			return
-		}
 		for _, uri := range uris {
-			select {
-			case h.diagnosticRequest <- uri:
-			case <-h.closing:
-				return
-			}
+			h.requestDiagnostics(context.Background(), uri)
 		}
 	}()
 }
