@@ -76,6 +76,7 @@ bqls reports lint warnings and information (diagnostic source `bqls-lint`, code 
 | `partition-filter` | on | A time- or range-partitioned table that is read without any filter on its partition column (`_PARTITIONTIME` / `_PARTITIONDATE` for ingestion-time partitioning), so the query may scan every partition. A filter anywhere in the statement on the column or a value derived from it (through CTEs, subqueries, and `UNION`) counts. Statements bqls cannot trace (e.g. recursive CTEs, table functions), view definitions, DML targets, wildcard tables, unreferenced CTEs, and reads that consume no column (e.g. `SELECT COUNT(*)`, unless the table requires a partition filter) are skipped. |
 | `order-by-in-subquery` | on | An `ORDER BY` without `LIMIT` in a subquery, CTE or derived table whose order cannot reach the result (BigQuery does not preserve row order), so it only costs a sort. Not reported when the order may matter: `LIMIT`, `ARRAY(SELECT ...)`, scalar subqueries, set operations, or a consumer that is limited, aggregated (e.g. `ARRAY_AGG`) or windowed. DML, `CREATE TABLE AS SELECT` and pipe `ORDER BY` are skipped. Quick fix removes the clause. |
 | `wildcard-table-suffix` | on | A wildcard table (`` `p.d.events_*` ``) that is queried without any filter on `_TABLE_SUFFIX`, so it scans every matching table. Filters are judged as in `partition-filter`: a `WHERE` / `JOIN ... ON` condition that mentions `_TABLE_SUFFIX` or a value derived from it (through CTEs, subqueries, and `UNION`) counts, even on one side of an `OR`. Unlike `partition-filter`, `SELECT COUNT(*)` is still reported. Statements bqls cannot trace, view definitions, and unreferenced CTEs are skipped. No quick fix. |
+| `bytes-processed-threshold` | off | The dry-run estimate of the whole file exceeds `max_bytes` (default `1099511627776`, i.e. 1 TiB). Needs a dry-run result: the language server dry-runs a file when it is saved, and `bqls lint` only with `--dry-run`. Without one, or after the file is edited since the dry-run, the rule reports nothing. Reported on the first line of the first statement. |
 
 Bare `x = NULL` / `x != NULL` is rejected by BigQuery itself ("Operands of = cannot be literal NULL"); bqls offers an `IS [NOT] NULL` quick fix on that error.
 
@@ -96,9 +97,9 @@ To share lint settings between your editor and CI, put a `.bqls.yaml` in your re
 lint:
   rules:
     unused-cte: false
-    some-rule:          # a rule can also take an object
+    bytes-processed-threshold:   # a rule can also take an object
       enabled: true
-      some_option: 10   # rule-specific options
+      max_bytes: 107374182400    # rule-specific options (here 100 GiB)
 ```
 
 Each rule is either `true` / `false` or an object with an optional `enabled` and the rule's options; the editor's `lint` setting takes the same form. Unknown rules and options are errors (`bqls lint` exits with `2`; the language server logs the error and ignores the file). The language server rereads the file when it changes.
@@ -115,7 +116,7 @@ SELECT * FROM t WHERE y = CAST(NULL AS INT64) -- bqls:ignore
 
 ### CLI
 
-`bqls lint` runs the same analysis and lint rules as the language server, without an editor. Table schemas are fetched with Application Default Credentials; no query is run.
+`bqls lint` runs the same analysis and lint rules as the language server, without an editor. Table schemas are fetched with Application Default Credentials; no query is run unless `--dry-run` is given.
 
 ```console
 $ bqls lint [flags] <file|dir|->...
@@ -133,13 +134,14 @@ Directories are searched recursively for `*.sql` files (skipping directories who
 | `--enable <rule>` / `--disable <rule>` | Turn a rule on or off. Repeatable; the last one wins. Takes precedence over the config file. |
 | `--config <path>` | Use this config file for every input instead of looking up `.bqls.yaml`. |
 | `--fix` | Apply the quick fixes (the first one of each finding) and write the files back, then report the findings that are left. With `-`, the fixed SQL is printed to stdout and the findings go to stderr. A fix that overlaps another fix in the same file is skipped (noted on stderr) and its finding is reported; running `--fix` again applies it. |
+| `--dry-run` | Dry-run each file that analyzes without errors (after `--fix`, if given), so that rules using the estimate such as `bytes-processed-threshold` can report. This creates a dry-run query job per file, which is free but needs `bigquery.jobs.create` (e.g. `roles/bigquery.jobUser`). A failed dry-run is printed to stderr and makes the exit code `2`; the other findings are still printed. |
 | `--format text\|json\|github` | `text` (default) prints `path:line:col: severity: message (rule)`. `json` prints an array of `{file, line, column, endLine, endColumn, severity, rule, message}`. `github` prints [workflow commands](https://docs.github.com/en/actions/reference/workflow-commands-for-github-actions) that show up as annotations on pull requests. |
 
 Lines and columns are 1-based and the end position is exclusive. Columns are currently off on lines containing non-ASCII text ([#375](https://github.com/kitagry/bqls/issues/375)). Analysis errors are reported with severity `error` and no rule. With `--format github`, file paths are made relative to `$GITHUB_WORKSPACE` so annotations attach to the diff.
 
-Exit codes: `0` nothing found, `1` any lint finding or analysis error (with `--fix`, any that is left after fixing), `2` usage or runtime error (bad flags, invalid config file, unreadable or unwritable file, authentication/permission/network failure while fetching table metadata). An unreadable file does not stop the others from being linted; their findings are still printed and the exit code is `2`.
+Exit codes: `0` nothing found, `1` any lint finding or analysis error (with `--fix`, any that is left after fixing), `2` usage or runtime error (bad flags, invalid config file, unreadable or unwritable file, authentication/permission/network failure while fetching table metadata, failed `--dry-run`). An unreadable file does not stop the others from being linted; their findings are still printed and the exit code is `2`.
 
-GitHub Actions example. The service account only needs to read table metadata (e.g. `roles/bigquery.metadataViewer`). Pass `--project` explicitly, since the fallback to `gcloud config get project` only works where gcloud is installed and configured. Instead of `go install`, you can download a binary from [GitHub Releases](https://github.com/kitagry/bqls/releases) (the `lint` subcommand needs a release that includes it).
+GitHub Actions example. The service account only needs to read table metadata (e.g. `roles/bigquery.metadataViewer`), plus `roles/bigquery.jobUser` with `--dry-run`. Pass `--project` explicitly, since the fallback to `gcloud config get project` only works where gcloud is installed and configured. Instead of `go install`, you can download a binary from [GitHub Releases](https://github.com/kitagry/bqls/releases) (the `lint` subcommand needs a release that includes it).
 
 ```yaml
 jobs:
