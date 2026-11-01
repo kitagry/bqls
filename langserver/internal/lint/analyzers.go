@@ -9,5 +9,6 @@ var Analyzers = []*Analyzer{
 	PartitionFilter,
 	OrderByInSubquery,
 	WildcardTableSuffix,
+	CrossJoin,
 	BytesProcessedThreshold,
 }
