@@ -78,16 +78,7 @@ func optionalColumns(join *googlesql.ResolvedJoinScan) map[int32]bool {
 	if !ok {
 		return nil
 	}
-	cols, ok := scanColumns(side)
-	if !ok {
-		return nil
-	}
-	ids := make(map[int32]bool, len(cols))
-	for _, c := range cols {
-		if id, err := c.ColumnId(); err == nil {
-			ids[id] = true
-		}
-	}
+	ids, _ := scanColumnIDs(side)
 	return ids
 }
 
