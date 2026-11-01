@@ -23,6 +23,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`union-column-order`](#union-column-order) | on | warning | | | Set operation inputs whose columns are the first input's columns in a different order |
 | [`left-join-as-inner`](#left-join-as-inner) | on | warning | | | `LEFT` / `RIGHT JOIN`s whose `WHERE` clause rejects the NULL rows of the optional side |
 | [`variable-column-shadow`](#variable-column-shadow) | on | warning | | | A column compared with itself because its bare name was meant as a same-named `DECLARE` variable |
+| [`timestamp-string-literal`](#timestamp-string-literal) | off | warning | | | String literals without a time zone compared with a `TIMESTAMP`, which are read as UTC |
 | **Cost** | | | | | |
 | [`partition-filter`](#partition-filter) | on | warning | | | Partitioned tables read without a filter on the partition column |
 | [`partition-filter-not-prunable`](#partition-filter-not-prunable) | off | warning | | | Partition column filters written in a form BigQuery documents as unable to prune partitions |
@@ -81,6 +82,14 @@ Not reported: `IS NULL`, `COALESCE` / `IFNULL` / `IF` and other functions, `OR`,
 A comparison (`=`, `!=`, `<`, `<=`, `>`, `>=`, `IS [NOT] DISTINCT FROM`) of a column with itself where one side is written as the bare name of a `DECLARE` variable in scope, e.g. `DECLARE user_id INT64; SELECT * FROM t WHERE user_id = user_id` (or `t.user_id = user_id`). A column takes precedence over a variable of the same name, so the variable is never read and the condition is always true (or always false) for non-NULL rows. Qualifying the column does not help; rename the variable.
 
 Other uses of a name shared by a variable and a column (e.g. `GROUP BY user_id`) are not reported, since the column is likely intended there; neither are `IF` / `WHILE` conditions.
+
+#### `timestamp-string-literal`
+
+A string literal without a time zone compared with a `TIMESTAMP` (`=`, `!=`, `<`, `<=`, `>`, `>=`, `[NOT] BETWEEN`, `[NOT] IN (...)`, `IS [NOT] DISTINCT FROM`), e.g. `created_at >= '2024-01-01'`. The literal is implicitly converted to `TIMESTAMP` in the default time zone, UTC, so a local date or time shifts the boundary by the UTC offset. Add an offset or a time zone name (`'2024-01-01 00:00:00+09'`, `'2024-01-01 00:00:00 Asia/Tokyo'`, `TIMESTAMP('2024-01-01', 'Asia/Tokyo')`), or write `TIMESTAMP '2024-01-01'` to make UTC explicit. Reported on the literal.
+
+Not reported: literals with an offset, `Z` or a zone name (including `UTC`), `TIMESTAMP '...'` and `CAST('...' AS TIMESTAMP)`, `DATE` / `DATETIME` comparisons, variables and query parameters, other uses such as function arguments, and files that `SET @@time_zone`, since it changes the zone these literals are read in.
+
+Off by default: such comparisons are common and often do mean UTC.
 
 ### Cost
 
