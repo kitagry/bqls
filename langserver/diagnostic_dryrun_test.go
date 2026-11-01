@@ -149,6 +149,29 @@ func TestHandler_scheduleDryRun_KeepsPublishedDiagnosticsOnDryRunError(t *testin
 	conn.assertNoMoreNotify(t, 100*time.Millisecond)
 }
 
+func TestHandler_scheduleDryRun_ShowsUnwrappedDryRunError(t *testing.T) {
+	const uri lsp.DocumentURI = "file:///a.sql"
+	_, bqClient := newDryRunClient(t)
+	bqClient.EXPECT().Run(gomock.Any(), "SELECT 1", true).
+		Return(nil, errors.New("access denied"))
+	p := source.NewProjectWithBQClient("/", bqClient, logrus.New())
+	if err := p.UpdateFile(uri, "SELECT 1", 1); err != nil {
+		t.Fatal(err)
+	}
+	h, conn := startSchedulers(t, p)
+
+	h.dryrunRequest <- uri
+
+	want := fakeNotify{
+		method: "window/showMessage",
+		params: lsp.ShowMessageParams{Type: lsp.MTError, Message: "access denied"},
+	}
+	if diff := cmp.Diff(want, conn.waitForNotify(t), cmp.AllowUnexported(fakeNotify{})); diff != "" {
+		t.Errorf("notification mismatch (-want +got):\n%s", diff)
+	}
+	conn.assertNoMoreNotify(t, 100*time.Millisecond)
+}
+
 func TestHandler_scheduleDryRun_PublishesDiagnosticsWhenDryRunHasNoStatistics(t *testing.T) {
 	const uri lsp.DocumentURI = "file:///a.sql"
 	const src = "SELECT x FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64)"
