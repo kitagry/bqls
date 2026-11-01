@@ -24,6 +24,13 @@ type BytesProcessedThresholdOptions struct {
 	MaxBytes int64 `json:"max_bytes"`
 }
 
+func (o *BytesProcessedThresholdOptions) Validate() error {
+	if o.MaxBytes < 0 {
+		return fmt.Errorf("max_bytes must not be negative, got %d", o.MaxBytes)
+	}
+	return nil
+}
+
 func runBytesProcessedThreshold(pass *Pass) {
 	if pass.DryRun == nil || pass.DryRun.Statistics == nil {
 		return

@@ -12,12 +12,19 @@ func BytesConvert(bytes int64) string {
 		return "0 bytes"
 	}
 
-	base := math.Floor(math.Log(float64(bytes)) / math.Log(1024))
+	// Floats keep math.MinInt64 from overflowing on negation, and the sign
+	// is split off because the logarithm of a negative count is NaN.
+	sign, abs := "", float64(bytes)
+	if abs < 0 {
+		sign, abs = "-", -abs
+	}
+	base := math.Floor(math.Log(abs) / math.Log(1024))
 	units := []string{"bytes", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB"}
 
-	stringVal := fmt.Sprintf("%.2f", float64(bytes)/math.Pow(1024, base))
+	stringVal := fmt.Sprintf("%.2f", abs/math.Pow(1024, base))
 	stringVal = strings.TrimSuffix(stringVal, ".00")
-	return fmt.Sprintf("%s %v",
+	return fmt.Sprintf("%s%s %v",
+		sign,
 		stringVal,
 		units[int(base)],
 	)

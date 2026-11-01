@@ -2,6 +2,7 @@ package lint_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	bq "cloud.google.com/go/bigquery"
@@ -103,4 +104,25 @@ func TestBytesProcessedThreshold(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBytesProcessedThreshold_NegativeMaxBytes(t *testing.T) {
+	cfg := lint.Config{
+		Rules:   map[string]bool{"bytes-processed-threshold": true},
+		Options: map[string]json.RawMessage{"bytes-processed-threshold": json.RawMessage(`{"max_bytes":-1}`)},
+	}
+
+	t.Run("Validate reports it", func(t *testing.T) {
+		err := cfg.Validate(lint.Analyzers)
+		if err == nil || !strings.Contains(err.Error(), `rule "bytes-processed-threshold"`) || !strings.Contains(err.Error(), "max_bytes") {
+			t.Errorf("Validate() = %v, want an error about max_bytes of bytes-processed-threshold", err)
+		}
+	})
+
+	t.Run("Run skips the rule", func(t *testing.T) {
+		got := lint.Run(t.Context(), parse(t, "SELECT 1"), cfg, lint.Env{DryRun: dryRunProcessing(2 * tib)}, lint.BytesProcessedThreshold)
+		if len(got) != 0 {
+			t.Errorf("Run() = %+v, want no diagnostics for invalid options", got)
+		}
+	})
 }

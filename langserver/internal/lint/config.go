@@ -136,7 +136,18 @@ func (c Config) options(a *Analyzer) (any, error) {
 	if err := dec.Decode(opts); err != nil {
 		return nil, fmt.Errorf("rule %q: invalid options: %w", a.Name, err)
 	}
+	if v, ok := opts.(optionsValidator); ok {
+		if err := v.Validate(); err != nil {
+			return nil, fmt.Errorf("rule %q: invalid options: %w", a.Name, err)
+		}
+	}
 	return opts, nil
+}
+
+// optionsValidator is implemented by options whose values have constraints
+// beyond what JSON decoding checks.
+type optionsValidator interface {
+	Validate() error
 }
 
 // Override returns c with the settings in o applied on top. Options are
