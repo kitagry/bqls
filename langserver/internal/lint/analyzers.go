@@ -23,4 +23,5 @@ var Analyzers = []*Analyzer{
 	LeftJoinAsInner,
 	VariableColumnShadow,
 	SelfComparison,
+	MissingOrderBy,
 }

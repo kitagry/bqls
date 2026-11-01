@@ -25,6 +25,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`left-join-as-inner`](#left-join-as-inner) | on | warning | | | `LEFT` / `RIGHT JOIN`s whose `WHERE` clause rejects the NULL rows of the optional side |
 | [`variable-column-shadow`](#variable-column-shadow) | on | warning | | | A column compared with itself because its bare name was meant as a same-named `DECLARE` variable |
 | [`self-comparison`](#self-comparison) | on | warning | | | Comparisons whose two sides are the same column, e.g. `a.id = a.id` meant as `a.id = b.id` |
+| [`missing-order-by`](#missing-order-by) | off | warning | | | `ROW_NUMBER()` filters, `ARRAY_AGG` / `STRING_AGG` with `LIMIT`, and indexed `ARRAY_AGG` results without `ORDER BY`, which pick arbitrary rows |
 | **Cost** | | | | | |
 | [`partition-filter`](#partition-filter) | on | warning | | | Partitioned tables read without a filter on the partition column |
 | [`partition-filter-not-prunable`](#partition-filter-not-prunable) | off | warning | | | Partition column filters written in a form BigQuery documents as unable to prune partitions |
@@ -97,6 +98,20 @@ Other uses of a name shared by a variable and a column (e.g. `GROUP BY user_id`)
 A comparison (`=`, `!=` / `<>`, `<`, `<=`, `>`, `>=`, `IS [NOT] DISTINCT FROM`) whose two sides are references to the same column, e.g. `a JOIN b ON a.id = a.id` or `WHERE x = x`. The result does not depend on the column's value, only on whether it is NULL, so one side is almost always a typo for another column (`b.id`). Both sides must resolve to the same column, so a self join `t AS a JOIN t AS b ON a.id = b.id` is fine. For `=` the message also suggests `x IS NOT NULL`, in case a NULL check was meant; there is no quick fix, since the typo is far more likely.
 
 Not reported: `FLOAT64` columns (`x != x` is a way to test for NaN), expressions that are not plain column references (`x = x + 0`, `s.f = s.f`), comparisons the analyzer adds itself (`JOIN ... USING`), and comparisons that `variable-column-shadow` reports (one side written as the bare name of a `DECLARE` variable in scope).
+
+#### `missing-order-by`
+
+An order-dependent operation without `ORDER BY`, whose result can change from run to run because BigQuery does not guarantee row order. Reported on the function name:
+
+- `ROW_NUMBER()` whose window has no `ORDER BY` and whose value a `WHERE`, `QUALIFY`, `HAVING` or `JOIN ... ON` condition reads, e.g. `QUALIFY ROW_NUMBER() OVER (PARTITION BY id) = 1`, which keeps an arbitrary row per `id`. The value is followed through aliases, subqueries and CTEs.
+- `ARRAY_AGG`, `STRING_AGG` and `ARRAY_CONCAT_AGG` with `LIMIT` but no `ORDER BY`, which keep arbitrary elements.
+- `ARRAY_AGG` without `ORDER BY` (or analytic `ARRAY_AGG` whose window has no `ORDER BY`) whose result is indexed with `[OFFSET(n)]`, `[ORDINAL(n)]`, `[SAFE_OFFSET(n)]` or `[SAFE_ORDINAL(n)]`.
+
+Other numbering and navigation functions (`RANK`, `LAG`, `LEAD`, `FIRST_VALUE`, `NTH_VALUE`, ...) are not listed because BigQuery already rejects them without a window `ORDER BY`.
+
+Not reported: `ROW_NUMBER()` that no condition reads (e.g. a surrogate id), order-insensitive aggregates (`COUNT`, `SUM`, `ANY_VALUE`, ...), `ARRAY_AGG` / `STRING_AGG` without `LIMIT` that is not indexed, and duplicates that look the same to the rest of the statement: rows whose `PARTITION BY` keys cover every column the statement uses (e.g. `PARTITION BY TO_JSON_STRING(t)`, or `SELECT id ... QUALIFY ROW_NUMBER() OVER (PARTITION BY id) = 1`), and aggregate arguments that read only `GROUP BY` keys. Statements bqls cannot trace (e.g. recursive CTEs, table functions) and view definitions are skipped.
+
+Off by default: whether the result actually changes depends on whether rows sharing a key differ, which bqls cannot see, and deduplicating rows known to be identical by key alone (e.g. after at-least-once ingestion) is a common, intentional idiom. No quick fix, since the column to order by cannot be guessed.
 
 ### Cost
 
