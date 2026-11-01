@@ -47,6 +47,11 @@ func (h *Handler) scheduleDiagnostics() {
 				h.logger.Println(err)
 				return
 			}
+			// A newer request for uri is running and will publish; this
+			// result may predate the text or dry-run result that one sees.
+			if ctx.Err() != nil {
+				return
+			}
 
 			for uri, d := range diagnostics {
 				err := h.publishDiagnostics(ctx, uri, d)
@@ -87,7 +92,7 @@ func (h *Handler) scheduleDryRun() {
 				}
 			}()
 
-			diagnostics, js, err := h.dryrun(ctx, uri)
+			js, err := h.dryrun(ctx, uri)
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					return
@@ -99,13 +104,14 @@ func (h *Handler) scheduleDryRun() {
 				return
 			}
 
-			for uri, d := range diagnostics {
-				err := h.publishDiagnostics(ctx, uri, d)
-				if err != nil {
-					h.logger.Debugf(`failed to send "textDocument/publishDiagnostics" for %s: %v`, uri, err)
-				}
+			if js == nil {
+				return
 			}
-			if js == nil || js.Statistics == nil {
+			// Publishing goes through scheduleDiagnostics, which cancels an
+			// older run for uri that may have started before the dry-run
+			// result was stored and would otherwise publish without it last.
+			h.requestDiagnostics(ctx, uri)
+			if js.Statistics == nil {
 				return
 			}
 			totalProcessed := helper.BytesConvert(js.Statistics.TotalBytesProcessed)
@@ -177,26 +183,35 @@ func lintDiagnosticsToLsp(conv helper.PositionConverter, diags []lint.Diagnostic
 	return result
 }
 
-// dryrun publishes through diagnose rather than from js directly, because
-// Diagnose picks up the stored dry-run result only while the text is
-// unchanged, so this and scheduleDiagnostics publish the same set whichever
-// finishes last.
-func (h *Handler) dryrun(ctx context.Context, uri lsp.DocumentURI) (map[lsp.DocumentURI][]lsp.Diagnostic, *bq.JobStatus, error) {
+func (h *Handler) dryrun(ctx context.Context, uri lsp.DocumentURI) (*bq.JobStatus, error) {
 	p, release := h.acquireProject()
 	js, err := p.Dryrun(ctx, uri)
 	release()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	if js == nil {
-		return nil, nil, nil
+	if js != nil {
+		for _, err := range js.Errors {
+			h.logger.Info("error location", err.Location)
+		}
 	}
+	return js, nil
+}
 
-	diagnostics, _ := h.diagnose(ctx, uri)
-	for _, err := range js.Errors {
-		h.logger.Info("error location", err.Location)
+// requestDiagnostics queues uri for scheduleDiagnostics without blocking past
+// Close or the cancellation of ctx, since diagnosticRequest is a small
+// buffered channel.
+func (h *Handler) requestDiagnostics(ctx context.Context, uri lsp.DocumentURI) {
+	h.closeMu.RLock()
+	defer h.closeMu.RUnlock()
+	if h.closed {
+		return
 	}
-	return diagnostics, js, nil
+	select {
+	case h.diagnosticRequest <- uri:
+	case <-h.closing:
+	case <-ctx.Done():
+	}
 }
 
 func convertErrorsToDiagnostics(src string, errs []file.Error) []lsp.Diagnostic {
