@@ -7,6 +7,7 @@ var Analyzers = []*Analyzer{
 	UnusedCTE,
 	UnusedDeclare,
 	PartitionFilter,
+	PartitionFilterNotPrunable,
 	OrderByInSubquery,
 	UnusedJoin,
 	WildcardTableSuffix,
