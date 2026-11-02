@@ -116,8 +116,31 @@ func checkSetOperation(pass *Pass, scan *googlesql.ResolvedSetOperationScan, set
 		if sources := itemSources(items[i+1]); len(sources) > 0 && slices.Equal(sources, firstSources) {
 			continue
 		}
-		reportUnionColumnOrder(pass, cols.list, op, got, want)
+		d, ok := unionColumnOrderDiagnostic(pass, cols.list, op, got, want)
+		if !ok {
+			continue
+		}
+		if fix, ok := unionColumnOrderFix(pass, in, first.names, cols); ok {
+			d.SuggestedFixes = []SuggestedFix{fix}
+		}
+		pass.Report(d)
 	}
+}
+
+func unionColumnOrderFix(pass *Pass, in googlesql.ASTQueryExpressionNode, first []string, cols selectColumns) (SuggestedFix, bool) {
+	sel, queries, ok := plainSelect(in)
+	if !ok || refersByOrdinal(sel, queries) {
+		return SuggestedFix{}, false
+	}
+	from, ok := reordering(first, cols.names)
+	if !ok {
+		return SuggestedFix{}, false
+	}
+	edits, ok := permutedEdits(pass.File, astOffsets(cols.list), children(cols.list), from)
+	if !ok {
+		return SuggestedFix{}, false
+	}
+	return SuggestedFix{Title: "Reorder the columns to match the first input", Edits: edits}, true
 }
 
 func itemSources(item *googlesql.ResolvedSetOperationItem) []string {
@@ -128,15 +151,15 @@ func itemSources(item *googlesql.ResolvedSetOperationItem) []string {
 	return scannedSources(scan)
 }
 
-func reportUnionColumnOrder(pass *Pass, list *googlesql.ASTSelectList, op string, got, want []string) {
+func unionColumnOrderDiagnostic(pass *Pass, list *googlesql.ASTSelectList, op string, got, want []string) (Diagnostic, bool) {
 	at := astOffsets(list)
 	r, ok := pass.File.OffsetsToLspRange(at.start, at.end)
 	if !ok {
-		return
+		return Diagnostic{}, false
 	}
-	pass.Report(Diagnostic{
+	return Diagnostic{
 		Range:    r,
 		Message:  fmt.Sprintf("%s matches columns by position, not by name, but this input has %s where the first input has %s; reorder the columns or use %s BY NAME", op, quoteNames(got), quoteNames(want), op),
 		Severity: SeverityWarning,
-	})
+	}, true
 }

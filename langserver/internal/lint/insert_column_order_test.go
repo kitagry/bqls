@@ -8,6 +8,7 @@ import (
 	bq "cloud.google.com/go/bigquery"
 	"github.com/golang/mock/gomock"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/kitagry/bqls/langserver/internal/bigquery/mock_bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lint"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
@@ -28,6 +29,8 @@ var insertTables = map[string]bq.Schema{
 	"p.d.t3":    intColumns("a", "b", "c"),
 	"p.d.s3":    intColumns("a", "b", "c"),
 	"p.d.edges": intColumns("src", "dst"),
+	"p.d.kw":    intColumns("from", "to"),
+	"p.d.dash":  intColumns("first-name", "last name"),
 	"p.d.users": {
 		{Name: "id", Type: bq.IntegerFieldType},
 		{Name: "first_name", Type: bq.StringFieldType},
@@ -182,8 +185,94 @@ func TestInsertColumnOrder(t *testing.T) {
 				})
 			}
 			got := lint.Run(t.Context(), parseInsertTables(t, tt.src), lint.Config{}, lint.Env{}, lint.InsertColumnOrder)
-			if diff := cmp.Diff(want, got); diff != "" {
+			if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(lint.Diagnostic{}, "SuggestedFixes")); diff != "" {
 				t.Errorf("diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestInsertColumnOrderFix(t *testing.T) {
+	tests := map[string]struct {
+		src string
+		// wantFixed is src after applying every fix; it is src itself when no
+		// fix is offered.
+		wantFixed string
+	}{
+		"column list is added": {
+			src:       "INSERT INTO p.d.t SELECT 2 AS b, 1 AS a",
+			wantFixed: "INSERT INTO p.d.t (b, a) SELECT 2 AS b, 1 AS a",
+		},
+		"column list is added before a line break": {
+			src:       "INSERT INTO p.d.users\nSELECT id, last_name, first_name FROM p.d.staging_users",
+			wantFixed: "INSERT INTO p.d.users (id, last_name, first_name)\nSELECT id, last_name, first_name FROM p.d.staging_users",
+		},
+		"INSERT without INTO": {
+			src:       "INSERT p.d.t SELECT b, a FROM p.d.s",
+			wantFixed: "INSERT p.d.t (b, a) SELECT b, a FROM p.d.s",
+		},
+		"quoted table name": {
+			src:       "INSERT INTO `p.d.t` SELECT b, a FROM p.d.s",
+			wantFixed: "INSERT INTO `p.d.t` (b, a) SELECT b, a FROM p.d.s",
+		},
+		"added names are spelled as in the table": {
+			src:       "INSERT INTO p.d.t SELECT 2 AS B, 1 AS A",
+			wantFixed: "INSERT INTO p.d.t (b, a) SELECT 2 AS B, 1 AS A",
+		},
+		"unnamed expressions keep their column": {
+			src:       "INSERT INTO p.d.t3 SELECT 1 AS b, 0 AS a, 2 + 3",
+			wantFixed: "INSERT INTO p.d.t3 (b, a, c) SELECT 1 AS b, 0 AS a, 2 + 3",
+		},
+		"reserved keywords are quoted": {
+			src:       "INSERT INTO p.d.kw SELECT 2 AS `to`, 1 AS `from`",
+			wantFixed: "INSERT INTO p.d.kw (`to`, `from`) SELECT 2 AS `to`, 1 AS `from`",
+		},
+		"flexible column names are quoted": {
+			src:       "INSERT INTO p.d.dash SELECT 2 AS `last name`, 1 AS `first-name`",
+			wantFixed: "INSERT INTO p.d.dash (`last name`, `first-name`) SELECT 2 AS `last name`, 1 AS `first-name`",
+		},
+		"parenthesized query": {
+			src:       "INSERT INTO p.d.t (SELECT 2 AS b, 1 AS a)",
+			wantFixed: "INSERT INTO p.d.t (b, a) (SELECT 2 AS b, 1 AS a)",
+		},
+		"set operation takes its first input's names": {
+			src:       "INSERT INTO p.d.t SELECT 2 AS b, 1 AS a UNION ALL SELECT 4 AS b, 3 AS a",
+			wantFixed: "INSERT INTO p.d.t (b, a) SELECT 2 AS b, 1 AS a UNION ALL SELECT 4 AS b, 3 AS a",
+		},
+		"existing column list is reordered": {
+			src:       "INSERT INTO p.d.t (b, a) SELECT a, b FROM p.d.s",
+			wantFixed: "INSERT INTO p.d.t (a, b) SELECT a, b FROM p.d.s",
+		},
+		"existing column list with fewer columns than the table": {
+			src:       "INSERT INTO p.d.t3 (c, a) SELECT a, c FROM p.d.s3",
+			wantFixed: "INSERT INTO p.d.t3 (a, c) SELECT a, c FROM p.d.s3",
+		},
+		"existing column list keeps its layout and spelling": {
+			src:       "INSERT INTO p.d.t (\n  `b`,\n  a\n) SELECT a, b FROM p.d.s",
+			wantFixed: "INSERT INTO p.d.t (\n  a,\n  `b`\n) SELECT a, b FROM p.d.s",
+		},
+
+		// The diagnostic is reported without a fix.
+		"comment in the column list": {
+			src:       "INSERT INTO p.d.t (b, -- second\na) SELECT a, b FROM p.d.s",
+			wantFixed: "INSERT INTO p.d.t (b, -- second\na) SELECT a, b FROM p.d.s",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := lint.Run(t.Context(), parseInsertTables(t, tt.src), lint.Config{}, lint.Env{}, lint.InsertColumnOrder)
+			if len(got) == 0 {
+				t.Fatal("no diagnostic reported")
+			}
+			fixed := applyFixes(t, tt.src, got)
+			if fixed != tt.wantFixed {
+				t.Fatalf("fixed = %q, want %q", fixed, tt.wantFixed)
+			}
+			if fixed == tt.src {
+				return
+			}
+			if left := lint.Run(t.Context(), parseInsertTables(t, fixed), lint.Config{}, lint.Env{}, lint.InsertColumnOrder); len(left) != 0 {
+				t.Errorf("fixed query still reports %+v", left)
 			}
 		})
 	}
