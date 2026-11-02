@@ -1,0 +1,12 @@
+{
+  "name": "bqls-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "gif": "node record.mjs",
+    "mp4": "node record.mjs --mp4"
+  },
+  "devDependencies": {
+    "playwright": "1.64.1"
+  }
+}
