@@ -35,7 +35,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`wildcard-table-suffix`](#wildcard-table-suffix) | on | warning | | | Wildcard table queries that never filter on `_TABLE_SUFFIX` |
 | [`wildcard-table-suffix-not-constant`](#wildcard-table-suffix-not-constant) | off | warning | | | `_TABLE_SUFFIX` filters that BigQuery documents as unable to limit the tables scanned |
 | [`order-by-in-subquery`](#order-by-in-subquery) | on | warning | yes | | `ORDER BY` in a subquery, CTE or derived table whose order cannot reach the result |
-| [`select-star`](#select-star) | off | warning | | `min_columns` | `SELECT *` that reads at least `min_columns` columns of a table |
+| [`select-star`](#select-star) | off | warning | yes | `min_columns` | `SELECT *` that reads at least `min_columns` columns of a table |
 | [`bytes-processed-threshold`](#bytes-processed-threshold) | off | warning | | `max_bytes` | Files whose dry-run estimate exceeds `max_bytes` |
 | **Unused code** | | | | | |
 | [`unused-cte`](#unused-cte) | on | information | yes | | `WITH` entries that are never referenced |
@@ -193,6 +193,8 @@ Off by default. A bare `*` or `t.*` that reads at least `min_columns` columns of
 Skipped: `* EXCEPT (...)` / `* REPLACE (...)` (the columns were chosen deliberately), a `*` over a CTE or subquery (the `*` inside it that reads the table is reported instead), DML, `CREATE TABLE AS SELECT`, `EXPORT DATA`, view definitions, and statements bqls cannot trace.
 
 Off by default because whether reading every column is wasteful depends on the query's intent, and a sensible `min_columns` differs per team.
+
+The quick fix expands the `*` into the columns it reads, so that the unneeded ones can be deleted: `t.*` becomes `t.a, t.b, ...`, a bare `*` over one table becomes `a, b, ...`, and a bare `*` over a join qualifies each column with its table's alias (`x.a, y.b, ...`). Pseudo-columns such as `_PARTITIONTIME` are left out like `*` does, and keywords are backquoted. The list follows the select list's layout: inline in a one-line `SELECT`, otherwise one column per line. There is no quick fix when the columns of a bare `*` are not just those of tables (`UNNEST`, subqueries, CTEs, `USING` joins), when two expanded columns share a name, when a column is named like the table's alias (the alias would win), when a table in a join has no alias and a quoted path (`` `p.d.t` ``), or when a comment is inside `t.*`.
 
 | Option | Default | Description |
 | --- | --- | --- |
