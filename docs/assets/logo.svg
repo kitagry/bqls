@@ -1,17 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="bqls logo">
-  <defs>
-    <linearGradient id="body" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#5B9BFF"/>
-      <stop offset="1" stop-color="#2E5BDB"/>
-    </linearGradient>
-    <linearGradient id="top" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#A9CBFF"/>
-      <stop offset="1" stop-color="#6FA2FF"/>
-    </linearGradient>
-  </defs>
-  <path fill="url(#body)" d="M20 26v72c0 9.9 19.7 18 44 18s44-8.1 44-18V26z"/>
-  <ellipse cx="64" cy="26" rx="44" ry="16" fill="url(#top)"/>
-  <path fill="none" stroke="#FFFFFF" stroke-opacity=".28" stroke-width="3" d="M20 50c0 9.9 19.7 18 44 18s44-8.1 44-18M20 74c0 9.9 19.7 18 44 18s44-8.1 44-18"/>
-  <path fill="none" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" d="M50 64 36 78l14 14M78 64l14 14-14 14"/>
-  <circle cx="64" cy="78" r="5" fill="#FFD166"/>
+  <rect width="128" height="128" rx="28" fill="#2558D9"/>
+  <circle cx="84" cy="73" r="11" fill="#4F7FF0"/>
+  <g fill="none" stroke="#FFFFFF" stroke-width="11" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M27 30v59"/>
+    <circle cx="43" cy="73" r="16"/>
+    <circle cx="84" cy="73" r="16"/>
+    <path d="M96 85l12 14"/>
+  </g>
+  <circle cx="78" cy="66.5" r="2.4" fill="#FFFFFF" fill-opacity=".9"/>
+  <path d="M78 75l4.5 4.5 8.5-9.5" fill="none" stroke="#FF8A65" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

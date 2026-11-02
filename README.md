@@ -1,8 +1,11 @@
 <div align="center">
 
-<img src="./docs/assets/logo.svg" alt="bqls logo" width="112" height="112">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./docs/assets/logo-lockup-dark.svg">
+  <img src="./docs/assets/logo-lockup-light.svg" alt="bqls" width="300">
+</picture>
 
-# bqls
+<br>
 
 **The BigQuery Language Server**
 
