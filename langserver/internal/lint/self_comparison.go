@@ -33,7 +33,7 @@ func checkSelfComparison(pass *Pass, call *googlesql.ResolvedFunctionCall, vars 
 		return
 	}
 	// variable-column-shadow reports this with the actual cause.
-	if _, _, ok := shadowingOperand(pass, args, vars); ok {
+	if len(shadowingOperands(pass, args, vars)) > 0 {
 		return
 	}
 	// NaN is not equal to itself, so comparing a float with itself is a way

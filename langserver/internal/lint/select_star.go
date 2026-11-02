@@ -268,26 +268,31 @@ func fromTables(sel *googlesql.ASTSelect) (tables []*googlesql.ASTTablePathExpre
 // tableRangeName is the name a `t.*` refers to tp by: its alias, or else the
 // last component of its path.
 func tableRangeName(tp *googlesql.ASTTablePathExpression) (string, bool) {
-	var id *googlesql.ASTIdentifier
-	if alias, err := tp.Alias(); err == nil && alias != nil {
-		id, err = alias.Identifier()
-		if err != nil {
-			return "", false
-		}
-	} else {
-		path, err := tp.PathExpr()
-		if err != nil || path == nil {
-			return "", false
-		}
-		if id, err = path.LastName(); err != nil {
-			return "", false
-		}
-	}
-	if id == nil {
+	id, ok := tableRangeIdentifier(tp)
+	if !ok {
 		return "", false
 	}
 	name, err := id.GetAsString()
 	return name, err == nil
+}
+
+func tableRangeIdentifier(tp *googlesql.ASTTablePathExpression) (*googlesql.ASTIdentifier, bool) {
+	var id *googlesql.ASTIdentifier
+	if alias, err := tp.Alias(); err == nil && alias != nil {
+		id, err = alias.Identifier()
+		if err != nil {
+			return nil, false
+		}
+	} else {
+		path, err := tp.PathExpr()
+		if err != nil || path == nil {
+			return nil, false
+		}
+		if id, err = path.LastName(); err != nil {
+			return nil, false
+		}
+	}
+	return id, id != nil
 }
 
 // starColumns returns the columns `*` expands table to: all of them in
@@ -439,48 +444,4 @@ func starItems(star selectStar, tables []*googlesql.ASTTablePathExpression, only
 		}
 	}
 	return items, len(items) > 0
-}
-
-// quoteIdentifier backquotes name unless it can be written as is.
-func quoteIdentifier(name string) string {
-	if !reservedKeywords[strings.ToUpper(name)] && isPlainIdentifier(name) {
-		return name
-	}
-	return "`" + strings.NewReplacer(`\`, `\\`, "`", "\\`").Replace(name) + "`"
-}
-
-func isPlainIdentifier(name string) bool {
-	for i, c := range name {
-		switch {
-		case c == '_', 'a' <= c && c <= 'z', 'A' <= c && c <= 'Z':
-		case '0' <= c && c <= '9' && i > 0:
-		default:
-			return false
-		}
-	}
-	return name != ""
-}
-
-// reservedKeywords are the GoogleSQL reserved keywords, which cannot be used
-// as unquoted identifiers.
-var reservedKeywords = map[string]bool{
-	"ALL": true, "AND": true, "ANY": true, "ARRAY": true, "AS": true, "ASC": true,
-	"ASSERT_ROWS_MODIFIED": true, "AT": true, "BETWEEN": true, "BY": true,
-	"CASE": true, "CAST": true, "COLLATE": true, "CONTAINS": true, "CREATE": true,
-	"CROSS": true, "CUBE": true, "CURRENT": true, "DEFAULT": true, "DEFINE": true,
-	"DESC": true, "DISTINCT": true, "ELSE": true, "END": true, "ENUM": true,
-	"ESCAPE": true, "EXCEPT": true, "EXCLUDE": true, "EXISTS": true, "EXTRACT": true,
-	"FALSE": true, "FETCH": true, "FOLLOWING": true, "FOR": true, "FROM": true,
-	"FULL": true, "GROUP": true, "GROUPING": true, "GROUPS": true, "HASH": true,
-	"HAVING": true, "IF": true, "IGNORE": true, "IN": true, "INNER": true,
-	"INTERSECT": true, "INTERVAL": true, "INTO": true, "IS": true, "JOIN": true,
-	"LATERAL": true, "LEFT": true, "LIKE": true, "LIMIT": true, "LOOKUP": true,
-	"MERGE": true, "NATURAL": true, "NEW": true, "NO": true, "NOT": true,
-	"NULL": true, "NULLS": true, "OF": true, "ON": true, "OR": true, "ORDER": true,
-	"OUTER": true, "OVER": true, "PARTITION": true, "PRECEDING": true, "PROTO": true,
-	"QUALIFY": true, "RANGE": true, "RECURSIVE": true, "RESPECT": true, "RIGHT": true,
-	"ROLLUP": true, "ROWS": true, "SELECT": true, "SET": true, "SOME": true,
-	"STRUCT": true, "TABLESAMPLE": true, "THEN": true, "TO": true, "TREAT": true,
-	"TRUE": true, "UNBOUNDED": true, "UNION": true, "UNNEST": true, "USING": true,
-	"WHEN": true, "WHERE": true, "WINDOW": true, "WITH": true, "WITHIN": true,
 }
