@@ -1,33 +1,96 @@
-# bqls
+<div align="center">
 
-BigQuery language server
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./docs/assets/logo-lockup-dark.svg">
+  <img src="./docs/assets/logo-lockup-light.svg" alt="bqls" width="300">
+</picture>
+
+<br>
+
+**The BigQuery Language Server**
+
+Completion, hover, lint, and query execution for BigQuery SQL, right in your editor.
+
+[![build and test](https://img.shields.io/github/actions/workflow/status/kitagry/bqls/test.yml?branch=main&label=build&logo=githubactions&logoColor=white)](https://github.com/kitagry/bqls/actions/workflows/test.yml)
+[![Release](https://img.shields.io/github/v/release/kitagry/bqls?logo=github)](https://github.com/kitagry/bqls/releases/latest)
+[![Go version](https://img.shields.io/github/go-mod/go-version/kitagry/bqls?logo=go&logoColor=white)](./go.mod)
+[![VS Code Marketplace](https://img.shields.io/badge/VS%20Code-Marketplace-007ACC?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=kitagry.bqls)
+[![License](https://img.shields.io/github/license/kitagry/bqls)](./LICENSE)
+
+[Features](#-features) •
+[Quick Start](#-quick-start) •
+[Editor Setup](#%EF%B8%8F-editor-setup) •
+[Lint](#lint) •
+[Save Result](#save-result) •
+[Supported Protocol](#supported-protocol)
+
+</div>
 
 https://github.com/user-attachments/assets/3e980a26-bc9b-4c2b-8c5b-1e9582a6a644
 
-## Installation
+## ✨ Features
 
-### Prerequisites
+| | Feature | What you get |
+| :---: | --- | --- |
+| 💡 | **Completion** | Projects, datasets, tables, columns, `DECLARE` variables, keywords, and built-in functions, using your real BigQuery schemas |
+| 📖 | **Hover** | Table schemas and metadata, column types and descriptions, and built-in function docs |
+| 🎯 | **Go to definition** | Jump to CTEs and aliases, or open a table's details as a virtual document |
+| 🩺 | **Diagnostics** | Analysis errors from the GoogleSQL analyzer as you type, checked against your table schemas |
+| 💰 | **Dry-run cost estimate** | "This query will process 1.25 GiB when run." on save, before you spend anything |
+| 🧹 | **Lint** | 25 rules for correctness, cost, and unused code, with quick fixes, `bqls:ignore` comments, a shared `.bqls.yaml`, and the [`bqls lint`](./docs/lint.md#cli) CLI for CI ([docs](./docs/lint.md)) |
+| 🎨 | **Formatting** | Format BigQuery SQL with the GoogleSQL formatter |
+| ▶️ | **Query execution** | Run or cancel queries and view the results in the editor ([`bqls.executeQuery`](./docs/api_reference.md#bqlsexecutequery)) |
+| 🗂️ | **Explore** | Browse datasets, tables, and job histories ([`bqls.listDatasets`](./docs/api_reference.md#bqlslistdatasets), [`bqls.listTables`](./docs/api_reference.md#bqlslisttables), [`bqls.listJobHistories`](./docs/api_reference.md#bqlslistjobhistories)) |
+| 📊 | **Save to Sheets** | Export query results to Google Sheets ([`bqls.saveResult`](./docs/api_reference.md#bqlssaveresult), see [Save Result](#save-result)) |
 
-- Go 1.25 or later
+## 🚀 Quick Start
 
-### Install from releases
+<a name="installation"></a>
+<a name="install-from-releases"></a>
 
-Download the latest binary from [GitHub Releases](https://github.com/kitagry/bqls/releases) and place it in your PATH.
+**1. Install**
 
-### Build from source
+Download the latest binary for Linux or macOS (amd64 / arm64) from [GitHub Releases](https://github.com/kitagry/bqls/releases/latest) and put it in your `PATH`, or install it with Go:
 
 ```bash
-go install
+go install github.com/kitagry/bqls@latest
 ```
 
-## Settings
+<a name="login-to-use-bigquery-api"></a>
 
-### Login to use BigQuery API
+**2. Log in to use the BigQuery API**
 
 ```bash
 gcloud auth login
 gcloud auth application-default login
 ```
+
+**3. Set up your editor**
+
+- **Neovim**: install [bqls.nvim](https://github.com/kitagry/bqls.nvim) and call `require("lspconfig").bqls.setup({})`. See [Neovim](#neovim).
+- **VSCode**: install the [bqls extension](https://marketplace.visualstudio.com/items?itemName=kitagry.bqls). It downloads `bqls` for you on macOS and Linux. See [VSCode](#vscode).
+
+<a name="prerequisites"></a>
+<a name="build-from-source"></a>
+
+<details>
+<summary><b>Build from source</b></summary>
+
+<br>
+
+Prerequisites: Go 1.26 or later.
+
+```bash
+git clone https://github.com/kitagry/bqls.git
+cd bqls
+go install
+```
+
+</details>
+
+## ⚙️ Editor Setup
+
+<a name="settings"></a>
 
 ### Neovim
 
@@ -44,6 +107,11 @@ require("lspconfig").bqls.setup({
 })
 ```
 
+<details>
+<summary><b>Change settings at runtime with <code>workspace/didChangeConfiguration</code></b></summary>
+
+<br>
+
 You can change project_id with `workspace/didChangeConfiguration`.
 
 ```lua
@@ -52,14 +120,23 @@ vim.lsp.buf_notify(0, "workspace/didChangeConfiguration", { settings = { project
 
 Settings omitted from the notification keep their current values, so you can send only what changed. A [`lint`](./docs/lint.md#editor-settings) setting, when sent, replaces the whole rule set; `lint = vim.empty_dict()` or `lint = vim.NIL` restores the defaults (a plain `{}` is encoded as a JSON array and rejected).
 
+</details>
+
+<details>
+<summary><b>Async virtual text documents (for client authors)</b></summary>
+
+<br>
+
 `bqls` also supports fetching virtual document previews (table/job info) asynchronously so the
-client isn't blocked while BigQuery is queried; see [`bqls/publishVirtualTextDocument`](./docs/api_reference.md)
+client isn't blocked while BigQuery is queried; see [`bqls/publishVirtualTextDocument`](./docs/api_reference.md#bqlspublishvirtualtextdocument)
 in the API reference. This is opt-in via `supports_async_virtual_text_document` in
 `initializationOptions`, so bqls.nvim keeps working unmodified until it adopts the new flow.
 
+</details>
+
 ### VSCode
 
-The official VSCode extension lives in [editors/vscode](./editors/vscode) in this repository.
+The official VSCode extension lives in [editors/vscode](./editors/vscode) in this repository and is published on the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=kitagry.bqls). See its [README](./editors/vscode/README.md) for settings such as `bqls.projectId`, `bqls.location`, and `bqls.lint.rules`.
 
 You can also use the community extension [bqls-vscode](https://github.com/yokomotod/bqls-vscode).
 
@@ -67,7 +144,12 @@ You can also use the community extension [bqls-vscode](https://github.com/yokomo
 
 bqls reports lint findings (e.g. comparisons with NULL, missing partition filters, unused CTEs) as diagnostics for queries that analyze without errors, with quick fixes for some rules. `bqls lint` runs the same rules from the command line, e.g. in CI, and a `.bqls.yaml` shares the settings between your editor and CI.
 
-See [docs/lint.md](./docs/lint.md) for the list of rules, configuration, and the CLI.
+```console
+$ bqls lint --project my-project queries/
+queries/report.sql:3:6: info: CTE `tmp` is defined but never used (unused-cte)
+```
+
+See [docs/lint.md](./docs/lint.md) for the list of [rules](./docs/lint.md#rules), [configuration](./docs/lint.md#configuration), and the [CLI](./docs/lint.md#cli).
 
 ## Save Result
 
@@ -92,5 +174,12 @@ In order to save for spreadsheet, you should enable Google Drive API.
     - [bqls.searchTables](./docs/api_reference.md#bqlssearchtables)
     - [bqls.listJobHistories](./docs/api_reference.md#bqlslistjobhistories)
     - [bqls.saveResult](./docs/api_reference.md#bqlssaveresult)
+    - bqls.listProjects
+    - bqls.searchTables
 - workspace/didChangeConfiguration
 - [bqls/virtualTextDocument](./docs/api_reference.md#bqlsvirtualtextdocument)
+- [bqls/publishVirtualTextDocument](./docs/api_reference.md#bqlspublishvirtualtextdocument)
+
+## License
+
+[Apache License 2.0](./LICENSE)
