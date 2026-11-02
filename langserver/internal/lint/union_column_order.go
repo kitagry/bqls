@@ -35,6 +35,18 @@ func runUnionColumnOrder(pass *Pass) {
 	for _, s := range file.ListAstNode[*googlesql.ASTSetOperation](pass.File.Node) {
 		setOps[astOffsets(s)] = s
 	}
+	// A set operation followed by ORDER BY or LIMIT has no location of its
+	// own; the scan above it is located at the whole query instead.
+	for _, q := range file.ListAstNode[*googlesql.ASTQuery](pass.File.Node) {
+		if hasPipeOperator(q) {
+			continue
+		}
+		if s, err := q.QueryExpr(); err == nil {
+			if s, ok := s.(*googlesql.ASTSetOperation); ok {
+				setOps[astOffsets(q)] = s
+			}
+		}
+	}
 
 	for _, output := range pass.File.RNode {
 		stmt, err := output.ResolvedStatement()
@@ -42,17 +54,53 @@ func runUnionColumnOrder(pass *Pass) {
 			continue
 		}
 		walkLive(stmt, func(n googlesql.ResolvedNode) {
-			scan, ok := n.(*googlesql.ResolvedSetOperationScan)
+			scan, ok := setOperationScan(n)
 			if !ok {
 				return
 			}
-			setOp, ok := findSetOperation(setOps, pass.File.Src, resolvedOffsets(scan))
+			setOp, ok := findSetOperation(setOps, pass.File.Src, resolvedOffsets(n))
 			if !ok {
 				return
 			}
 			checkSetOperation(pass, scan, setOp)
 		})
 	}
+}
+
+// setOperationScan returns the set operation that n scans: n itself, or for
+// ORDER BY and LIMIT, the set operation below it, which has no location of
+// its own.
+func setOperationScan(n googlesql.ResolvedNode) (*googlesql.ResolvedSetOperationScan, bool) {
+	switch n := n.(type) {
+	case *googlesql.ResolvedSetOperationScan:
+		return n, true
+	case *googlesql.ResolvedOrderByScan, *googlesql.ResolvedLimitOffsetScan:
+		scan, ok := setOperationBelow(n)
+		return scan, ok && resolvedOffsets(scan).start < 0
+	}
+	return nil, false
+}
+
+func setOperationBelow(n googlesql.ResolvedNode) (*googlesql.ResolvedSetOperationScan, bool) {
+	var input googlesql.ResolvedScanNode
+	var err error
+	switch n := n.(type) {
+	case *googlesql.ResolvedSetOperationScan:
+		return n, true
+	case *googlesql.ResolvedOrderByScan:
+		input, err = n.InputScan()
+	case *googlesql.ResolvedLimitOffsetScan:
+		input, err = n.InputScan()
+	case *googlesql.ResolvedProjectScan:
+		// ORDER BY an expression computes it here.
+		input, err = n.InputScan()
+	default:
+		return nil, false
+	}
+	if err != nil || isNilNode(input) {
+		return nil, false
+	}
+	return setOperationBelow(input)
 }
 
 // findSetOperation returns the AST node at a set operation's resolved

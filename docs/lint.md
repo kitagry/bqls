@@ -82,7 +82,7 @@ The quick fix does that: it replaces the comma, or `[INNER] JOIN` together with 
 
 A set operation input (`UNION ALL`, `UNION DISTINCT`, `INTERSECT`, `EXCEPT`) whose columns are the first input's columns in a different order. Set operations match columns by position, so when the types agree the values are silently swapped. Names are the explicit aliases or the implicit alias of a column path (`t.a` is `a`); a column without a name (`SELECT x + 1`) is left out of the comparison, and inputs whose names merely differ are not reported. Reported on the select list of the reordered input.
 
-The quick fix moves the select columns of the reordered input, each with its alias, into the first input's order; columns without a name stay where they are. It is not offered when the input is not a plain `SELECT` (e.g. a nested set operation), its `GROUP BY` or `ORDER BY` may refer to columns by position (`GROUP BY 1`), the names involved are not unique, or the select list contains a comment.
+The quick fix moves the select columns of the reordered input, each with its alias, into the first input's order; columns without a name stay where they are. It is not offered when the input is not a plain `SELECT` (e.g. a nested set operation), its own `GROUP BY` or `ORDER BY` may refer to columns by position (`GROUP BY 1`; an `ORDER BY 1` after the whole set operation refers to the first input's columns and does not prevent the fix), the names involved are not unique, or the select list contains a comment.
 
 Skipped: `CORRESPONDING` / `BY NAME`, inputs with `*` or `SELECT AS STRUCT`, pipe `|> UNION ALL`, inputs that read exactly the same tables (`SELECT src, dst FROM edges UNION ALL SELECT dst, src FROM edges` is how a relation is made symmetric), and unreferenced CTEs.
 
