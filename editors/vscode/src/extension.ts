@@ -392,9 +392,8 @@ function getExplorerProjectIds(): string[] {
 // project -> dataset -> table tree, backed by the same
 // bqls.listDatasets/bqls.listTables workspace/executeCommand commands the
 // nvim sidebar uses. We call workspace/executeCommand directly instead of
-// going through vscode.commands.executeCommand, since the latter requires
-// the command to be advertised in the server's initialize capabilities
-// (which bqls.searchTables currently is not).
+// going through vscode.commands.executeCommand so the tree talks to the
+// server the same way the nvim sidebar does.
 class BqlsTreeDataProvider implements vscode.TreeDataProvider<BqlsTreeNode> {
 	private readonly _onDidChangeTreeData = new vscode.EventEmitter<
 		BqlsTreeNode | undefined

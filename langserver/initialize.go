@@ -64,6 +64,7 @@ func (h *Handler) buildInitializeResult() lsp.InitializeResult {
 			ExecuteCommandProvider: &lsp.ExecuteCommandOptions{
 				Commands: []string{
 					CommandExecuteQuery,
+					CommandCancelQuery,
 					CommandListDatasets,
 					CommandListTables,
 					CommandListJobHistories,
