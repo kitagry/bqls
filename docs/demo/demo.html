@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>bqls demo</title>
+<!--
+  A scripted mock of Neovim + bqls, rendered frame by frame by record.mjs.
+  render(t) derives the whole screen from the timestamp alone, so every
+  recording of the same file is identical. Open this file in a browser to
+  preview it (it loops). The texts mirror what bqls actually returns; see
+  README.md in this directory before changing them.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@500;600&display=block" rel="stylesheet">
+<style>
+  /* Catppuccin Mocha */
+  :root {
+    --rosewater: #f5e0dc; --mauve: #cba6f7; --red: #f38ba8; --peach: #fab387;
+    --yellow: #f9e2af; --green: #a6e3a1; --teal: #94e2d5; --sky: #89dceb;
+    --sapphire: #74c7ec; --blue: #89b4fa; --lavender: #b4befe;
+    --text: #cdd6f4; --subtext1: #bac2de; --subtext0: #a6adc8;
+    --overlay2: #9399b2; --overlay1: #7f849c; --overlay0: #6c7086;
+    --surface2: #585b70; --surface1: #45475a; --surface0: #313244;
+    --base: #1e1e2e; --mantle: #181825; --crust: #11111b;
+    --margin: #b4befe;
+    --lh: 22px;
+  }
+  html, body { margin: 0; }
+  body {
+    width: 960px; height: 600px; overflow: hidden;
+    background: var(--margin);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .win {
+    width: 912px; height: 552px; border-radius: 12px; overflow: hidden;
+    background: var(--base);
+    box-shadow: 0 10px 28px rgba(17, 17, 27, .35);
+    display: flex; flex-direction: column;
+  }
+  .bar {
+    height: 38px; flex: none; position: relative;
+    background: var(--mantle);
+    display: flex; align-items: center; padding: 0 16px;
+    font: 500 13px/1 Inter, sans-serif; color: var(--overlay1);
+  }
+  .dot { width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; }
+  .title { position: absolute; left: 0; right: 0; text-align: center; pointer-events: none; }
+  .scene {
+    margin-left: auto; position: relative;
+    font: 600 12px/1 Inter, sans-serif; letter-spacing: .02em;
+    color: var(--crust); padding: 6px 11px; border-radius: 999px;
+  }
+  .screen {
+    position: relative; flex: 1;
+    font: 400 15px/var(--lh) "JetBrains Mono", monospace; color: var(--text);
+    font-variant-ligatures: none;
+  }
+  .row { position: absolute; left: 0; right: 0; height: var(--lh); white-space: pre; overflow: hidden; }
+  .cl { background: #262637; }
+  .lnr { color: var(--surface2); }
+  .lnr.cur { color: var(--lavender); font-weight: 700; }
+  .sign-w { color: var(--yellow); }
+  .kw { color: var(--mauve); }
+  .str { color: var(--green); }
+  .num, .const { color: var(--peach); }
+  .bt { color: var(--yellow); }
+  .op { color: var(--sky); }
+  .punc { color: var(--overlay2); }
+  .h1 { color: var(--red); font-weight: 700; }
+  .h2 { color: var(--peach); font-weight: 700; }
+  .bullet { color: var(--sky); }
+  .link { color: var(--blue); }
+  .url { color: var(--overlay1); }
+  .pipe { color: var(--overlay0); }
+  .fence { color: var(--overlay0); }
+  .dim { color: var(--overlay1); }
+  .warn-u { text-decoration: underline wavy var(--yellow); text-underline-offset: 1px; text-decoration-thickness: 1px; text-decoration-skip-ink: none; }
+  .vt-warn { color: var(--yellow); background: rgba(249, 226, 175, .1); }
+  .cursor { position: absolute; width: 1ch; height: var(--lh); background: var(--rosewater); color: var(--base); white-space: pre; }
+  .cursor.bar-c { width: 2px; }
+  .status { background: var(--mantle); color: var(--subtext0); }
+  .status.inactive { color: var(--overlay0); }
+  .mode { font-weight: 700; color: var(--crust); padding: 0 1ch; }
+  .float {
+    position: absolute; background: var(--mantle); border: 1px solid var(--blue);
+    border-radius: 6px; padding: 4px 1ch; white-space: pre; overflow: hidden;
+    box-shadow: 0 6px 18px rgba(17, 17, 27, .5);
+  }
+  .float .ln { height: var(--lh); overflow: hidden; }
+  .sep { border-top: 1px solid var(--surface1); margin: 4px 0; }
+  .pum { position: absolute; background: var(--surface0); white-space: pre; box-shadow: 0 6px 18px rgba(17, 17, 27, .5); }
+  .pum .it { height: var(--lh); padding: 0 1ch; }
+  .pum .sel { background: var(--surface2); }
+  .pum .k { color: var(--blue); }
+  .pum .m { color: var(--overlay1); }
+  .msgsep { background: var(--mantle); }
+  .keys {
+    position: absolute; right: 18px; bottom: 58px;
+    font: 700 15px/1 "JetBrains Mono", monospace; color: var(--crust);
+    background: var(--lavender); padding: 7px 12px; border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(17, 17, 27, .5);
+  }
+</style>
+</head>
+<body>
+<div class="win">
+  <div class="bar">
+    <span class="dot" style="background:#f38ba8"></span>
+    <span class="dot" style="background:#f9e2af"></span>
+    <span class="dot" style="background:#a6e3a1"></span>
+    <span class="title">nvim demo.sql</span>
+    <span class="scene" id="scene"></span>
+  </div>
+  <div class="screen" id="screen"></div>
+</div>
+<script>
+"use strict";
+
+// ---- Layout -----------------------------------------------------------------
+
+const LH = 22;
+const PAD_TOP = 6;
+const ROWS = 23; // editor rows incl. statuslines, plus the cmdline row
+const CMD_ROW = ROWS - 1;
+const GUTTER = 6; // sign column (2) + line number (3) + space
+
+const SCENE_COLORS = {
+  "Completion": "var(--green)",
+  "Hover": "var(--sky)",
+  "Lint & quick fix": "var(--yellow)",
+  "Dry-run cost estimate": "var(--peach)",
+  "Query execution": "var(--mauve)",
+};
+
+// ---- What bqls returns ------------------------------------------------------
+// Taken from bqls (langserver/internal/source, langserver/internal/lint) and
+// from bigquery-public-data.samples.shakespeare itself.
+
+const TABLE = "bigquery-public-data.samples.shakespeare";
+
+const TABLE_ITEMS = ["github_nested", "github_timeline", "gsod", "natality", "shakespeare", "trigrams", "wikipedia"]
+  .map((w) => ({ word: w, kind: "Module", menu: "TABLE" }));
+
+const COLUMN_ITEMS = [
+  { word: "corpus", kind: "Field", menu: "STRING" },
+  { word: "corpus_date", kind: "Field", menu: "INTEGER" },
+  { word: "word", kind: "Field", menu: "STRING" },
+  { word: "word_count", kind: "Field", menu: "INTEGER" },
+];
+
+const HOVER_LINES = [
+  ["md", `Table: ${TABLE}`],
+  ["md", ""],
+  ["md", "Table info"],
+  ["md", ""],
+  ["md", "* Created: 2016-03-14 17:16:45"],
+  ["md", "* Last modified: 2016-03-14 17:16:45"],
+  ["md", ""],
+  ["md", "Storage info"],
+  ["md", ""],
+  ["md", "* Number of rows: 164,656"],
+  ["md", "* Total logical bytes: 6.13 MiB"],
+  ["sep"],
+  ["md", "| Name        | Type    | Mode     | Description                            |"],
+  ["md", "| ----------- | ------- | -------- | -------------------------------------- |"],
+  ["md", "| word        | STRING  | REQUIRED | A single unique word (where whitespace |"],
+  ["md", "| word_count  | INTEGER | REQUIRED | The number of times this word appears  |"],
+  ["md", "| corpus      | STRING  | REQUIRED | The work from which this word was extr |"],
+  ["md", "| corpus_date | INTEGER | REQUIRED | The year in which this corpus was publ |"],
+];
+
+const LINT_TEXT = "word != NULL";
+const LINT_FIXED = "word IS NOT NULL";
+const LINT_MESSAGE = "Comparison with NULL using != always yields NULL; use IS NOT NULL";
+
+const DRYRUN_MESSAGE = "This query will process 4.88 MiB when run.";
+
+const JOB_ID = "bquxjob_3c1f9a2e_19a4d0c7b51";
+const JOB_URI = `bqls://project/my-project/job/${JOB_ID}/location/US`;
+
+function jobDocument(query) {
+  return [
+    `## Job ${JOB_ID}`,
+    "",
+    "### Job info",
+    "",
+    "* Created: 2026-11-03 10:24:31",
+    "* Started: 2026-11-03 10:24:31",
+    "* Ended: 2026-11-03 10:24:32",
+    "* Bytes processed: 4.88 MiB",
+    "* Bytes billed: 10.00 MiB",
+    "* Slot milliseconds: 389",
+    "",
+    `[Query URL](https://console.cloud.google.com/bigquery?project=my-project&j=bq:US:${JOB_ID}&page=queryresults)`,
+    "```sql",
+    ...query,
+    "```",
+    "| word | word_count  |",
+    "| :---: | :---: |",
+    "| the | 995  |",
+    "| and | 706  |",
+    "| to | 635  |",
+    "| of | 630  |",
+    "| I | 546  |",
+  ];
+}
+
+// ---- Timeline -----------------------------------------------------------------
+// Each step mutates a fresh state, given its progress p in [0, 1]; render(t)
+// replays every step that has started by t.
+
+const STEPS = [];
+let DURATION = 0;
+
+function add(d, f) {
+  STEPS.push({ start: DURATION, d, f });
+  DURATION += d;
+}
+const wait = (d) => add(d, () => {});
+const at = (f) => add(0, (s, p, start) => f(s, start));
+
+function insert(s, text) {
+  for (const ch of text) {
+    const line = s.buf[s.cur.r];
+    if (ch === "\n") {
+      s.buf.splice(s.cur.r, 1, line.slice(0, s.cur.c), line.slice(s.cur.c));
+      s.cur = { r: s.cur.r + 1, c: 0 };
+    } else {
+      s.buf[s.cur.r] = line.slice(0, s.cur.c) + ch + line.slice(s.cur.c);
+      s.cur.c++;
+    }
+  }
+}
+
+// Typing speed varies a little per character, like a person typing.
+function type(text, ms = 52) {
+  const offsets = [];
+  let acc = 0;
+  for (let i = 0; i < text.length; i++) {
+    offsets.push(acc);
+    acc += ms * (0.7 + ((i * 7919) % 13) / 20) + (text[i] === " " ? 25 : 0);
+  }
+  add(acc, (s, p) => {
+    const elapsed = p * acc;
+    let n = 0;
+    while (n < text.length && offsets[n] <= elapsed && (n < text.length - 1 || p >= 1)) n++;
+    insert(s, text.slice(0, n));
+  });
+}
+
+function keys(label, f, hold = 350) {
+  at((s, start) => {
+    s.keys = { label, until: start + 1100 };
+    if (f) f(s);
+  });
+  wait(hold);
+}
+
+function scene(name) {
+  at((s) => { s.scene = name; });
+}
+
+function pumItems(s) {
+  if (!s.pum) return [];
+  const prefix = s.buf[s.cur.r].slice(s.pum.c, s.cur.c).toLowerCase();
+  return s.pum.items.filter((it) => it.word.toLowerCase().startsWith(prefix));
+}
+
+function accept(s) {
+  const it = pumItems(s)[s.pum.sel];
+  const line = s.buf[s.cur.r];
+  s.buf[s.cur.r] = line.slice(0, s.pum.c) + it.word + line.slice(s.cur.c);
+  s.cur.c = s.pum.c + it.word.length;
+  s.pum = null;
+}
+
+function codeActions(s, titles) {
+  s.msg = [
+    "Code actions:",
+    ...titles.map((t, i) => `${i + 1}: ${t}`),
+    "Type number and <Enter> or click with the mouse (q or empty cancels): ",
+  ];
+}
+
+function fileInfo(s) {
+  const bytes = s.buf.reduce((n, l) => n + new TextEncoder().encode(l).length + 1, 0);
+  return `"demo.sql" ${s.buf.length}L, ${bytes}B written`;
+}
+
+function initialState() {
+  return {
+    buf: [""], cur: { r: 0, c: 0 }, mode: "NORMAL", top: 0, modified: false,
+    pum: null, hover: false, diags: [], msg: null, cmd: "", keys: null, scene: "",
+    split: null,
+  };
+}
+
+// Scene 1: completion
+wait(700);
+scene("Completion");
+keys("i", (s) => { s.mode = "INSERT"; s.cmd = "-- INSERT --"; s.modified = true; }, 250);
+type("SELECT\n  \nFROM `bigquery-public-data.samples.");
+at((s) => { s.pum = { c: s.cur.c, items: TABLE_ITEMS, sel: 0 }; });
+wait(900);
+type("sh", 110);
+wait(450);
+keys("<C-y>", accept, 300);
+type("`");
+wait(350);
+keys("<Esc>kA", (s) => { s.mode = "NORMAL"; s.cmd = ""; s.cur = { r: 1, c: 2 }; }, 150);
+at((s) => { s.mode = "INSERT"; s.cmd = "-- INSERT --"; });
+wait(200);
+at((s) => { s.pum = { c: s.cur.c, items: COLUMN_ITEMS, sel: 0 }; });
+wait(700);
+type("wo", 110);
+wait(450);
+keys("<C-y>", accept, 300);
+type(", ");
+at((s) => { s.pum = { c: s.cur.c, items: COLUMN_ITEMS, sel: 0 }; });
+type("wo", 110);
+wait(350);
+keys("<C-n>", (s) => { s.pum.sel = 1; }, 600);
+keys("<C-y>", accept, 500);
+
+// Scene 2: hover
+keys("<Esc>", (s) => { s.mode = "NORMAL"; s.cmd = ""; s.cur.c--; }, 300);
+scene("Hover");
+keys("j3w", (s) => { s.cur = { r: 2, c: 35 }; }, 450);
+keys("K", (s) => { s.hover = true; }, 5200);
+keys("<Esc>", (s) => { s.hover = false; }, 300);
+
+// Scene 3: lint and quick fix
+scene("Lint & quick fix");
+keys("o", (s) => {
+  s.buf.splice(3, 0, "");
+  s.cur = { r: 3, c: 0 };
+  s.mode = "INSERT";
+  s.cmd = "-- INSERT --";
+}, 200);
+type("WHERE corpus = 'hamlet'\n  AND " + LINT_TEXT);
+keys("<Esc>", (s) => { s.mode = "NORMAL"; s.cmd = ""; s.cur.c--; }, 600);
+at((s) => {
+  const c = s.buf[4].indexOf(LINT_TEXT);
+  s.diags = [{ r: 4, c0: c, c1: c + LINT_TEXT.length, msg: LINT_MESSAGE }];
+});
+wait(2200);
+keys("gra", (s) => {
+  codeActions(s, ["Replace with IS NOT NULL", "Ignore null-comparison on this line", "Execute Query"]);
+}, 2200);
+keys("1<CR>", (s) => {
+  s.msg = null;
+  s.buf[4] = s.buf[4].replace(LINT_TEXT, LINT_FIXED);
+  s.cur.c = s.buf[4].indexOf(LINT_FIXED);
+  s.diags = [];
+}, 1300);
+keys("o", (s) => {
+  s.buf.splice(5, 0, "");
+  s.cur = { r: 5, c: 0 };
+  s.mode = "INSERT";
+  s.cmd = "-- INSERT --";
+}, 150);
+type("ORDER BY word_count DESC\nLIMIT 5");
+keys("<Esc>", (s) => { s.mode = "NORMAL"; s.cmd = ""; s.cur.c--; }, 500);
+
+// Scene 4: dry-run on save
+scene("Dry-run cost estimate");
+keys(":w<CR>", (s) => { s.cmd = ":w"; }, 350);
+at((s) => { s.cmd = fileInfo(s); s.modified = false; });
+wait(700);
+at((s) => { s.cmd = DRYRUN_MESSAGE; });
+wait(3000);
+
+// Scene 5: query execution
+scene("Query execution");
+keys("gra", (s) => { s.cmd = ""; codeActions(s, ["Execute Query"]); }, 1500);
+keys("1<CR>", (s) => {
+  s.msg = null;
+  s.split = { lines: ["Loading..."], top: 0, cur: { r: 0, c: 0 } };
+}, 1100);
+at((s) => { s.split.lines = jobDocument(s.buf); });
+wait(2000);
+keys("G", (s) => {
+  const n = s.split.lines.length;
+  s.split.cur = { r: n - 1, c: 0 };
+  s.split.top = Math.max(0, n - splitHeights().top);
+}, 4800);
+
+// ---- Rendering --------------------------------------------------------------
+
+const esc = (str) => str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+const SQL_KEYWORDS = new Set(["SELECT", "FROM", "WHERE", "AND", "OR", "ORDER", "BY", "DESC", "ASC", "LIMIT", "IS", "NOT", "GROUP", "AS"]);
+const SQL_CONSTS = new Set(["NULL", "TRUE", "FALSE"]);
+
+function highlightSql(line) {
+  const cls = new Array(line.length).fill("");
+  const re = /(`[^`]*`?)|('[^']*'?)|(\b\d+\b)|([A-Za-z_][A-Za-z_0-9]*)|(!=|<=|>=|[=<>*+-])|([,.;()])/g;
+  let m;
+  while ((m = re.exec(line))) {
+    let c = "";
+    if (m[1]) c = "bt";
+    else if (m[2]) c = "str";
+    else if (m[3]) c = "num";
+    else if (m[4]) c = SQL_KEYWORDS.has(m[4].toUpperCase()) ? "kw" : SQL_CONSTS.has(m[4].toUpperCase()) ? "const" : "";
+    else if (m[5]) c = "op";
+    else if (m[6]) c = "punc";
+    cls.fill(c, m.index, m.index + m[0].length);
+  }
+  return cls;
+}
+
+function highlightMarkdown(lines) {
+  let inFence = false;
+  return lines.map((line) => {
+    if (line.startsWith("```")) {
+      inFence = !inFence;
+      return new Array(line.length).fill("fence");
+    }
+    if (inFence) return highlightSql(line);
+    const cls = new Array(line.length).fill("");
+    if (/^## /.test(line)) return cls.fill("h1");
+    if (/^### /.test(line)) return cls.fill("h2");
+    if (/^(Table info|Storage info)$/.test(line)) return cls.fill("h2");
+    if (/^\* /.test(line)) cls[0] = "bullet";
+    if (line.startsWith("|")) {
+      for (let i = 0; i < line.length; i++) if (line[i] === "|" || /^[-:]$/.test(line[i]) && /^\|[\s:-]+\|/.test(line)) cls[i] = "pipe";
+      if (/^\| Name /.test(line)) for (let i = 0; i < line.length; i++) if (cls[i] !== "pipe") cls[i] = "h2";
+    }
+    const link = /^\[([^\]]*)\]\((.*)\)$/.exec(line);
+    if (link) {
+      cls.fill("link", 0, link[1].length + 2);
+      cls.fill("url", link[1].length + 2);
+    }
+    return cls;
+  });
+}
+
+function spans(line, cls, under) {
+  let out = "";
+  let i = 0;
+  while (i < line.length) {
+    let j = i + 1;
+    const key = cls[i] + (under && under[i] ? " warn-u" : "");
+    while (j < line.length && cls[j] + (under && under[j] ? " warn-u" : "") === key) j++;
+    const text = esc(line.slice(i, j));
+    out += key.trim() ? `<span class="${key.trim()}">${text}</span>` : text;
+    i = j;
+  }
+  return out;
+}
+
+const rowTop = (r) => PAD_TOP + r * LH;
+const ch = (n) => `calc(${n} * 1ch + 1ch)`; // 1ch left padding
+
+function splitHeights() {
+  // :split halves the area above the cmdline; each window keeps a statusline.
+  const area = CMD_ROW;
+  const top = Math.floor((area - 2) / 2);
+  return { top, bottom: area - 2 - top };
+}
+
+function renderWindow(out, opt) {
+  const { row0, height, lines, cls, cur, top, active, numbers, diags } = opt;
+  for (let i = 0; i < height; i++) {
+    const r = top + i;
+    const y = rowTop(row0 + i);
+    if (r >= lines.length) {
+      out.push(`<div class="row" style="top:${y}px"><span class="dim">  ~</span></div>`);
+      continue;
+    }
+    const line = lines[r];
+    const diag = diags.find((d) => d.r === r);
+    const under = diag ? line.split("").map((_, k) => k >= diag.c0 && k < diag.c1) : null;
+    const isCur = active && r === cur.r;
+    const sign = diag ? `<span class="sign-w">W </span>` : "  ";
+    const nr = numbers ? `<span class="lnr${isCur ? " cur" : ""}">${String(r + 1).padStart(3)}</span> ` : "";
+    const vt = diag ? `  <span class="vt-warn">● ${esc(diag.msg)}</span>` : "";
+    out.push(`<div class="row${isCur ? " cl" : ""}" style="top:${y}px;padding-left:1ch">${sign}${nr}${spans(line, cls[r], under)}${vt}</div>`);
+  }
+}
+
+function renderStatus(out, row, opt) {
+  const { mode, name, right, active, modified } = opt;
+  const y = rowTop(row);
+  const modeColor = mode === "INSERT" ? "var(--green)" : "var(--blue)";
+  const left = active
+    ? `<span class="mode" style="background:${modeColor}">${mode}</span> ${esc(name)}${modified ? " [+]" : ""}`
+    : ` ${esc(name)}`;
+  out.push(`<div class="row status${active ? "" : " inactive"}" style="top:${y}px;display:flex"><span style="flex:1;overflow:hidden">${left}</span><span>${right}&nbsp;</span></div>`);
+}
+
+function renderCursor(out, row, col, char, insertMode) {
+  const y = rowTop(row);
+  out.push(`<div class="cursor${insertMode ? " bar-c" : ""}" style="top:${y}px;left:${ch(GUTTER + col)}">${insertMode ? "" : esc(char || " ")}</div>`);
+}
+
+function render(t) {
+  const s = initialState();
+  for (const st of STEPS) {
+    if (t < st.start) break;
+    const p = st.d === 0 ? 1 : Math.min(1, (t - st.start) / st.d);
+    st.f(s, p, st.start);
+  }
+
+  const out = [];
+  const sqlCls = s.buf.map(highlightSql);
+  const insertMode = s.mode === "INSERT";
+  const warn = s.diags.length ? `<span style="color:var(--yellow)">W:${s.diags.length}</span>  ` : "";
+  const right = `${warn}<span style="color:var(--green)">bqls</span>  sql  ${s.cur.r + 1}:${s.cur.c + 1}`;
+
+  let sqlRow0 = 0;
+  let sqlHeight = CMD_ROW - 1;
+  if (s.split) {
+    const h = splitHeights();
+    renderWindow(out, {
+      row0: 0, height: h.top, lines: s.split.lines, cls: highlightMarkdown(s.split.lines),
+      cur: s.split.cur, top: s.split.top, active: true, numbers: true, diags: [],
+    });
+    renderStatus(out, h.top, {
+      mode: "NORMAL", name: JOB_URI, active: true, modified: false,
+      right: `markdown  ${s.split.cur.r + 1}:${s.split.cur.c + 1}`,
+    });
+    sqlRow0 = h.top + 1;
+    sqlHeight = h.bottom;
+  }
+  renderWindow(out, {
+    row0: sqlRow0, height: sqlHeight, lines: s.buf, cls: sqlCls,
+    cur: s.cur, top: s.top, active: !s.split, numbers: true, diags: s.diags,
+  });
+  renderStatus(out, sqlRow0 + sqlHeight, {
+    mode: s.mode, name: "demo.sql", active: !s.split, modified: s.modified,
+    right: s.split ? "sql" : right,
+  });
+
+  if (s.split) {
+    const r = s.split.cur.r - s.split.top;
+    renderCursor(out, r, s.split.cur.c, (s.split.lines[s.split.cur.r] || "")[s.split.cur.c], false);
+  } else if (!s.msg) {
+    renderCursor(out, sqlRow0 + s.cur.r - s.top, s.cur.c, s.buf[s.cur.r][s.cur.c], insertMode);
+  }
+
+  if (s.pum) {
+    const items = pumItems(s);
+    if (items.length) {
+      const w = Math.max(...items.map((it) => it.word.length));
+      const html = items.map((it, i) =>
+        `<div class="it${i === s.pum.sel ? " sel" : ""}">${esc(it.word.padEnd(w))}  <span class="k">${it.kind.padEnd(6)}</span>  <span class="m">${esc(it.menu)}</span></div>`
+      ).join("");
+      out.push(`<div class="pum" style="top:${rowTop(s.cur.r + 1)}px;left:${ch(GUTTER + s.pum.c - 1)}">${html}</div>`);
+    }
+  }
+
+  if (s.hover) {
+    const lines = HOVER_LINES.map((l) => l[0] === "sep" ? `<div class="sep"></div>` :
+      `<div class="ln">${spans(l[1], highlightMarkdown([l[1]])[0])}</div>`).join("");
+    out.push(`<div class="float" style="top:${rowTop(s.cur.r + 1) + 2}px;left:${ch(GUTTER + 2)}">${lines}</div>`);
+  }
+
+  if (s.msg) {
+    const r0 = CMD_ROW - s.msg.length + 1;
+    out.push(`<div class="row msgsep" style="top:${rowTop(r0 - 1)}px"></div>`);
+    s.msg.forEach((m, i) => {
+      out.push(`<div class="row" style="top:${rowTop(r0 + i)}px;background:var(--base);padding-left:1ch">${esc(m)}</div>`);
+    });
+    const last = s.msg[s.msg.length - 1];
+    renderCursor(out, CMD_ROW, last.length - GUTTER, " ", false);
+  } else {
+    const cls = s.cmd === DRYRUN_MESSAGE ? "color:var(--text)" : s.cmd.startsWith("--") ? "color:var(--subtext0);font-weight:700" : "";
+    out.push(`<div class="row" style="top:${rowTop(CMD_ROW)}px;padding-left:1ch;${cls}">${esc(s.cmd)}</div>`);
+    if (s.cmd.startsWith(":")) renderCursor(out, CMD_ROW, s.cmd.length - GUTTER, " ", true);
+  }
+
+  if (s.keys && t < s.keys.until) out.push(`<div class="keys">${esc(s.keys.label)}</div>`);
+
+  document.getElementById("screen").innerHTML = out.join("");
+  const sc = document.getElementById("scene");
+  sc.textContent = s.scene;
+  sc.style.visibility = s.scene ? "visible" : "hidden";
+  sc.style.background = SCENE_COLORS[s.scene] || "transparent";
+}
+
+window.demo = { duration: DURATION, render };
+
+if (!new URLSearchParams(location.search).has("record")) {
+  const t0 = performance.now();
+  const tick = (now) => {
+    render((now - t0) % (DURATION + 1500));
+    requestAnimationFrame(tick);
+  };
+  document.fonts.ready.then(() => requestAnimationFrame(tick));
+}
+</script>
+</body>
+</html>

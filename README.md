@@ -26,7 +26,9 @@ Completion, hover, lint, and query execution for BigQuery SQL, right in your edi
 
 </div>
 
-https://github.com/user-attachments/assets/3e980a26-bc9b-4c2b-8c5b-1e9582a6a644
+<p align="center">
+  <img src="./docs/demo/demo.gif" alt="bqls in Neovim: completion, hover, a lint quick fix, a dry-run cost estimate, and query results" width="960">
+</p>
 
 ## ✨ Features
 
