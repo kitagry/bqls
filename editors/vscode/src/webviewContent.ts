@@ -1,4 +1,4 @@
-import { FieldSchema, MarkedString, QueryResult } from "./virtualDocument";
+import type { FieldSchema, MarkedString, QueryResult } from "./virtualDocument";
 
 export function escapeHtml(value: string): string {
 	return value

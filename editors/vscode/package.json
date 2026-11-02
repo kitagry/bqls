@@ -162,7 +162,7 @@
 		"build": "node esbuild.js --production",
 		"watch": "node esbuild.js --watch",
 		"compile": "tsc --noEmit -p ./",
-		"lint": "biome lint src",
+		"lint": "biome lint --error-on-warnings src",
 		"format": "biome format .",
 		"format:fix": "biome format --write .",
 		"test": "vitest run",

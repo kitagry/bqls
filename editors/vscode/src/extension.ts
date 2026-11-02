@@ -7,12 +7,12 @@ import { promisify } from "node:util";
 import * as vscode from "vscode";
 import {
 	LanguageClient,
-	LanguageClientOptions,
-	ServerOptions,
+	type LanguageClientOptions,
+	type ServerOptions,
 	TransportKind,
 } from "vscode-languageclient/node";
-import { InstallerDeps, resolveBqlsCommand } from "./bqlsInstaller";
-import {
+import { type InstallerDeps, resolveBqlsCommand } from "./bqlsInstaller";
+import type {
 	PublishVirtualTextDocumentParams,
 	VirtualTextDocumentResult,
 } from "./virtualDocument";
@@ -21,7 +21,7 @@ import {
 	isExternalUrl,
 	isJobVirtualDocumentUri,
 	jobHistoryQuickPickItems,
-	ListJobHistoryResult,
+	type ListJobHistoryResult,
 } from "./commandResultHandler";
 import {
 	buildDetailsHtml,
@@ -31,15 +31,15 @@ import {
 	virtualDocumentTitle,
 } from "./webviewContent";
 import {
-	BqlsTreeNode,
+	type BqlsTreeNode,
 	COMMAND_LIST_DATASETS,
 	COMMAND_LIST_PROJECTS,
 	COMMAND_LIST_TABLES,
 	COMMAND_SEARCH_TABLES,
-	ListDatasetsResult,
-	ListProjectsResult,
-	ListTablesResult,
-	SearchTablesResult,
+	type ListDatasetsResult,
+	type ListProjectsResult,
+	type ListTablesResult,
+	type SearchTablesResult,
 	addProjectId,
 	addableProjectQuickPickItems,
 	datasetNodes,
@@ -521,7 +521,7 @@ async function addProjectToExplorer(): Promise<void> {
 }
 
 async function removeProjectFromExplorer(node?: BqlsTreeNode): Promise<void> {
-	if (!node || node.kind !== "project") {
+	if (node?.kind !== "project") {
 		return;
 	}
 	await setExplorerProjectIds(
