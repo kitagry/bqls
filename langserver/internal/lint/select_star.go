@@ -242,24 +242,29 @@ func fromTables(sel *googlesql.ASTSelect) []*googlesql.ASTTablePathExpression {
 // tableRangeName is the name a `t.*` refers to tp by: its alias, or else the
 // last component of its path.
 func tableRangeName(tp *googlesql.ASTTablePathExpression) (string, bool) {
-	var id *googlesql.ASTIdentifier
-	if alias, err := tp.Alias(); err == nil && alias != nil {
-		id, err = alias.Identifier()
-		if err != nil {
-			return "", false
-		}
-	} else {
-		path, err := tp.PathExpr()
-		if err != nil || path == nil {
-			return "", false
-		}
-		if id, err = path.LastName(); err != nil {
-			return "", false
-		}
-	}
-	if id == nil {
+	id, ok := tableRangeIdentifier(tp)
+	if !ok {
 		return "", false
 	}
 	name, err := id.GetAsString()
 	return name, err == nil
+}
+
+func tableRangeIdentifier(tp *googlesql.ASTTablePathExpression) (*googlesql.ASTIdentifier, bool) {
+	var id *googlesql.ASTIdentifier
+	if alias, err := tp.Alias(); err == nil && alias != nil {
+		id, err = alias.Identifier()
+		if err != nil {
+			return nil, false
+		}
+	} else {
+		path, err := tp.PathExpr()
+		if err != nil || path == nil {
+			return nil, false
+		}
+		if id, err = path.LastName(); err != nil {
+			return nil, false
+		}
+	}
+	return id, id != nil
 }

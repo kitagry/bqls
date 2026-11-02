@@ -23,11 +23,11 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`union-column-order`](#union-column-order) | on | warning | | | Set operation inputs whose columns are the first input's columns in a different order |
 | [`insert-column-order`](#insert-column-order) | on | warning | | | `INSERT ... SELECT` queries whose columns are the target columns in a different order |
 | [`left-join-as-inner`](#left-join-as-inner) | on | warning | | | `LEFT` / `RIGHT JOIN`s whose `WHERE` clause rejects the NULL rows of the optional side |
-| [`variable-column-shadow`](#variable-column-shadow) | on | warning | | | A column compared with itself because its bare name was meant as a same-named `DECLARE` variable |
+| [`variable-column-shadow`](#variable-column-shadow) | on | warning | yes | | A column compared with itself because its bare name was meant as a same-named `DECLARE` variable |
 | [`join-key-implicit-cast`](#join-key-implicit-cast) | on | warning | | | `ON` / `USING` join keys of different types, so one side is implicitly cast (e.g. `INT64` to `FLOAT64`) |
 | [`self-comparison`](#self-comparison) | on | warning | | | Comparisons whose two sides are the same column, e.g. `a.id = a.id` meant as `a.id = b.id` |
 | [`missing-order-by`](#missing-order-by) | off | warning | | | `ROW_NUMBER()` filters, `ARRAY_AGG` / `STRING_AGG` with `LIMIT`, and indexed `ARRAY_AGG` results without `ORDER BY`, which pick arbitrary rows |
-| [`timestamp-string-literal`](#timestamp-string-literal) | off | warning | | | String literals without a time zone compared with a `TIMESTAMP`, which are read as UTC |
+| [`timestamp-string-literal`](#timestamp-string-literal) | off | warning | yes | `time_zone` | String literals without a time zone compared with a `TIMESTAMP`, which are read as UTC |
 | [`nondeterministic-cte`](#nondeterministic-cte) | on | warning | | | `RAND()` / `GENERATE_UUID()` in a CTE that is evaluated more than once, so each reference sees different values |
 | **Cost** | | | | | |
 | [`partition-filter`](#partition-filter) | on | warning | | | Partitioned tables read without a filter on the partition column |
@@ -92,7 +92,9 @@ Not reported: `IS NULL`, `COALESCE` / `IFNULL` / `IF` and other functions, `OR`,
 
 #### `variable-column-shadow`
 
-A comparison (`=`, `!=`, `<`, `<=`, `>`, `>=`, `IS [NOT] DISTINCT FROM`) of a column with itself where one side is written as the bare name of a `DECLARE` variable in scope, e.g. `DECLARE user_id INT64; SELECT * FROM t WHERE user_id = user_id` (or `t.user_id = user_id`). A column takes precedence over a variable of the same name, so the variable is never read and the condition is always true (or always false) for non-NULL rows. Qualifying the column does not help; rename the variable.
+A comparison (`=`, `!=`, `<`, `<=`, `>`, `>=`, `IS [NOT] DISTINCT FROM`) of a column with itself where one side is written as the bare name of a `DECLARE` variable in scope, e.g. `DECLARE user_id INT64; SELECT * FROM t WHERE user_id = user_id` (or `t.user_id = user_id`). A column takes precedence over a variable of the same name, so the variable is never read and the condition is always true (or always false) for non-NULL rows. To use the variable, rename it; qualifying the column does not make the name refer to the variable.
+
+The quick fix keeps the current meaning and only makes it explicit: it qualifies each bare operand with the range variable of the column's table (`WHERE x = x` becomes `WHERE t.x = t.x`), which [`self-comparison`](#self-comparison) then reports. Renaming the variable is not offered, since it touches every use of the variable. The fix is offered only when the table is read directly in the `FROM` clause the comparison sees (not through a subquery, a CTE, a pipe operator that redefines the columns, or an outer query) and its range variable is a single identifier (not the implicit alias of a backquoted path such as `` `p.d.t` ``, which BigQuery and bqls name differently).
 
 Other uses of a name shared by a variable and a column (e.g. `GROUP BY user_id`) are not reported, since the column is likely intended there; neither are `IF` / `WHILE` conditions.
 
@@ -128,7 +130,13 @@ A string literal without a time zone compared with a `TIMESTAMP` (`=`, `!=`, `<`
 
 Not reported: literals with an offset, `Z` or a zone name (including `UTC`), `TIMESTAMP '...'` and `CAST('...' AS TIMESTAMP)`, `DATE` / `DATETIME` comparisons, variables and query parameters, other uses such as function arguments, and files that `SET @@time_zone`, since it changes the zone these literals are read in.
 
+The quick fix rewrites the literal to `TIMESTAMP('2024-01-01', 'UTC')`, which keeps the result and states the zone. When `time_zone` is set, a second quick fix uses that zone instead (`TIMESTAMP('2024-01-01', 'Asia/Tokyo')`). It changes the result, so it is never the preferred fix and `bqls lint --fix` does not apply it.
+
 Off by default: such comparisons are common and often do mean UTC.
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `time_zone` | none | The time zone the literals are usually meant in, offered as a second quick fix. A [time zone name](https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#time_zones) (e.g. `Asia/Tokyo`) or an offset (e.g. `+09:00`). |
 
 #### `nondeterministic-cte`
 

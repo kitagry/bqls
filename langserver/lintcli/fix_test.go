@@ -42,6 +42,19 @@ func TestRun_Fix(t *testing.T) {
 				"a.sql": "SELECT x FROM UNNEST([1]) AS x WHERE x IS NULL OR x IN (NULL)\n",
 			},
 		},
+		// The UTC fix comes first and keeps the result; one in the configured
+		// zone would change it.
+		"timestamp literal gets its time zone made explicit": {
+			files: map[string]string{
+				"a.sql":      "SELECT ts FROM UNNEST([CURRENT_TIMESTAMP()]) AS ts WHERE ts >= '2024-01-01'\n",
+				".bqls.yaml": "lint:\n  rules:\n    timestamp-string-literal:\n      enabled: true\n      time_zone: Asia/Tokyo\n",
+			},
+			args:     []string{"--fix", "a.sql"},
+			wantCode: 0,
+			wantFiles: map[string]string{
+				"a.sql": "SELECT ts FROM UNNEST([CURRENT_TIMESTAMP()]) AS ts WHERE ts >= TIMESTAMP('2024-01-01', 'UTC')\n",
+			},
+		},
 		"fixes of disabled rules are not applied": {
 			files:     map[string]string{"a.sql": unusedCTESQL},
 			args:      []string{"--fix", "--disable", "unused-cte", "a.sql"},
