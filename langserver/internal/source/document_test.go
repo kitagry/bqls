@@ -344,6 +344,50 @@ Storage info
 				lsp.RawMarkedString("name description"),
 			},
 		},
+		"hover column in CREATE ROW ACCESS POLICY FILTER USING": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "CREATE ROW ACCESS POLICY pol ON project.dataset.table FILTER USING (|name = 'a')",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetDefaultProject().Return("project").AnyTimes()
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{Name: "name", Type: bq.StringFieldType, Description: "name description"},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			expectMarkedStrings: []lsp.MarkedString{
+				{Language: "sql", Value: "name: STRING (nullable)"},
+				lsp.RawMarkedString("name description"),
+			},
+		},
+		"hover column in ALTER ROW ACCESS POLICY FILTER USING": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "ALTER ROW ACCESS POLICY pol ON project.dataset.table FILTER USING (|name = 'a')",
+			},
+			bigqueryClientMockFunc: func(t *testing.T) bigquery.Client {
+				ctrl := gomock.NewController(t)
+				bqClient := mock_bigquery.NewMockClient(ctrl)
+				bqClient.EXPECT().GetDefaultProject().Return("project").AnyTimes()
+				bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+					FullID: "project.dataset.table",
+					Schema: bq.Schema{
+						{Name: "name", Type: bq.StringFieldType, Description: "name description"},
+					},
+				}, nil).MinTimes(0)
+				return bqClient
+			},
+			// Only the type, because the target table is named by its last
+			// identifier for the validator, so its columns do not lead to the
+			// table metadata.
+			expectMarkedStrings: []lsp.MarkedString{
+				{Language: "sql", Value: "name: STRING"},
+			},
+		},
 		"hover column after statement with unfixable error": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT UNKNOWN_FUNC();\nSELECT id, |name FROM `project.dataset.table`;\nSELECT id FROM `project.dataset.table2`",

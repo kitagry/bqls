@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	bq "cloud.google.com/go/bigquery"
@@ -418,6 +419,21 @@ func TestCatalog_PreloadDDLTargets(t *testing.T) {
 		"CREATE SEARCH INDEX": {
 			src: "CREATE SEARCH INDEX idx ON p.d.t (ALL COLUMNS)",
 		},
+		"ALTER ROW ACCESS POLICY": {
+			src: "ALTER ROW ACCESS POLICY pol ON p.d.t RENAME TO pol2",
+		},
+		"ALTER ROW ACCESS POLICY with backticked path": {
+			src: "ALTER ROW ACCESS POLICY pol ON `p.d.t` RENAME TO pol2",
+		},
+		"ALTER ROW ACCESS POLICY with partially backticked path": {
+			src: "ALTER ROW ACCESS POLICY pol ON `p.d`.t RENAME TO pol2",
+		},
+		"ALTER ROW ACCESS POLICY with dataset-qualified path": {
+			src: "ALTER ROW ACCESS POLICY pol ON d.t RENAME TO pol2",
+		},
+		"ALTER ROW ACCESS POLICY with FILTER USING": {
+			src: "ALTER ROW ACCESS POLICY pol ON p.d.t FILTER USING (x > 0)",
+		},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -435,6 +451,91 @@ func TestCatalog_PreloadDDLTargets(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCatalog_AlterRowAccessPolicyTarget(t *testing.T) {
+	parse := func(t *testing.T, src string) file.ParsedFile {
+		t.Helper()
+		ctrl := gomock.NewController(t)
+		bqClient := mock_bigquery.NewMockClient(ctrl)
+		bqClient.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+		bqClient.EXPECT().GetTableMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ any, project, dataset, table string) (*bq.TableMetadata, error) {
+				if project+"."+dataset+"."+table == "p.d.t" {
+					return &bq.TableMetadata{Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}}}, nil
+				}
+				return nil, fmt.Errorf("table %s.%s.%s not found", project, dataset, table)
+			}).AnyTimes()
+		return file.NewAnalyzer(logrus.New(), bqClient).ParseFile("file:///a.sql", src)
+	}
+	tableNames := func(t *testing.T, scan *googlesql.ResolvedTableScan) (name, fullName string) {
+		t.Helper()
+		table, err := scan.Table()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name, err = table.Name(); err != nil {
+			t.Fatal(err)
+		}
+		if fullName, err = table.FullName(); err != nil {
+			t.Fatal(err)
+		}
+		return name, fullName
+	}
+
+	t.Run("keeps the full path as FullName", func(t *testing.T) {
+		parsed := parse(t, "ALTER ROW ACCESS POLICY pol ON p.d.t FILTER USING (x > 0)")
+		if len(parsed.Errors) > 0 {
+			t.Fatalf("unexpected errors: %v", parsed.Errors)
+		}
+		stmt, err := parsed.RNode[0].ResolvedStatement()
+		if err != nil {
+			t.Fatal(err)
+		}
+		scan, err := stmt.(*googlesql.ResolvedAlterRowAccessPolicyStmt).TableScan()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, fullName := tableNames(t, scan); fullName != "p.d.t" {
+			t.Errorf("FullName() = %q, want %q", fullName, "p.d.t")
+		}
+	})
+
+	t.Run("does not rename the table for the other statements", func(t *testing.T) {
+		parsed := parse(t, "ALTER ROW ACCESS POLICY pol ON p.d.t FILTER USING (x > 0);\nSELECT x FROM p.d.t")
+		if len(parsed.Errors) > 0 {
+			t.Fatalf("unexpected errors: %v", parsed.Errors)
+		}
+		stmt, err := parsed.RNode[1].ResolvedStatement()
+		if err != nil {
+			t.Fatal(err)
+		}
+		query, err := stmt.(*googlesql.ResolvedQueryStmt).Query()
+		if err != nil {
+			t.Fatal(err)
+		}
+		input, err := query.(*googlesql.ResolvedProjectScan).InputScan()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name, _ := tableNames(t, input.(*googlesql.ResolvedTableScan)); name != "p.d.t" {
+			t.Errorf("Name() = %q, want %q", name, "p.d.t")
+		}
+	})
+
+	t.Run("reports an unknown column", func(t *testing.T) {
+		parsed := parse(t, "ALTER ROW ACCESS POLICY pol ON p.d.t FILTER USING (y > 0)")
+		if len(parsed.Errors) != 1 || !strings.Contains(parsed.Errors[0].Msg, "Unrecognized name: y") {
+			t.Errorf("errors = %v, want one Unrecognized name: y", parsed.Errors)
+		}
+	})
+
+	t.Run("resolves a table created by the script", func(t *testing.T) {
+		parsed := parse(t, "CREATE TABLE p.d.created (y INT64);\nALTER ROW ACCESS POLICY pol ON p.d.created FILTER USING (y > 0)")
+		if len(parsed.Errors) > 0 {
+			t.Errorf("unexpected errors: %v", parsed.Errors)
+		}
+	})
 }
 
 func TestCatalog_PreloadDMLTargets(t *testing.T) {
