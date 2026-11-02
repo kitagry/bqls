@@ -27,6 +27,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`join-key-implicit-cast`](#join-key-implicit-cast) | on | warning | | | `ON` / `USING` join keys of different types, so one side is implicitly cast (e.g. `INT64` to `FLOAT64`) |
 | [`self-comparison`](#self-comparison) | on | warning | | | Comparisons whose two sides are the same column, e.g. `a.id = a.id` meant as `a.id = b.id` |
 | [`missing-order-by`](#missing-order-by) | off | warning | | | `ROW_NUMBER()` filters, `ARRAY_AGG` / `STRING_AGG` with `LIMIT`, and indexed `ARRAY_AGG` results without `ORDER BY`, which pick arbitrary rows |
+| [`timestamp-string-literal`](#timestamp-string-literal) | off | warning | | | String literals without a time zone compared with a `TIMESTAMP`, which are read as UTC |
 | [`nondeterministic-cte`](#nondeterministic-cte) | on | warning | | | `RAND()` / `GENERATE_UUID()` in a CTE that is evaluated more than once, so each reference sees different values |
 | **Cost** | | | | | |
 | [`partition-filter`](#partition-filter) | on | warning | | | Partitioned tables read without a filter on the partition column |
@@ -120,6 +121,14 @@ Other numbering and navigation functions (`RANK`, `LAG`, `LEAD`, `FIRST_VALUE`, 
 Not reported: `ROW_NUMBER()` that no condition reads (e.g. a surrogate id), order-insensitive aggregates (`COUNT`, `SUM`, `ANY_VALUE`, ...), `ARRAY_AGG` / `STRING_AGG` without `LIMIT` that is not indexed, and duplicates that look the same to the rest of the statement: rows whose `PARTITION BY` keys cover every column the statement uses (e.g. `PARTITION BY TO_JSON_STRING(t)`, or `SELECT id ... QUALIFY ROW_NUMBER() OVER (PARTITION BY id) = 1`), and aggregate arguments that read only `GROUP BY` keys. Statements bqls cannot trace (e.g. recursive CTEs, table functions) and view definitions are skipped.
 
 Off by default: whether the result actually changes depends on whether rows sharing a key differ, which bqls cannot see, and deduplicating rows known to be identical by key alone (e.g. after at-least-once ingestion) is a common, intentional idiom. No quick fix, since the column to order by cannot be guessed.
+
+#### `timestamp-string-literal`
+
+A string literal without a time zone compared with a `TIMESTAMP` (`=`, `!=`, `<`, `<=`, `>`, `>=`, `[NOT] BETWEEN`, `[NOT] IN (...)`, `IS [NOT] DISTINCT FROM`), e.g. `created_at >= '2024-01-01'`. The literal is implicitly converted to `TIMESTAMP` in the default time zone, UTC, so a local date or time shifts the boundary by the UTC offset. Add an offset or a time zone name (`'2024-01-01 00:00:00+09'`, `'2024-01-01 00:00:00 Asia/Tokyo'`, `TIMESTAMP('2024-01-01', 'Asia/Tokyo')`), or write `TIMESTAMP '2024-01-01'` to make UTC explicit. Reported on the literal.
+
+Not reported: literals with an offset, `Z` or a zone name (including `UTC`), `TIMESTAMP '...'` and `CAST('...' AS TIMESTAMP)`, `DATE` / `DATETIME` comparisons, variables and query parameters, other uses such as function arguments, and files that `SET @@time_zone`, since it changes the zone these literals are read in.
+
+Off by default: such comparisons are common and often do mean UTC.
 
 #### `nondeterministic-cte`
 
