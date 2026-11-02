@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/kitagry/bqls/langserver/internal/lint"
 )
 
@@ -141,8 +142,106 @@ func TestUnionColumnOrder(t *testing.T) {
 				})
 			}
 			got := lint.Run(t.Context(), parseWithTable(t, tt.src), lint.Config{}, lint.Env{}, lint.UnionColumnOrder)
-			if diff := cmp.Diff(want, got); diff != "" {
+			if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(lint.Diagnostic{}, "SuggestedFixes")); diff != "" {
 				t.Errorf("diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestUnionColumnOrderFix(t *testing.T) {
+	tests := map[string]struct {
+		src string
+		// wantFixed is src after applying every fix; it is src itself when no
+		// fix is offered.
+		wantFixed string
+	}{
+		"swapped literals": {
+			src:       "SELECT 1 AS a, 2 AS b UNION ALL SELECT 2 AS b, 1 AS a",
+			wantFixed: "SELECT 1 AS a, 2 AS b UNION ALL SELECT 1 AS a, 2 AS b",
+		},
+		"aliases move with their expressions": {
+			src:       "SELECT x AS a, x + 1 AS b FROM p.d.t1 UNION ALL SELECT x + 1 AS b, x AS a FROM p.d.t2",
+			wantFixed: "SELECT x AS a, x + 1 AS b FROM p.d.t1 UNION ALL SELECT x AS a, x + 1 AS b FROM p.d.t2",
+		},
+		"implicit aliases of paths": {
+			src:       "SELECT t.a, t.b FROM (SELECT x AS a, x AS b FROM p.d.t1) t UNION ALL SELECT u.b, u.a FROM (SELECT x AS a, x AS b FROM p.d.t2) u",
+			wantFixed: "SELECT t.a, t.b FROM (SELECT x AS a, x AS b FROM p.d.t1) t UNION ALL SELECT u.a, u.b FROM (SELECT x AS a, x AS b FROM p.d.t2) u",
+		},
+		"only the misplaced columns move": {
+			src:       "SELECT 0 AS id, 1 AS a, 2 AS b, 3 AS c UNION ALL SELECT 0 AS id, 3 AS c, 1 AS a, 2 AS b",
+			wantFixed: "SELECT 0 AS id, 1 AS a, 2 AS b, 3 AS c UNION ALL SELECT 0 AS id, 1 AS a, 2 AS b, 3 AS c",
+		},
+		"unnamed expressions stay": {
+			src:       "SELECT 1 AS a, 2 AS b, 'x' AS src UNION ALL SELECT 2 AS b, 1 AS a, 'y'",
+			wantFixed: "SELECT 1 AS a, 2 AS b, 'x' AS src UNION ALL SELECT 1 AS a, 2 AS b, 'y'",
+		},
+		"names compare case-insensitively": {
+			src:       "SELECT 1 AS a, 2 AS b UNION ALL SELECT 2 AS B, 1 AS A",
+			wantFixed: "SELECT 1 AS a, 2 AS b UNION ALL SELECT 1 AS A, 2 AS B",
+		},
+		"layout is kept": {
+			src:       "SELECT 1 AS a,\n  2 AS b\nUNION ALL\nSELECT 2 AS b,\n  1 AS a",
+			wantFixed: "SELECT 1 AS a,\n  2 AS b\nUNION ALL\nSELECT 1 AS a,\n  2 AS b",
+		},
+		"every later input is fixed": {
+			src:       "SELECT 1 AS a, 2 AS b UNION ALL SELECT 2 AS b, 1 AS a UNION ALL SELECT 4 AS b, 3 AS a",
+			wantFixed: "SELECT 1 AS a, 2 AS b UNION ALL SELECT 1 AS a, 2 AS b UNION ALL SELECT 3 AS a, 4 AS b",
+		},
+		"parenthesized input": {
+			src:       "SELECT 1 AS a, 2 AS b UNION ALL (SELECT 2 AS b, 1 AS a LIMIT 1)",
+			wantFixed: "SELECT 1 AS a, 2 AS b UNION ALL (SELECT 1 AS a, 2 AS b LIMIT 1)",
+		},
+		"inside a CTE": {
+			src:       "WITH c AS (SELECT 1 AS a, 2 AS b UNION ALL SELECT 2 AS b, 1 AS a) SELECT a FROM c",
+			wantFixed: "WITH c AS (SELECT 1 AS a, 2 AS b UNION ALL SELECT 1 AS a, 2 AS b) SELECT a FROM c",
+		},
+		"grouped by name": {
+			src:       "SELECT 1 AS a, 2 AS b UNION ALL SELECT x + 1 AS b, x AS a FROM p.d.t GROUP BY x",
+			wantFixed: "SELECT 1 AS a, 2 AS b UNION ALL SELECT x AS a, x + 1 AS b FROM p.d.t GROUP BY x",
+		},
+		"ordinal in the first input is kept": {
+			src:       "SELECT x AS a, x + 1 AS b FROM p.d.t1 GROUP BY 1, 2 UNION ALL SELECT 2 AS b, 1 AS a",
+			wantFixed: "SELECT x AS a, x + 1 AS b FROM p.d.t1 GROUP BY 1, 2 UNION ALL SELECT 1 AS a, 2 AS b",
+		},
+
+		// The diagnostic is reported without a fix.
+		"GROUP BY ordinal would change meaning": {
+			src:       "SELECT 1 AS a, 2 AS b UNION ALL SELECT x + 1 AS b, x AS a FROM p.d.t GROUP BY 2",
+			wantFixed: "SELECT 1 AS a, 2 AS b UNION ALL SELECT x + 1 AS b, x AS a FROM p.d.t GROUP BY 2",
+		},
+		"ORDER BY ordinal would change meaning": {
+			src:       "SELECT 1 AS a, 2 AS b UNION ALL (SELECT x + 1 AS b, x AS a FROM p.d.t ORDER BY 1 LIMIT 1)",
+			wantFixed: "SELECT 1 AS a, 2 AS b UNION ALL (SELECT x + 1 AS b, x AS a FROM p.d.t ORDER BY 1 LIMIT 1)",
+		},
+		"comment in the select list": {
+			src:       "SELECT 1 AS a, 2 AS b UNION ALL SELECT 2 AS b, -- second\n1 AS a",
+			wantFixed: "SELECT 1 AS a, 2 AS b UNION ALL SELECT 2 AS b, -- second\n1 AS a",
+		},
+		"duplicate names": {
+			src:       "SELECT 1 AS a, 2 AS b, 3 AS a, 4 AS b UNION ALL SELECT 2 AS b, 1 AS a, 4 AS b, 3 AS a",
+			wantFixed: "SELECT 1 AS a, 2 AS b, 3 AS a, 4 AS b UNION ALL SELECT 2 AS b, 1 AS a, 4 AS b, 3 AS a",
+		},
+		"nested set operation input": {
+			src:       "SELECT 1 AS a, 2 AS b UNION ALL (SELECT 2 AS b, 1 AS a UNION DISTINCT SELECT 4 AS b, 3 AS a)",
+			wantFixed: "SELECT 1 AS a, 2 AS b UNION ALL (SELECT 2 AS b, 1 AS a UNION DISTINCT SELECT 4 AS b, 3 AS a)",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := lint.Run(t.Context(), parseWithTable(t, tt.src), lint.Config{}, lint.Env{}, lint.UnionColumnOrder)
+			if len(got) == 0 {
+				t.Fatal("no diagnostic reported")
+			}
+			fixed := applyFixes(t, tt.src, got)
+			if fixed != tt.wantFixed {
+				t.Fatalf("fixed = %q, want %q", fixed, tt.wantFixed)
+			}
+			if fixed == tt.src {
+				return
+			}
+			if left := lint.Run(t.Context(), parseWithTable(t, fixed), lint.Config{}, lint.Env{}, lint.UnionColumnOrder); len(left) != 0 {
+				t.Errorf("fixed query still reports %+v", left)
 			}
 		})
 	}

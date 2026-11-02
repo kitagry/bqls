@@ -4,8 +4,12 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
+	// Validating time_zone must not depend on the zone database of the host.
+	_ "time/tzdata"
 
 	googlesql "github.com/goccy/go-googlesql"
+	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
 
@@ -13,7 +17,27 @@ var TimestampStringLiteral = &Analyzer{
 	Name:           "timestamp-string-literal",
 	Doc:            "reports a string literal without a time zone implicitly converted to TIMESTAMP in a comparison",
 	DefaultEnabled: false,
+	NewOptions:     func() any { return &TimestampStringLiteralOptions{} },
 	Run:            runTimestampStringLiteral,
+}
+
+type TimestampStringLiteralOptions struct {
+	// TimeZone is the zone the literals are usually meant in, offered as a
+	// second quick fix.
+	TimeZone string `json:"time_zone"`
+}
+
+var timeZoneOffset = regexp.MustCompile(`^[+-]\d{1,2}(?::\d{2})?$`)
+
+func (o *TimestampStringLiteralOptions) Validate() error {
+	if o.TimeZone == "" || timeZoneOffset.MatchString(o.TimeZone) {
+		return nil
+	}
+	// "Local" is the host's zone in Go, not a name BigQuery knows.
+	if _, err := time.LoadLocation(o.TimeZone); err != nil || o.TimeZone == "Local" {
+		return fmt.Errorf("time_zone must be a time zone name (e.g. Asia/Tokyo) or an offset (e.g. +09:00), got %q", o.TimeZone)
+	}
+	return nil
 }
 
 var timestampComparisonFunctions = map[string]bool{
@@ -41,6 +65,10 @@ func runTimestampStringLiteral(pass *Pass) {
 	if setsTimeZone(pass) {
 		return
 	}
+	zones := []string{"UTC"}
+	if tz := pass.Options.(*TimestampStringLiteralOptions).TimeZone; tz != "" && !strings.EqualFold(tz, "UTC") {
+		zones = append(zones, tz)
+	}
 	for _, output := range pass.File.RNode {
 		for _, call := range file.ListResolvedAstNode[*googlesql.ResolvedFunctionCall](output) {
 			name, ok := functionName(call)
@@ -52,7 +80,7 @@ func runTimestampStringLiteral(pass *Pass) {
 				continue
 			}
 			for _, arg := range args {
-				checkTimestampStringLiteral(pass, arg)
+				checkTimestampStringLiteral(pass, arg, zones)
 			}
 		}
 	}
@@ -81,7 +109,9 @@ func setsTimeZone(pass *Pass) bool {
 	return false
 }
 
-func checkTimestampStringLiteral(pass *Pass, expr googlesql.ResolvedExprNode) {
+// zones lists the time zones offered as fixes. The first is UTC, which the
+// literal is read in today, so applying it keeps the result.
+func checkTimestampStringLiteral(pass *Pass, expr googlesql.ResolvedExprNode, zones []string) {
 	lit, ok := expr.(*googlesql.ResolvedLiteral)
 	if !ok {
 		return
@@ -112,10 +142,19 @@ func checkTimestampStringLiteral(pass *Pass, expr googlesql.ResolvedExprNode) {
 	if !ok {
 		return
 	}
+	fixes := make([]SuggestedFix, len(zones))
+	for i, zone := range zones {
+		text := fmt.Sprintf("TIMESTAMP(%s, '%s')", src, zone)
+		fixes[i] = SuggestedFix{
+			Title: "Replace with " + text,
+			Edits: []lsp.TextEdit{{Range: r, NewText: text}},
+		}
+	}
 	pass.Report(Diagnostic{
-		Range:    r,
-		Message:  fmt.Sprintf("The string literal %s has no time zone, so it is converted to TIMESTAMP in the default time zone (UTC), not local time. Add an offset or a time zone name (e.g. '2024-01-01 00:00:00+09', TIMESTAMP('2024-01-01', 'Asia/Tokyo')), or write TIMESTAMP '...' if UTC is intended", src),
-		Severity: SeverityWarning,
+		Range:          r,
+		Message:        fmt.Sprintf("The string literal %s has no time zone, so it is converted to TIMESTAMP in the default time zone (UTC), not local time. Add an offset or a time zone name (e.g. '2024-01-01 00:00:00+09', TIMESTAMP('2024-01-01', 'Asia/Tokyo')), or write TIMESTAMP '...' if UTC is intended", src),
+		Severity:       SeverityWarning,
+		SuggestedFixes: fixes,
 	})
 }
 

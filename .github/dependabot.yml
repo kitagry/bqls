@@ -17,3 +17,8 @@ updates:
     directory: "/editors/vscode"
     schedule:
       interval: "daily"
+    ignore:
+      # @types/vscode must not exceed engines.vscode, or vsce package/publish
+      # fails. Bump both together by hand when raising the minimum VS Code.
+      - dependency-name: "@types/vscode"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]

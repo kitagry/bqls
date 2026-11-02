@@ -17,17 +17,17 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | --- | --- | --- | --- | --- | --- |
 | **Correctness** | | | | | |
 | [`null-comparison`](#null-comparison) | on | warning | yes | | `= NULL` / `!= NULL` comparisons, which always yield NULL |
-| [`in-null`](#in-null) | on | warning | | | `IN (NULL)` / `NOT IN (NULL)` lists of only NULLs, which always yield NULL |
-| [`not-in-nullable`](#not-in-nullable) | on | warning | | | `x NOT IN (subquery)` over a `NULLABLE` table column, which yields no rows once that column holds a NULL |
-| [`cross-join`](#cross-join) | on | warning | | | Joins without a join condition, which return the Cartesian product of both sides |
-| [`union-column-order`](#union-column-order) | on | warning | | | Set operation inputs whose columns are the first input's columns in a different order |
-| [`insert-column-order`](#insert-column-order) | on | warning | | | `INSERT ... SELECT` queries whose columns are the target columns in a different order |
-| [`left-join-as-inner`](#left-join-as-inner) | on | warning | | | `LEFT` / `RIGHT JOIN`s whose `WHERE` clause rejects the NULL rows of the optional side |
-| [`variable-column-shadow`](#variable-column-shadow) | on | warning | | | A column compared with itself because its bare name was meant as a same-named `DECLARE` variable |
+| [`in-null`](#in-null) | on | warning | yes | | `IN (NULL)` / `NOT IN (NULL)` lists of only NULLs, which always yield NULL, and `NOT IN` lists with a NULL, which never yield TRUE |
+| [`not-in-nullable`](#not-in-nullable) | on | warning | yes | | `x NOT IN (subquery)` over a `NULLABLE` table column, which yields no rows once that column holds a NULL |
+| [`cross-join`](#cross-join) | on | warning | yes | | Joins without a join condition, which return the Cartesian product of both sides |
+| [`union-column-order`](#union-column-order) | on | warning | yes | | Set operation inputs whose columns are the first input's columns in a different order |
+| [`insert-column-order`](#insert-column-order) | on | warning | yes | | `INSERT ... SELECT` queries whose columns are the target columns in a different order |
+| [`left-join-as-inner`](#left-join-as-inner) | on | warning | yes | | `LEFT` / `RIGHT JOIN`s whose `WHERE` clause rejects the NULL rows of the optional side |
+| [`variable-column-shadow`](#variable-column-shadow) | on | warning | yes | | A column compared with itself because its bare name was meant as a same-named `DECLARE` variable |
 | [`join-key-implicit-cast`](#join-key-implicit-cast) | on | warning | | | `ON` / `USING` join keys of different types, so one side is implicitly cast (e.g. `INT64` to `FLOAT64`) |
 | [`self-comparison`](#self-comparison) | on | warning | | | Comparisons whose two sides are the same column, e.g. `a.id = a.id` meant as `a.id = b.id` |
 | [`missing-order-by`](#missing-order-by) | off | warning | | | `ROW_NUMBER()` filters, `ARRAY_AGG` / `STRING_AGG` with `LIMIT`, and indexed `ARRAY_AGG` results without `ORDER BY`, which pick arbitrary rows |
-| [`timestamp-string-literal`](#timestamp-string-literal) | off | warning | | | String literals without a time zone compared with a `TIMESTAMP`, which are read as UTC |
+| [`timestamp-string-literal`](#timestamp-string-literal) | off | warning | yes | `time_zone` | String literals without a time zone compared with a `TIMESTAMP`, which are read as UTC |
 | [`nondeterministic-cte`](#nondeterministic-cte) | on | warning | | | `RAND()` / `GENERATE_UUID()` in a CTE that is evaluated more than once, so each reference sees different values |
 | **Cost** | | | | | |
 | [`partition-filter`](#partition-filter) | on | warning | | | Partitioned tables read without a filter on the partition column |
@@ -35,7 +35,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`wildcard-table-suffix`](#wildcard-table-suffix) | on | warning | | | Wildcard table queries that never filter on `_TABLE_SUFFIX` |
 | [`wildcard-table-suffix-not-constant`](#wildcard-table-suffix-not-constant) | off | warning | | | `_TABLE_SUFFIX` filters that BigQuery documents as unable to limit the tables scanned |
 | [`order-by-in-subquery`](#order-by-in-subquery) | on | warning | yes | | `ORDER BY` in a subquery, CTE or derived table whose order cannot reach the result |
-| [`select-star`](#select-star) | off | warning | | `min_columns` | `SELECT *` that reads at least `min_columns` columns of a table |
+| [`select-star`](#select-star) | off | warning | yes | `min_columns` | `SELECT *` that reads at least `min_columns` columns of a table |
 | [`bytes-processed-threshold`](#bytes-processed-threshold) | off | warning | | `max_bytes` | Files whose dry-run estimate exceeds `max_bytes` |
 | **Unused code** | | | | | |
 | [`unused-cte`](#unused-cte) | on | information | yes | | `WITH` entries that are never referenced |
@@ -54,11 +54,17 @@ Bare `x = NULL` / `x != NULL` is rejected by BigQuery itself ("Operands of = can
 
 #### `in-null`
 
-`x IN (NULL)` / `x NOT IN (NULL)` whose list holds only NULLs (including `CAST(NULL AS T)` and `SAFE_CAST(NULL AS T)`) always yields NULL. No quick fix, since `IS [NOT] NULL` is not equivalent.
+`x IN (NULL)` / `x NOT IN (NULL)` whose list holds only NULLs (including `CAST(NULL AS T)` and `SAFE_CAST(NULL AS T)`) always yields NULL. Since no one means that, the quick fix rewrites it to the NULL check `x IS [NOT] NULL`.
+
+`x NOT IN (1, NULL)` is also reported: a NULL in a `NOT IN` list makes it NULL or FALSE, never TRUE, so a `WHERE` keeps no rows. The quick fix removes the NULLs (`x NOT IN (1)`). `x IN (1, NULL)` is not reported, since in a filter it acts as `x IN (1)`.
+
+There is no quick fix when a comment would be removed or moved by the rewrite.
 
 #### `not-in-nullable`
 
 `x NOT IN (SELECT col ...)` where `col` is a `NULLABLE` column of a table: once the subquery returns a NULL, `NOT IN` yields NULL (never TRUE) for every row, so a `WHERE` keeps none. Rewrite it with `NOT EXISTS`, or filter the subquery with `col IS NOT NULL`.
+
+The quick fix adds `col IS NOT NULL` to the subquery's `WHERE` (with `AND`, parenthesizing a top-level `OR`), which drops only the NULLs. It is not offered when the subquery has `LIMIT`, `QUALIFY`, pipe operators or `ROLLUP` / `CUBE` / `GROUPING SETS`, is a set operation, or selects the column through anything but a column path (e.g. `*`). `NOT EXISTS` is not offered as a fix, since it also keeps the rows whose `x` is NULL, which `NOT IN` drops.
 
 Unlike `in-null`, which reports a literal list of only NULLs, this rule depends on the table schema, so it needs table metadata. To avoid false positives, the column is followed only while it is passed through unchanged (column references, aliases, joins, `GROUP BY` keys, CTEs and derived tables).
 
@@ -70,15 +76,21 @@ An inner join with no join condition (a comma join `FROM a, b` or `JOIN b ON TRU
 
 Not reported: an explicit `CROSS JOIN`, `UNNEST`, outer and lateral joins, a side that yields at most one row (an aggregate without `GROUP BY`, `SELECT` without `FROM`, `LIMIT 1`, also through CTEs), pipe `|> JOIN`, statements bqls cannot trace, view definitions, and unreferenced CTEs. Write `CROSS JOIN` to mark an intended product.
 
+The quick fix does that: it replaces the comma, or `[INNER] JOIN` together with `ON TRUE`, with `CROSS JOIN`, which returns the same rows. It is not offered when the `ON` clause is anything but a literal `TRUE` (e.g. a `DECLARE`d variable), a comment is in the way, the join has a hint (`INNER HASH JOIN`), or the join is part of consecutive `ON` clauses (`a JOIN b JOIN c ON ... ON ...`), where dropping one `ON` would regroup the joins.
+
 #### `union-column-order`
 
 A set operation input (`UNION ALL`, `UNION DISTINCT`, `INTERSECT`, `EXCEPT`) whose columns are the first input's columns in a different order. Set operations match columns by position, so when the types agree the values are silently swapped. Names are the explicit aliases or the implicit alias of a column path (`t.a` is `a`); a column without a name (`SELECT x + 1`) is left out of the comparison, and inputs whose names merely differ are not reported. Reported on the select list of the reordered input.
+
+The quick fix moves the select columns of the reordered input, each with its alias, into the first input's order; columns without a name stay where they are. It is not offered when the input is not a plain `SELECT` (e.g. a nested set operation), its `GROUP BY` or `ORDER BY` may refer to columns by position (`GROUP BY 1`), the names involved are not unique, or the select list contains a comment.
 
 Skipped: `CORRESPONDING` / `BY NAME`, inputs with `*` or `SELECT AS STRUCT`, pipe `|> UNION ALL`, inputs that read exactly the same tables (`SELECT src, dst FROM edges UNION ALL SELECT dst, src FROM edges` is how a relation is made symmetric), and unreferenced CTEs.
 
 #### `insert-column-order`
 
 An `INSERT ... SELECT` whose query lists the target columns in a different order. `INSERT` matches the query's columns to the target columns by position, not by name, so when the types agree the values are silently swapped. The targets are the column list when the statement has one (`INSERT INTO t (a, b) SELECT b, a ...`), and otherwise every column of the table in schema order, which the statement does not show (`INSERT INTO t SELECT b, a ...` where `t` has columns `a, b`). Names are compared as in `union-column-order`, and queries whose names merely differ from the targets are not reported. Reported on the select list.
+
+The quick fix makes the column list follow the query's names: without a column list it adds one after the table (`INSERT INTO t (b, a) SELECT b, a ...`), quoting names that need it, and an existing column list is reordered in place. A column without a name (`x + 1`) keeps its current target. It is not offered when the names involved are not unique or the column list contains a comment.
 
 Skipped: queries with `*` or pipe syntax, a set operation matching `BY NAME` / `CORRESPONDING`, `INSERT ... VALUES`, and queries that read the target table itself (`INSERT INTO edges SELECT dst, src FROM edges` is how a relation is made symmetric).
 
@@ -90,9 +102,13 @@ A top-level `AND` term counts when it is certainly NULL or FALSE for such a row:
 
 Not reported: `IS NULL`, `COALESCE` / `IFNULL` / `IF` and other functions, `OR`, `IS [NOT] DISTINCT FROM`, subqueries, conditions in `ON` or `HAVING` or an outer query, `FULL` and `UNNEST` joins, and a `USING` column (it is the preserved side's).
 
+The quick fix replaces `LEFT [OUTER]` / `RIGHT [OUTER]` with `INNER` (keeping a join hint such as `HASH`), which returns the same rows. It is not offered for `RIGHT JOIN ... USING`, whose `USING` columns come from the right side while `INNER JOIN`'s come from the left, or when a comment is between the keywords. If keeping the unmatched rows was the intent, move the condition into `ON` instead.
+
 #### `variable-column-shadow`
 
-A comparison (`=`, `!=`, `<`, `<=`, `>`, `>=`, `IS [NOT] DISTINCT FROM`) of a column with itself where one side is written as the bare name of a `DECLARE` variable in scope, e.g. `DECLARE user_id INT64; SELECT * FROM t WHERE user_id = user_id` (or `t.user_id = user_id`). A column takes precedence over a variable of the same name, so the variable is never read and the condition is always true (or always false) for non-NULL rows. Qualifying the column does not help; rename the variable.
+A comparison (`=`, `!=`, `<`, `<=`, `>`, `>=`, `IS [NOT] DISTINCT FROM`) of a column with itself where one side is written as the bare name of a `DECLARE` variable in scope, e.g. `DECLARE user_id INT64; SELECT * FROM t WHERE user_id = user_id` (or `t.user_id = user_id`). A column takes precedence over a variable of the same name, so the variable is never read and the condition is always true (or always false) for non-NULL rows. To use the variable, rename it; qualifying the column does not make the name refer to the variable.
+
+The quick fix keeps the current meaning and only makes it explicit: it qualifies each bare operand with the range variable of the column's table (`WHERE x = x` becomes `WHERE t.x = t.x`), which [`self-comparison`](#self-comparison) then reports. Renaming the variable is not offered, since it touches every use of the variable. The fix is offered only when the table is read directly in the `FROM` clause the comparison sees (not through a subquery, a CTE, a pipe operator that redefines the columns, or an outer query) and its range variable is a single identifier (not the implicit alias of a backquoted path such as `` `p.d.t` ``, which BigQuery and bqls name differently).
 
 Other uses of a name shared by a variable and a column (e.g. `GROUP BY user_id`) are not reported, since the column is likely intended there; neither are `IF` / `WHILE` conditions.
 
@@ -128,7 +144,13 @@ A string literal without a time zone compared with a `TIMESTAMP` (`=`, `!=`, `<`
 
 Not reported: literals with an offset, `Z` or a zone name (including `UTC`), `TIMESTAMP '...'` and `CAST('...' AS TIMESTAMP)`, `DATE` / `DATETIME` comparisons, variables and query parameters, other uses such as function arguments, and files that `SET @@time_zone`, since it changes the zone these literals are read in.
 
+The quick fix rewrites the literal to `TIMESTAMP('2024-01-01', 'UTC')`, which keeps the result and states the zone. When `time_zone` is set, a second quick fix uses that zone instead (`TIMESTAMP('2024-01-01', 'Asia/Tokyo')`). It changes the result, so it is never the preferred fix and `bqls lint --fix` does not apply it.
+
 Off by default: such comparisons are common and often do mean UTC.
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `time_zone` | none | The time zone the literals are usually meant in, offered as a second quick fix. A [time zone name](https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#time_zones) (e.g. `Asia/Tokyo`) or an offset (e.g. `+09:00`). |
 
 #### `nondeterministic-cte`
 
@@ -193,6 +215,8 @@ Off by default. A bare `*` or `t.*` that reads at least `min_columns` columns of
 Skipped: `* EXCEPT (...)` / `* REPLACE (...)` (the columns were chosen deliberately), a `*` over a CTE or subquery (the `*` inside it that reads the table is reported instead), DML, `CREATE TABLE AS SELECT`, `EXPORT DATA`, view definitions, and statements bqls cannot trace.
 
 Off by default because whether reading every column is wasteful depends on the query's intent, and a sensible `min_columns` differs per team.
+
+The quick fix expands the `*` into the columns it reads, so that the unneeded ones can be deleted: `t.*` becomes `t.a, t.b, ...`, a bare `*` over one table becomes `a, b, ...`, and a bare `*` over a join qualifies each column with its table's alias (`x.a, y.b, ...`). Pseudo-columns such as `_PARTITIONTIME` are left out like `*` does, and keywords are backquoted. The list follows the select list's layout: inline in a one-line `SELECT`, otherwise one column per line. There is no quick fix when the columns of a bare `*` are not just those of tables (`UNNEST`, subqueries, CTEs, `USING` joins), when two expanded columns share a name, when a column is named like the table's alias (the alias would win), when a table in a join has no alias and a quoted path (`` `p.d.t` ``), or when a comment is inside `t.*`.
 
 | Option | Default | Description |
 | --- | --- | --- |

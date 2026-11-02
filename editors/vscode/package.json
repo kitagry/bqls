@@ -10,7 +10,7 @@
 	},
 	"license": "MIT",
 	"engines": {
-		"vscode": "^1.85.0"
+		"vscode": "^1.91.0"
 	},
 	"categories": [
 		"Programming Languages"
@@ -170,13 +170,13 @@
 		"publish": "vsce publish"
 	},
 	"dependencies": {
-		"vscode-languageclient": "^9.0.1"
+		"vscode-languageclient": "^11.0.0"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.6.4",
-		"@types/node": "^26.6.5",
-		"@types/vscode": "^1.85.0",
-		"@vscode/vsce": "^3.9.2",
+		"@types/node": "^26.6.6",
+		"@types/vscode": "~1.91.0",
+		"@vscode/vsce": "^4.1.0",
 		"esbuild": "^0.28.2",
 		"typescript": "^7.0.2",
 		"vitest": "^5.0.5"

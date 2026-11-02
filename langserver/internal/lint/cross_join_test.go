@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/kitagry/bqls/langserver/internal/lint"
 )
 
@@ -159,9 +160,118 @@ func TestCrossJoin(t *testing.T) {
 				})
 			}
 			got := lint.Run(t.Context(), parseWithTable(t, tt.src), lint.Config{}, lint.Env{}, lint.CrossJoin)
-			if diff := cmp.Diff(want, got); diff != "" {
+			if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(lint.Diagnostic{}, "SuggestedFixes")); diff != "" {
 				t.Errorf("diff (-want +got):\n%s", diff)
 			}
+			if len(got) == 0 {
+				return
+			}
+
+			// An explicit CROSS JOIN is never reported, so every fixed join is gone.
+			fixed := parseWithTable(t, applyFixes(t, tt.src, got))
+			if again := lint.Run(t.Context(), fixed, lint.Config{}, lint.Env{}, lint.CrossJoin); len(again) != 0 {
+				t.Errorf("fixed query is still reported: %+v", again)
+			}
+		})
+	}
+}
+
+func TestCrossJoinFix(t *testing.T) {
+	tests := map[string]struct {
+		src string
+		// wantFixed is empty when no fix is offered.
+		wantFixed string
+	}{
+		"comma join": {
+			src:       "SELECT a.x FROM p.d.a, p.d.b",
+			wantFixed: "SELECT a.x FROM p.d.a CROSS JOIN p.d.b",
+		},
+		"comma without spaces": {
+			src:       "SELECT a.x FROM p.d.a AS a,p.d.b AS b",
+			wantFixed: "SELECT a.x FROM p.d.a AS a CROSS JOIN p.d.b AS b",
+		},
+		"comma at the end of a line": {
+			src:       "SELECT a.x\nFROM p.d.a,\n  p.d.b",
+			wantFixed: "SELECT a.x\nFROM p.d.a CROSS JOIN\n  p.d.b",
+		},
+		"leading comma": {
+			src:       "SELECT a.x\nFROM p.d.a\n, p.d.b",
+			wantFixed: "SELECT a.x\nFROM p.d.a\nCROSS JOIN p.d.b",
+		},
+		"lowercase query": {
+			src:       "select a.x from p.d.a, p.d.b",
+			wantFixed: "select a.x from p.d.a cross join p.d.b",
+		},
+		"JOIN ON TRUE": {
+			src:       "SELECT a.x FROM p.d.a JOIN p.d.b ON TRUE",
+			wantFixed: "SELECT a.x FROM p.d.a CROSS JOIN p.d.b",
+		},
+		"INNER JOIN ON TRUE with a following clause": {
+			src:       "SELECT a.x FROM p.d.a AS a INNER JOIN p.d.b AS b ON TRUE WHERE a.x > 0",
+			wantFixed: "SELECT a.x FROM p.d.a AS a CROSS JOIN p.d.b AS b WHERE a.x > 0",
+		},
+		"lowercase join on true": {
+			src:       "select a.x from p.d.a inner join p.d.b on true",
+			wantFixed: "select a.x from p.d.a cross join p.d.b",
+		},
+		"ON (TRUE) on the next line": {
+			src:       "SELECT a.x\nFROM p.d.a\nJOIN p.d.b\n  ON (TRUE)\nWHERE a.x > 0",
+			wantFixed: "SELECT a.x\nFROM p.d.a\nCROSS JOIN p.d.b\nWHERE a.x > 0",
+		},
+		"comma join after a conditioned join": {
+			src:       "SELECT a.x FROM p.d.a JOIN p.d.b ON a.x = b.x, p.d.c",
+			wantFixed: "SELECT a.x FROM p.d.a JOIN p.d.b ON a.x = b.x CROSS JOIN p.d.c",
+		},
+		"two comma joins": {
+			src:       "SELECT a.x FROM p.d.a, p.d.b, p.d.c",
+			wantFixed: "SELECT a.x FROM p.d.a CROSS JOIN p.d.b CROSS JOIN p.d.c",
+		},
+		// A declared variable is analyzed as a literal, so ON v may look like
+		// ON TRUE while the variable can be FALSE.
+		"ON a declared variable": {
+			src: "DECLARE v BOOL DEFAULT TRUE;\nSELECT a.x FROM p.d.a JOIN p.d.b ON v",
+		},
+		"comment in the ON clause": {
+			src: "SELECT a.x FROM p.d.a JOIN p.d.b ON /* all pairs */ TRUE",
+		},
+		"comment before the ON clause": {
+			src: "SELECT a.x FROM p.d.a JOIN p.d.b -- all pairs\nON TRUE",
+		},
+		"join hint": {
+			src: "SELECT a.x FROM p.d.a INNER HASH JOIN p.d.b ON TRUE",
+		},
+		// Dropping one ON of `a JOIN b JOIN c ON ... ON ...` would pair the
+		// remaining ON with another join.
+		"inner join of consecutive ON clauses": {
+			src: "SELECT a.x FROM p.d.a JOIN p.d.b JOIN p.d.c ON TRUE ON a.x = b.x",
+		},
+		"outer join of consecutive ON clauses": {
+			src: "SELECT a.x FROM p.d.a JOIN p.d.b JOIN p.d.c ON b.x = c.x ON TRUE",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := lint.Run(t.Context(), parseWithTable(t, tt.src), lint.Config{}, lint.Env{}, lint.CrossJoin)
+			if len(got) == 0 {
+				t.Fatal("got no diagnostics")
+			}
+			if tt.wantFixed == "" {
+				for _, d := range got {
+					if len(d.SuggestedFixes) != 0 {
+						t.Errorf("unexpected fixes: %+v", d.SuggestedFixes)
+					}
+				}
+				return
+			}
+			for _, d := range got {
+				if len(d.SuggestedFixes) != 1 || d.SuggestedFixes[0].Title != "Replace with CROSS JOIN" {
+					t.Fatalf("fixes = %+v, want one titled %q", d.SuggestedFixes, "Replace with CROSS JOIN")
+				}
+			}
+			if fixed := applyFixes(t, tt.src, got); fixed != tt.wantFixed {
+				t.Errorf("fixed = %q, want %q", fixed, tt.wantFixed)
+			}
+			parseWithTable(t, tt.wantFixed)
 		})
 	}
 }

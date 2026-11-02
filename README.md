@@ -168,8 +168,10 @@ In order to save for spreadsheet, you should enable Google Drive API.
 - [workspace/executeCommand](./docs/api_reference.md#workspaceexecutecommand)
     - [bqls.executeQuery](./docs/api_reference.md#bqlsexecutequery)
     - [bqls.cancelQuery](./docs/api_reference.md#bqlscancelquery)
+    - [bqls.listProjects](./docs/api_reference.md#bqlslistprojects)
     - [bqls.listDatasets](./docs/api_reference.md#bqlslistdatasets)
     - [bqls.listTables](./docs/api_reference.md#bqlslisttables)
+    - [bqls.searchTables](./docs/api_reference.md#bqlssearchtables)
     - [bqls.listJobHistories](./docs/api_reference.md#bqlslistjobhistories)
     - [bqls.saveResult](./docs/api_reference.md#bqlssaveresult)
     - bqls.listProjects
