@@ -2,6 +2,10 @@ module github.com/kitagry/bqls
 
 go 1.26.0
 
+// Dependabot does not bump this (dependabot/dependabot-core#13520). When
+// govulncheck reports stdlib issues, run: go get toolchain@go1.26.<latest>
+toolchain go1.26.10
+
 require (
 	github.com/google/go-cmp v0.7.0
 	github.com/sourcegraph/jsonrpc2 v0.2.3

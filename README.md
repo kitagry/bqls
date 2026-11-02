@@ -12,6 +12,7 @@
 Completion, hover, lint, and query execution for BigQuery SQL, right in your editor.
 
 [![build and test](https://img.shields.io/github/actions/workflow/status/kitagry/bqls/test.yml?branch=main&label=build&logo=githubactions&logoColor=white)](https://github.com/kitagry/bqls/actions/workflows/test.yml)
+[![govulncheck](https://img.shields.io/github/actions/workflow/status/kitagry/bqls/govulncheck.yml?branch=main&label=govulncheck&logo=go&logoColor=white)](https://github.com/kitagry/bqls/actions/workflows/govulncheck.yml)
 [![Release](https://img.shields.io/github/v/release/kitagry/bqls?logo=github)](https://github.com/kitagry/bqls/releases/latest)
 [![Go version](https://img.shields.io/github/go-mod/go-version/kitagry/bqls?logo=go&logoColor=white)](./go.mod)
 [![VS Code Marketplace](https://img.shields.io/badge/VS%20Code-Marketplace-007ACC?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=kitagry.bqls)
