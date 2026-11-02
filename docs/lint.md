@@ -28,6 +28,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`self-comparison`](#self-comparison) | on | warning | | | Comparisons whose two sides are the same column, e.g. `a.id = a.id` meant as `a.id = b.id` |
 | [`missing-order-by`](#missing-order-by) | off | warning | | | `ROW_NUMBER()` filters, `ARRAY_AGG` / `STRING_AGG` with `LIMIT`, and indexed `ARRAY_AGG` results without `ORDER BY`, which pick arbitrary rows |
 | [`timestamp-string-literal`](#timestamp-string-literal) | off | warning | | | String literals without a time zone compared with a `TIMESTAMP`, which are read as UTC |
+| [`nondeterministic-cte`](#nondeterministic-cte) | on | warning | | | `RAND()` / `GENERATE_UUID()` in a CTE that is evaluated more than once, so each reference sees different values |
 | **Cost** | | | | | |
 | [`partition-filter`](#partition-filter) | on | warning | | | Partitioned tables read without a filter on the partition column |
 | [`partition-filter-not-prunable`](#partition-filter-not-prunable) | off | warning | | | Partition column filters written in a form BigQuery documents as unable to prune partitions |
@@ -128,6 +129,14 @@ A string literal without a time zone compared with a `TIMESTAMP` (`=`, `!=`, `<`
 Not reported: literals with an offset, `Z` or a zone name (including `UTC`), `TIMESTAMP '...'` and `CAST('...' AS TIMESTAMP)`, `DATE` / `DATETIME` comparisons, variables and query parameters, other uses such as function arguments, and files that `SET @@time_zone`, since it changes the zone these literals are read in.
 
 Off by default: such comparisons are common and often do mean UTC.
+
+#### `nondeterministic-cte`
+
+`RAND()` or `GENERATE_UUID()` in a CTE that two or more evaluations read. BigQuery [does not materialize non-recursive CTEs](https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#with_clause) and runs one once per reference, so each reference gets its own random values, e.g. `WITH s AS (SELECT * FROM t WHERE RAND() < 0.1) SELECT ... FROM s JOIN s ...` joins two different samples. Materialize the values first (a temporary table), or compute them in a single reference. Reported on the function name.
+
+A CTE referenced once from another CTE that is itself referenced twice also runs twice. The call is reported when it decides which rows the CTE returns (`WHERE`, `JOIN ... ON`, `GROUP BY`, `ORDER BY ... LIMIT`, window ordering), or when it flows into an output column that at least two evaluations read.
+
+Not reported: `CURRENT_TIMESTAMP` / `CURRENT_DATE` / `CURRENT_DATETIME` / `CURRENT_TIME`, which BigQuery fixes for the whole statement; recursive CTEs (materialized); calls outside a CTE; references from unreferenced CTEs; a random column that only one evaluation reads (e.g. the other one only does `COUNT(*)` or `SELECT * EXCEPT (r)`); `EXISTS`; `ORDER BY RAND()` without `LIMIT`; and column flows bqls does not follow. References that read disjoint rows (`... WHERE kind = 'a' UNION ALL ... WHERE kind = 'b'`) are still reported, since bqls cannot tell the rows apart.
 
 ### Cost
 

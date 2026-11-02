@@ -26,4 +26,5 @@ var Analyzers = []*Analyzer{
 	SelfComparison,
 	MissingOrderBy,
 	TimestampStringLiteral,
+	NondeterministicCTE,
 }
