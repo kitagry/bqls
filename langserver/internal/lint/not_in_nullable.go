@@ -7,6 +7,7 @@ import (
 
 	bq "cloud.google.com/go/bigquery"
 	googlesql "github.com/goccy/go-googlesql"
+	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
 
@@ -268,12 +269,153 @@ func checkNotInNullable(pass *Pass, lineage *columnLineage, call *googlesql.Reso
 	if !ok {
 		return
 	}
-	pass.Report(Diagnostic{
+	d := Diagnostic{
 		Range: r,
 		Message: fmt.Sprintf("NOT IN yields NULL, never TRUE, once the subquery returns a NULL, and `%s` of `%s` is NULLABLE; rewrite it with NOT EXISTS, or filter the subquery with `%s IS NOT NULL`",
 			src.name, name, src.name),
 		Severity: SeverityWarning,
-	})
+	}
+	if fix, ok := notNullFilterFix(pass, notInSubquery(pass, loc)); ok {
+		d.SuggestedFixes = []SuggestedFix{fix}
+	}
+	pass.Report(d)
+}
+
+// notInSubquery returns the subquery of the outermost `IN (subquery)` written
+// within loc, which is the one the reported NOT negates.
+func notInSubquery(pass *Pass, loc *googlesql.ParseLocationRange) *googlesql.ASTQuery {
+	start, end := file.ParseLocStart(loc), file.ParseLocEnd(loc)
+	var found *googlesql.ASTQuery
+	var span offsets
+	for _, in := range file.ListAstNode[*googlesql.ASTInExpression](pass.File.Node) {
+		o := astOffsets(in)
+		if o.start < start || o.end > end || (found != nil && o.end-o.start <= span.end-span.start) {
+			continue
+		}
+		q, err := in.Query()
+		if err != nil || q == nil {
+			continue
+		}
+		found, span = q, o
+	}
+	return found
+}
+
+// notNullFilterFix adds `col IS NOT NULL` to the subquery's WHERE, which drops
+// only the NULLs and keeps every other row the subquery returns. A new filter
+// would change which rows LIMIT and QUALIFY keep, so it gives up on those.
+func notNullFilterFix(pass *Pass, q *googlesql.ASTQuery) (SuggestedFix, bool) {
+	if q == nil {
+		return SuggestedFix{}, false
+	}
+	if lo, err := q.LimitOffset(); err != nil || lo != nil {
+		return SuggestedFix{}, false
+	}
+	if op, err := q.PipeOperatorList(0); err == nil && op != nil {
+		return SuggestedFix{}, false
+	}
+	expr, err := q.QueryExpr()
+	if err != nil {
+		return SuggestedFix{}, false
+	}
+	sel, ok := expr.(*googlesql.ASTSelect)
+	if !ok {
+		return SuggestedFix{}, false
+	}
+	if qualify, err := sel.Qualify(); err != nil || qualify != nil {
+		return SuggestedFix{}, false
+	}
+	if as, err := sel.SelectAs(); err != nil || as != nil {
+		return SuggestedFix{}, false
+	}
+	// ROLLUP, CUBE and GROUPING SETS add rows whose key is NULL, which no
+	// WHERE can drop.
+	groupBy, err := sel.GroupBy()
+	if err != nil {
+		return SuggestedFix{}, false
+	}
+	if groupBy != nil {
+		multiLevel := false
+		_ = file.Walk(groupBy, func(n googlesql.ASTNode) error {
+			switch n.(type) {
+			case *googlesql.ASTRollup, *googlesql.ASTCube, *googlesql.ASTGroupingSetList:
+				multiLevel = true
+			}
+			return nil
+		})
+		if multiLevel {
+			return SuggestedFix{}, false
+		}
+	}
+	// The selected column is written as a path that resolves in the FROM
+	// scope, so the same text names it in WHERE; an alias would not.
+	list, err := sel.SelectList()
+	if err != nil || list == nil {
+		return SuggestedFix{}, false
+	}
+	if n, err := list.NumChildren(); err != nil || n != 1 {
+		return SuggestedFix{}, false
+	}
+	selCol, err := list.Columns(0)
+	if err != nil || selCol == nil {
+		return SuggestedFix{}, false
+	}
+	colExpr, err := selCol.Expression()
+	if err != nil {
+		return SuggestedFix{}, false
+	}
+	path, ok := colExpr.(*googlesql.ASTPathExpression)
+	if !ok {
+		return SuggestedFix{}, false
+	}
+	colText, ok := writtenText(pass, path)
+	if !ok {
+		return SuggestedFix{}, false
+	}
+	cond := colText + " IS NOT NULL"
+
+	insert := func(pos int, text string) (lsp.TextEdit, bool) {
+		r, ok := pass.File.OffsetsToLspRange(pos, pos)
+		return lsp.TextEdit{Range: r, NewText: text}, ok
+	}
+	var edits []lsp.TextEdit
+	where, err := sel.WhereClause()
+	if err != nil {
+		return SuggestedFix{}, false
+	}
+	if where == nil {
+		from, err := sel.FromClause()
+		if err != nil || from == nil {
+			return SuggestedFix{}, false
+		}
+		e, ok := insert(astOffsets(from).end, " WHERE "+cond)
+		if !ok {
+			return SuggestedFix{}, false
+		}
+		edits = append(edits, e)
+	} else {
+		filter, err := where.Expression()
+		if err != nil || filter == nil {
+			return SuggestedFix{}, false
+		}
+		o := astOffsets(filter)
+		suffix := " AND " + cond
+		// AND binds tighter than OR.
+		if _, isOr := filter.(*googlesql.ASTOrExpr); isOr {
+			open, ok := insert(o.start, "(")
+			if !ok {
+				return SuggestedFix{}, false
+			}
+			edits = append(edits, open)
+			suffix = ")" + suffix
+		}
+		e, ok := insert(o.end, suffix)
+		if !ok {
+			return SuggestedFix{}, false
+		}
+		edits = append(edits, e)
+	}
+	return SuggestedFix{Title: "Filter the subquery with " + cond, Edits: edits}, true
 }
 
 func nullableField(schema bq.Schema, name string) bool {

@@ -17,8 +17,8 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | --- | --- | --- | --- | --- | --- |
 | **Correctness** | | | | | |
 | [`null-comparison`](#null-comparison) | on | warning | yes | | `= NULL` / `!= NULL` comparisons, which always yield NULL |
-| [`in-null`](#in-null) | on | warning | | | `IN (NULL)` / `NOT IN (NULL)` lists of only NULLs, which always yield NULL |
-| [`not-in-nullable`](#not-in-nullable) | on | warning | | | `x NOT IN (subquery)` over a `NULLABLE` table column, which yields no rows once that column holds a NULL |
+| [`in-null`](#in-null) | on | warning | yes | | `IN (NULL)` / `NOT IN (NULL)` lists of only NULLs, which always yield NULL, and `NOT IN` lists with a NULL, which never yield TRUE |
+| [`not-in-nullable`](#not-in-nullable) | on | warning | yes | | `x NOT IN (subquery)` over a `NULLABLE` table column, which yields no rows once that column holds a NULL |
 | [`cross-join`](#cross-join) | on | warning | yes | | Joins without a join condition, which return the Cartesian product of both sides |
 | [`union-column-order`](#union-column-order) | on | warning | yes | | Set operation inputs whose columns are the first input's columns in a different order |
 | [`insert-column-order`](#insert-column-order) | on | warning | yes | | `INSERT ... SELECT` queries whose columns are the target columns in a different order |
@@ -54,11 +54,17 @@ Bare `x = NULL` / `x != NULL` is rejected by BigQuery itself ("Operands of = can
 
 #### `in-null`
 
-`x IN (NULL)` / `x NOT IN (NULL)` whose list holds only NULLs (including `CAST(NULL AS T)` and `SAFE_CAST(NULL AS T)`) always yields NULL. No quick fix, since `IS [NOT] NULL` is not equivalent.
+`x IN (NULL)` / `x NOT IN (NULL)` whose list holds only NULLs (including `CAST(NULL AS T)` and `SAFE_CAST(NULL AS T)`) always yields NULL. Since no one means that, the quick fix rewrites it to the NULL check `x IS [NOT] NULL`.
+
+`x NOT IN (1, NULL)` is also reported: a NULL in a `NOT IN` list makes it NULL or FALSE, never TRUE, so a `WHERE` keeps no rows. The quick fix removes the NULLs (`x NOT IN (1)`). `x IN (1, NULL)` is not reported, since in a filter it acts as `x IN (1)`.
+
+There is no quick fix when a comment would be removed or moved by the rewrite.
 
 #### `not-in-nullable`
 
 `x NOT IN (SELECT col ...)` where `col` is a `NULLABLE` column of a table: once the subquery returns a NULL, `NOT IN` yields NULL (never TRUE) for every row, so a `WHERE` keeps none. Rewrite it with `NOT EXISTS`, or filter the subquery with `col IS NOT NULL`.
+
+The quick fix adds `col IS NOT NULL` to the subquery's `WHERE` (with `AND`, parenthesizing a top-level `OR`), which drops only the NULLs. It is not offered when the subquery has `LIMIT`, `QUALIFY`, pipe operators or `ROLLUP` / `CUBE` / `GROUPING SETS`, is a set operation, or selects the column through anything but a column path (e.g. `*`). `NOT EXISTS` is not offered as a fix, since it also keeps the rows whose `x` is NULL, which `NOT IN` drops.
 
 Unlike `in-null`, which reports a literal list of only NULLs, this rule depends on the table schema, so it needs table metadata. To avoid false positives, the column is followed only while it is passed through unchanged (column references, aliases, joins, `GROUP BY` keys, CTEs and derived tables).
 
