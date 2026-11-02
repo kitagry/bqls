@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	googlesql "github.com/goccy/go-googlesql"
+	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
 
@@ -53,10 +54,7 @@ func outputColumns(n googlesql.ASTQueryExpressionNode) (selectColumns, bool) {
 	case *googlesql.ASTSelect:
 		return selectListColumns(n)
 	case *googlesql.ASTQuery:
-		if slices.ContainsFunc(children(n), func(c googlesql.ASTNode) bool {
-			_, ok := c.(googlesql.ASTPipeOperatorNode)
-			return ok
-		}) {
+		if hasPipeOperator(n) {
 			return selectColumns{}, false
 		}
 		expr, err := n.QueryExpr()
@@ -77,6 +75,13 @@ func outputColumns(n googlesql.ASTQueryExpressionNode) (selectColumns, bool) {
 		return outputColumns(inputs[0])
 	}
 	return selectColumns{}, false
+}
+
+func hasPipeOperator(q *googlesql.ASTQuery) bool {
+	return slices.ContainsFunc(children(q), func(c googlesql.ASTNode) bool {
+		_, ok := c.(googlesql.ASTPipeOperatorNode)
+		return ok
+	})
 }
 
 func selectListColumns(sel *googlesql.ASTSelect) (selectColumns, bool) {
@@ -162,7 +167,7 @@ func matchesByName(setOp *googlesql.ASTSetOperation) bool {
 // column from a moved one.
 func misplaced(first, other []string) (want, got []string) {
 	for i := range first {
-		if first[i] == "" || other[i] == "" || strings.EqualFold(first[i], other[i]) {
+		if !misplacedAt(first, other, i) {
 			continue
 		}
 		want = append(want, first[i])
@@ -172,6 +177,12 @@ func misplaced(first, other []string) (want, got []string) {
 		return nil, nil
 	}
 	return want, got
+}
+
+// misplacedAt reports whether position i holds a known name on both sides
+// that differs.
+func misplacedAt(first, other []string, i int) bool {
+	return first[i] != "" && other[i] != "" && !strings.EqualFold(first[i], other[i])
 }
 
 func sortedLower(names []string) []string {
@@ -223,4 +234,117 @@ func quoteNames(names []string) string {
 		quoted[i] = "`" + n + "`"
 	}
 	return strings.Join(quoted, ", ")
+}
+
+// reordering returns, for each position, the position whose column belongs
+// there so that other follows first's names, or false when that is ambiguous.
+// As in misplaced, positions without a known name on either side stay.
+func reordering(first, other []string) ([]int, bool) {
+	from := make([]int, len(first))
+	used := make(map[int]bool)
+	for i := range first {
+		from[i] = i
+		if !misplacedAt(first, other, i) {
+			continue
+		}
+		found := -1
+		for j := range other {
+			if !misplacedAt(first, other, j) || !strings.EqualFold(first[i], other[j]) {
+				continue
+			}
+			if found >= 0 {
+				return nil, false
+			}
+			found = j
+		}
+		if found < 0 || used[found] {
+			return nil, false
+		}
+		used[found] = true
+		from[i] = found
+	}
+	return from, true
+}
+
+// plainSelect returns the SELECT that n consists of, together with the
+// queries wrapping it, or false when n is a set operation or pipe query whose
+// columns cannot be reordered in one select list.
+func plainSelect(n googlesql.ASTQueryExpressionNode) (*googlesql.ASTSelect, []*googlesql.ASTQuery, bool) {
+	var queries []*googlesql.ASTQuery
+	for {
+		switch q := n.(type) {
+		case *googlesql.ASTSelect:
+			return q, queries, true
+		case *googlesql.ASTQuery:
+			if hasPipeOperator(q) {
+				return nil, nil, false
+			}
+			expr, err := q.QueryExpr()
+			if err != nil || isNilNode(expr) {
+				return nil, nil, false
+			}
+			queries = append(queries, q)
+			n = expr
+		default:
+			return nil, nil, false
+		}
+	}
+}
+
+// refersByOrdinal reports whether GROUP BY or ORDER BY may refer to the
+// select list by position, as in `GROUP BY 1`. Any integer literal there
+// counts, which also rejects harmless ones such as `GROUP BY x + 1`.
+func refersByOrdinal(sel *googlesql.ASTSelect, queries []*googlesql.ASTQuery) bool {
+	var clauses []googlesql.ASTNode
+	if gb, err := sel.GroupBy(); err != nil {
+		return true
+	} else if gb != nil {
+		clauses = append(clauses, gb)
+	}
+	for _, q := range queries {
+		if ob, err := q.OrderBy(); err != nil {
+			return true
+		} else if ob != nil {
+			clauses = append(clauses, ob)
+		}
+	}
+	for _, c := range clauses {
+		found := false
+		file.Walk(c, func(n googlesql.ASTNode) error { //nolint
+			if _, ok := n.(*googlesql.ASTIntLiteral); ok {
+				found = true
+			}
+			return nil
+		})
+		if found {
+			return true
+		}
+	}
+	return false
+}
+
+// permutedEdits moves the text of the node at from[i] to position i. It gives
+// up when a comment is inside span, since a comment between two items cannot
+// be told to belong to either.
+func permutedEdits(f file.ParsedFile, span offsets, nodes []googlesql.ASTNode, from []int) ([]lsp.TextEdit, bool) {
+	src := f.FixedSrc
+	if !inBounds(src, span) || containsComment(src[span.start:span.end]) {
+		return nil, false
+	}
+	var edits []lsp.TextEdit
+	for i, j := range from {
+		if i == j {
+			continue
+		}
+		at, text := astOffsets(nodes[i]), astOffsets(nodes[j])
+		if !inBounds(src, at) || !inBounds(src, text) {
+			return nil, false
+		}
+		r, ok := f.OffsetsToLspRange(at.start, at.end)
+		if !ok {
+			return nil, false
+		}
+		edits = append(edits, lsp.TextEdit{Range: r, NewText: src[text.start:text.end]})
+	}
+	return edits, len(edits) > 0
 }

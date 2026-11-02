@@ -20,8 +20,8 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`in-null`](#in-null) | on | warning | | | `IN (NULL)` / `NOT IN (NULL)` lists of only NULLs, which always yield NULL |
 | [`not-in-nullable`](#not-in-nullable) | on | warning | | | `x NOT IN (subquery)` over a `NULLABLE` table column, which yields no rows once that column holds a NULL |
 | [`cross-join`](#cross-join) | on | warning | | | Joins without a join condition, which return the Cartesian product of both sides |
-| [`union-column-order`](#union-column-order) | on | warning | | | Set operation inputs whose columns are the first input's columns in a different order |
-| [`insert-column-order`](#insert-column-order) | on | warning | | | `INSERT ... SELECT` queries whose columns are the target columns in a different order |
+| [`union-column-order`](#union-column-order) | on | warning | yes | | Set operation inputs whose columns are the first input's columns in a different order |
+| [`insert-column-order`](#insert-column-order) | on | warning | yes | | `INSERT ... SELECT` queries whose columns are the target columns in a different order |
 | [`left-join-as-inner`](#left-join-as-inner) | on | warning | | | `LEFT` / `RIGHT JOIN`s whose `WHERE` clause rejects the NULL rows of the optional side |
 | [`variable-column-shadow`](#variable-column-shadow) | on | warning | | | A column compared with itself because its bare name was meant as a same-named `DECLARE` variable |
 | [`join-key-implicit-cast`](#join-key-implicit-cast) | on | warning | | | `ON` / `USING` join keys of different types, so one side is implicitly cast (e.g. `INT64` to `FLOAT64`) |
@@ -74,11 +74,15 @@ Not reported: an explicit `CROSS JOIN`, `UNNEST`, outer and lateral joins, a sid
 
 A set operation input (`UNION ALL`, `UNION DISTINCT`, `INTERSECT`, `EXCEPT`) whose columns are the first input's columns in a different order. Set operations match columns by position, so when the types agree the values are silently swapped. Names are the explicit aliases or the implicit alias of a column path (`t.a` is `a`); a column without a name (`SELECT x + 1`) is left out of the comparison, and inputs whose names merely differ are not reported. Reported on the select list of the reordered input.
 
+The quick fix moves the select columns of the reordered input, each with its alias, into the first input's order; columns without a name stay where they are. It is not offered when the input is not a plain `SELECT` (e.g. a nested set operation), its `GROUP BY` or `ORDER BY` may refer to columns by position (`GROUP BY 1`), the names involved are not unique, or the select list contains a comment.
+
 Skipped: `CORRESPONDING` / `BY NAME`, inputs with `*` or `SELECT AS STRUCT`, pipe `|> UNION ALL`, inputs that read exactly the same tables (`SELECT src, dst FROM edges UNION ALL SELECT dst, src FROM edges` is how a relation is made symmetric), and unreferenced CTEs.
 
 #### `insert-column-order`
 
 An `INSERT ... SELECT` whose query lists the target columns in a different order. `INSERT` matches the query's columns to the target columns by position, not by name, so when the types agree the values are silently swapped. The targets are the column list when the statement has one (`INSERT INTO t (a, b) SELECT b, a ...`), and otherwise every column of the table in schema order, which the statement does not show (`INSERT INTO t SELECT b, a ...` where `t` has columns `a, b`). Names are compared as in `union-column-order`, and queries whose names merely differ from the targets are not reported. Reported on the select list.
+
+The quick fix makes the column list follow the query's names: without a column list it adds one after the table (`INSERT INTO t (b, a) SELECT b, a ...`), quoting names that need it, and an existing column list is reordered in place. A column without a name (`x + 1`) keeps its current target. It is not offered when the names involved are not unique or the column list contains a comment.
 
 Skipped: queries with `*` or pipe syntax, a set operation matching `BY NAME` / `CORRESPONDING`, `INSERT ... VALUES`, and queries that read the target table itself (`INSERT INTO edges SELECT dst, src FROM edges` is how a relation is made symmetric).
 
