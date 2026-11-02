@@ -1,0 +1,32 @@
+name: govulncheck
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  # New advisories against the pinned toolchain or dependencies appear without
+  # any code change, so scan on a schedule too.
+  schedule:
+    - cron: "0 0 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+    - name: checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    # golang/govulncheck-action is not used: its setup-go defaults
+    # go-version-input to "stable", which overrides go-version-file, so it would
+    # scan the stdlib of the latest Go instead of our toolchain directive.
+    - name: setup Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: go.mod
+        cache: true
+    - name: govulncheck
+      run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
