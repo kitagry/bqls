@@ -33,13 +33,23 @@ func TestRun_Fix(t *testing.T) {
 		},
 		"findings left after fixing are reported against the fixed text": {
 			files: map[string]string{
-				"a.sql": "SELECT x FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64) OR x IN (NULL)\n",
+				"a.sql": "SELECT x FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64) OR x IN (NULL /* c */)\n",
 			},
 			args:       []string{"--fix", "a.sql"},
 			wantCode:   1,
 			wantStdout: "a.sql:1:51: warning: IN with only NULL values always yields NULL (in-null)\n",
 			wantFiles: map[string]string{
-				"a.sql": "SELECT x FROM UNNEST([1]) AS x WHERE x IS NULL OR x IN (NULL)\n",
+				"a.sql": "SELECT x FROM UNNEST([1]) AS x WHERE x IS NULL OR x IN (NULL /* c */)\n",
+			},
+		},
+		"a fix with several edits is applied whole": {
+			files: map[string]string{
+				"a.sql": "SELECT x FROM UNNEST([1]) AS x WHERE x NOT IN (NULL, 1, NULL)\n",
+			},
+			args:     []string{"--fix", "a.sql"},
+			wantCode: 0,
+			wantFiles: map[string]string{
+				"a.sql": "SELECT x FROM UNNEST([1]) AS x WHERE x NOT IN (1)\n",
 			},
 		},
 		"fixes of disabled rules are not applied": {
@@ -96,13 +106,13 @@ func TestRun_FixDoesNotRewriteUnchangedFiles(t *testing.T) {
 }
 
 func TestRun_FixStdin(t *testing.T) {
-	src := "SELECT x FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64) OR x IN (NULL)\n"
+	src := "SELECT x FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64) OR x IN (NULL /* c */)\n"
 	got := runWith(t, mockFactory(t), src, "--fix", "-")
 	if got.code != 1 {
 		t.Errorf("exit code = %d, want 1 (stderr: %s)", got.code, got.stderr)
 	}
 	// stdout carries only the SQL so that editors can pipe through it.
-	if want := "SELECT x FROM UNNEST([1]) AS x WHERE x IS NULL OR x IN (NULL)\n"; got.stdout != want {
+	if want := "SELECT x FROM UNNEST([1]) AS x WHERE x IS NULL OR x IN (NULL /* c */)\n"; got.stdout != want {
 		t.Errorf("stdout = %q, want %q", got.stdout, want)
 	}
 	if want := "<stdin>:1:51: warning: IN with only NULL values always yields NULL (in-null)\n"; got.stderr != want {
