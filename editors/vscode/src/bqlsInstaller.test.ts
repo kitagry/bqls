@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { InstallerDeps, resolveBqlsCommand } from "./bqlsInstaller";
+import { type InstallerDeps, resolveBqlsCommand } from "./bqlsInstaller";
 import { BQLS_VERSION } from "./bqlsRelease";
 
 function makeDeps(overrides: Partial<InstallerDeps> = {}): InstallerDeps {
