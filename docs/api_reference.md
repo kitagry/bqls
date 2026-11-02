@@ -42,6 +42,34 @@ Request:
 
 Response: `null` on success.
 
+### `bqls.listProjects`
+
+list up all projects the user can access.
+
+It takes no arguments. Projects are listed with the Cloud Resource Manager API, so the caller needs the `resourcemanager.projects.list` permission. The result is cached locally; when a cache exists, it is returned immediately and refreshed in the background.
+
+Request:
+
+```json
+{
+    "command": "bqls.listProjects",
+    "arguments": []
+}
+```
+
+Response:
+
+```json
+{
+    "projects": [
+        {
+            "projectId": "project1",
+            "name": "Project 1"
+        }
+    ]
+}
+```
+
 ### `bqls.listDatasets`
 
 list up all datasets in the project.
@@ -83,6 +111,41 @@ Response:
     "tables": ["table1", "table2", "table3"]
 }
 ```
+
+### `bqls.searchTables`
+
+search BigQuery tables via Data Catalog.
+
+arguments:
+
+* 1st: search query. It is passed to the [Data Catalog search syntax](https://cloud.google.com/data-catalog/docs/how-to/search-reference) with `type=TABLE system=bigquery` prepended.
+* 2nd and later (optional): project IDs to search in. When omitted, the default project is searched. When `bigquery-public-data` is included, GCP public datasets are searched as well.
+
+Request:
+
+```json
+{
+    "command": "bqls.searchTables",
+    "arguments": ["YOUR_QUERY", "YOUR_PROJECT_ID1", "YOUR_PROJECT_ID2"]
+}
+```
+
+Response:
+
+```json
+{
+    "tables": [
+        {
+            "projectId": "project1",
+            "datasetId": "dataset1",
+            "tableId": "table1",
+            "description": "table description"
+        }
+    ]
+}
+```
+
+`description` is omitted when the table has no description. Each table can be opened with the `bqls://project/${projectId}/dataset/${datasetId}/table/${tableId}` virtual text document.
 
 ### `bqls.listJobHistories`
 

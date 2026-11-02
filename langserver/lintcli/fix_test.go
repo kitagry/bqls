@@ -55,6 +55,18 @@ func TestRun_Fix(t *testing.T) {
 				"a.sql": "SELECT ts FROM UNNEST([CURRENT_TIMESTAMP()]) AS ts WHERE ts >= TIMESTAMP('2024-01-01', 'UTC')\n",
 			},
 		},
+		"column order fixes are written back": {
+			files: map[string]string{
+				"a.sql": "SELECT 1 AS a, 2 AS b UNION ALL SELECT 2 AS b, 1 AS a\n",
+				"b.sql": "CREATE TEMP TABLE t (a INT64, b INT64);\nINSERT INTO t SELECT 2 AS b, 1 AS a;\n",
+			},
+			args:     []string{"--fix", "a.sql", "b.sql"},
+			wantCode: 0,
+			wantFiles: map[string]string{
+				"a.sql": "SELECT 1 AS a, 2 AS b UNION ALL SELECT 1 AS a, 2 AS b\n",
+				"b.sql": "CREATE TEMP TABLE t (a INT64, b INT64);\nINSERT INTO t (b, a) SELECT 2 AS b, 1 AS a;\n",
+			},
+		},
 		"fixes of disabled rules are not applied": {
 			files:     map[string]string{"a.sql": unusedCTESQL},
 			args:      []string{"--fix", "--disable", "unused-cte", "a.sql"},
