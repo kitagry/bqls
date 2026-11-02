@@ -2,9 +2,13 @@ package lint
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
+	"strings"
+	"sync"
 
 	googlesql "github.com/goccy/go-googlesql"
+	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
 
@@ -97,5 +101,59 @@ func checkInsert(pass *Pass, ins *googlesql.ResolvedInsertStmt, target *googlesq
 	if columnList == nil {
 		msg = fmt.Sprintf("INSERT without a column list matches columns to `%s` by position, not by name, but this query has %s where the table has %s; reorder the columns or add a column list", table, quoteNames(got), quoteNames(want))
 	}
-	pass.Report(Diagnostic{Range: r, Message: msg, Severity: SeverityWarning})
+	d := Diagnostic{Range: r, Message: msg, Severity: SeverityWarning}
+	if fix, ok := insertColumnOrderFix(pass, astIns, columnList, targetNames, cols.names); ok {
+		d.SuggestedFixes = []SuggestedFix{fix}
+	}
+	pass.Report(d)
+}
+
+// insertColumnOrderFix makes the column list follow the query's names: an
+// existing list is reordered, and otherwise one is added after the target.
+func insertColumnOrderFix(pass *Pass, astIns *googlesql.ASTInsertStatement, columnList *googlesql.ASTColumnList, targets, names []string) (SuggestedFix, bool) {
+	from, ok := reordering(targets, names)
+	if !ok {
+		return SuggestedFix{}, false
+	}
+	if columnList != nil {
+		edits, ok := permutedEdits(pass.File, astOffsets(columnList), children(columnList), from)
+		if !ok {
+			return SuggestedFix{}, false
+		}
+		return SuggestedFix{Title: "Reorder the column list to match the query", Edits: edits}, true
+	}
+	path, err := astIns.GetTargetPathForNonNested()
+	if err != nil || path == nil {
+		return SuggestedFix{}, false
+	}
+	end := astOffsets(path).end
+	r, ok := pass.File.OffsetsToLspRange(end, end)
+	if !ok {
+		return SuggestedFix{}, false
+	}
+	list := make([]string, len(from))
+	for i, j := range from {
+		list[i] = quoteIdentifier(targets[j])
+	}
+	return SuggestedFix{
+		Title: "Add a column list matching the query",
+		Edits: []lsp.TextEdit{{Range: r, NewText: " (" + strings.Join(list, ", ") + ")"}},
+	}, true
+}
+
+var simpleIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+var reservedKeywords = sync.OnceValues(googlesql.NewLanguageOptions)
+
+// quoteIdentifier quotes name unless it can be written bare. It quotes when
+// the reserved keywords cannot be looked up.
+func quoteIdentifier(name string) string {
+	if simpleIdentifier.MatchString(name) {
+		if opts, err := reservedKeywords(); err == nil {
+			if reserved, err := opts.IsReservedKeyword(strings.ToUpper(name)); err == nil && !reserved {
+				return name
+			}
+		}
+	}
+	return "`" + strings.NewReplacer(`\`, `\\`, "`", "\\`").Replace(name) + "`"
 }
