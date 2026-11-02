@@ -1,7 +1,11 @@
 package lint
 
 import (
+	"regexp"
+	"strings"
+
 	googlesql "github.com/goccy/go-googlesql"
+	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
 
@@ -22,6 +26,7 @@ func leftJoinAsInnerMessage(join string) string {
 // optional side, or across subqueries, the NULLs may already have been
 // replaced or filtered, so those joins are left alone.
 func runLeftJoinAsInner(pass *Pass) {
+	joins := astJoinsByLocation(pass.File.Node)
 	for _, output := range pass.File.RNode {
 		for _, filter := range file.ListResolvedAstNode[*googlesql.ResolvedFilterScan](output) {
 			cond, err := filter.FilterExpr()
@@ -34,7 +39,7 @@ func runLeftJoinAsInner(pass *Pass) {
 			}
 			for _, join := range joinsUnderFilter(input) {
 				if optional := optionalColumns(join); len(optional) > 0 && rejectsNullRow(cond, optional) {
-					reportLeftJoinAsInner(pass, join)
+					reportLeftJoinAsInner(pass, join, joins[resolvedOffsets(join)])
 				}
 			}
 		}
@@ -189,7 +194,7 @@ func yieldsNull(expr googlesql.ResolvedExprNode, optional map[int32]bool) bool {
 	return false
 }
 
-func reportLeftJoinAsInner(pass *Pass, join *googlesql.ResolvedJoinScan) {
+func reportLeftJoinAsInner(pass *Pass, join *googlesql.ResolvedJoinScan, ast *googlesql.ASTJoin) {
 	loc, err := join.GetParseLocationRangeOrNULL()
 	if err != nil || loc == nil {
 		return
@@ -206,9 +211,61 @@ func reportLeftJoinAsInner(pass *Pass, join *googlesql.ResolvedJoinScan) {
 	if typ == googlesql.ResolvedJoinScanEnums_JoinTypeRight {
 		keyword = "RIGHT JOIN"
 	}
-	pass.Report(Diagnostic{
+	d := Diagnostic{
 		Range:    r,
 		Message:  leftJoinAsInnerMessage(keyword),
 		Severity: SeverityWarning,
-	})
+	}
+	if ast != nil {
+		if edit, ok := innerJoinEdit(pass.File, ast); ok {
+			d.SuggestedFixes = []SuggestedFix{{
+				Title: "Replace with INNER JOIN",
+				Edits: []lsp.TextEdit{edit},
+			}}
+		}
+	}
+	pass.Report(d)
+}
+
+// outerJoinKeyword matches the join keywords of an outer join; the first
+// group is the part replaced by INNER, so that a join hint is kept.
+var outerJoinKeyword = regexp.MustCompile(`(?i)^((?:LEFT|RIGHT)(?:\s+OUTER)?)\s+(?:(?:HASH|LOOKUP)\s+)?JOIN$`)
+
+// innerJoinEdit rewrites the outer join keywords to INNER. A RIGHT JOIN with
+// USING is left alone: its USING columns come from the right side, while an
+// INNER JOIN's come from the left, which may differ in type or value.
+func innerJoinEdit(f file.ParsedFile, j *googlesql.ASTJoin) (lsp.TextEdit, bool) {
+	typ, err := j.JoinType()
+	if err != nil {
+		return lsp.TextEdit{}, false
+	}
+	if using, err := j.UsingClause(); err != nil || (using != nil && typ == googlesql.ASTJoinEnums_JoinTypeRight) {
+		return lsp.TextEdit{}, false
+	}
+	loc, err := j.JoinLocation()
+	if err != nil || loc == nil {
+		return lsp.TextEdit{}, false
+	}
+	at := astOffsets(loc)
+	if !inBounds(f.FixedSrc, at) {
+		return lsp.TextEdit{}, false
+	}
+	m := outerJoinKeyword.FindStringSubmatchIndex(f.FixedSrc[at.start:at.end])
+	if m == nil {
+		return lsp.TextEdit{}, false
+	}
+	outer := offsets{at.start + m[2], at.start + m[3]}
+	r, ok := writtenSpan(f, outer)
+	if !ok {
+		return lsp.TextEdit{}, false
+	}
+	return lsp.TextEdit{Range: r, NewText: matchCase("INNER", f.FixedSrc[outer.start:outer.end])}, true
+}
+
+// matchCase returns keyword in lower case when the text it replaces is.
+func matchCase(keyword, replaced string) string {
+	if replaced == strings.ToLower(replaced) {
+		return strings.ToLower(keyword)
+	}
+	return keyword
 }
