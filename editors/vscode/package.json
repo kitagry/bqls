@@ -9,6 +9,11 @@
 		"url": "https://github.com/kitagry/bqls"
 	},
 	"license": "MIT",
+	"icon": "media/icon.png",
+	"galleryBanner": {
+		"color": "#0B1A3A",
+		"theme": "dark"
+	},
 	"engines": {
 		"vscode": "^1.91.0"
 	},

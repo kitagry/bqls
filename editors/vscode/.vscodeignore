@@ -7,3 +7,4 @@ esbuild.js
 tsconfig.json
 **/*.map
 **/.eslintrc*
+scripts/**
