@@ -1,9 +1,11 @@
 package lint
 
 import (
+	"regexp"
 	"slices"
 
 	googlesql "github.com/goccy/go-googlesql"
+	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
 
@@ -21,14 +23,7 @@ const crossJoinMessage = "Join has no join condition, so it returns every combin
 // or lateral join, a side known to yield at most one row, or a filter that
 // relates the two sides all keep the rule silent.
 func runCrossJoin(pass *Pass) {
-	joins := make(map[offsets]*googlesql.ASTJoin)
-	for _, j := range file.ListAstNode[*googlesql.ASTJoin](pass.File.Node) {
-		loc, err := j.JoinLocation()
-		if err != nil || loc == nil {
-			continue
-		}
-		joins[astOffsets(loc)] = j
-	}
+	joins := astJoinsByLocation(pass.File.Node)
 
 	for _, output := range pass.File.RNode {
 		stmt, err := output.ResolvedStatement()
@@ -63,6 +58,20 @@ func runCrossJoin(pass *Pass) {
 			reportCrossJoin(pass, j)
 		}
 	}
+}
+
+// astJoinsByLocation indexes joins by their join keyword, which is where a
+// resolved join scan is located.
+func astJoinsByLocation(node *googlesql.ASTScript) map[offsets]*googlesql.ASTJoin {
+	joins := make(map[offsets]*googlesql.ASTJoin)
+	for _, j := range file.ListAstNode[*googlesql.ASTJoin](node) {
+		loc, err := j.JoinLocation()
+		if err != nil || loc == nil {
+			continue
+		}
+		joins[astOffsets(loc)] = j
+	}
+	return joins
 }
 
 func unconditionedJoin(flow *columnFlow, withSubqueries map[string]googlesql.ResolvedScanNode, scan *googlesql.ResolvedJoinScan, j *googlesql.ASTJoin) bool {
@@ -191,9 +200,140 @@ func reportCrossJoin(pass *Pass, j *googlesql.ASTJoin) {
 	if !ok {
 		return
 	}
-	pass.Report(Diagnostic{
+	d := Diagnostic{
 		Range:    r,
 		Message:  crossJoinMessage,
 		Severity: SeverityWarning,
-	})
+	}
+	if edits, ok := crossJoinEdits(pass.File, j); ok {
+		d.SuggestedFixes = []SuggestedFix{{Title: "Replace with CROSS JOIN", Edits: edits}}
+	}
+	pass.Report(d)
+}
+
+var (
+	innerJoinKeyword = regexp.MustCompile(`(?i)^(?:INNER\s+)?JOIN$`)
+	// onTrue is matched from the end of the right side, so that a comment
+	// before ON is not deleted with it.
+	onTrue = regexp.MustCompile(`(?i)^\s*ON(?:\s+TRUE|\s*\(\s*TRUE\s*\))$`)
+)
+
+// crossJoinEdits rewrites a comma join or a JOIN ... ON TRUE to CROSS JOIN.
+// A join taking part in consecutive ON clauses (`a JOIN b JOIN c ON x ON y`)
+// is left alone, since dropping one ON would pair the other with another join.
+func crossJoinEdits(f file.ParsedFile, j *googlesql.ASTJoin) ([]lsp.TextEdit, bool) {
+	if inConsecutiveOn(j) {
+		return nil, false
+	}
+	loc, err := j.JoinLocation()
+	if err != nil || loc == nil {
+		return nil, false
+	}
+	keyword := astOffsets(loc)
+	src := f.FixedSrc
+	if !inBounds(src, keyword) {
+		return nil, false
+	}
+	typ, err := j.JoinType()
+	if err != nil {
+		return nil, false
+	}
+	if typ == googlesql.ASTJoinEnums_JoinTypeComma {
+		r, ok := writtenSpan(f, keyword)
+		if !ok || src[keyword.start:keyword.end] != "," {
+			return nil, false
+		}
+		text := matchCase("CROSS JOIN", fromKeyword(src, j))
+		if keyword.start > 0 && !isSQLSpace(src[keyword.start-1]) {
+			text = " " + text
+		}
+		if keyword.end < len(src) && !isSQLSpace(src[keyword.end]) {
+			text += " "
+		}
+		return []lsp.TextEdit{{Range: r, NewText: text}}, true
+	}
+
+	written := src[keyword.start:keyword.end]
+	if !innerJoinKeyword.MatchString(written) {
+		return nil, false
+	}
+	rhs, err := j.Rhs()
+	if err != nil || rhs == nil {
+		return nil, false
+	}
+	on, err := j.OnClause()
+	if err != nil || on == nil {
+		return nil, false
+	}
+	del := offsets{astOffsets(rhs).end, astOffsets(on).end}
+	if !inBounds(src, del) || !onTrue.MatchString(src[del.start:del.end]) {
+		return nil, false
+	}
+	keywordRange, ok := writtenSpan(f, keyword)
+	if !ok {
+		return nil, false
+	}
+	delRange, ok := writtenSpan(f, del)
+	if !ok {
+		return nil, false
+	}
+	return []lsp.TextEdit{
+		{Range: keywordRange, NewText: matchCase("CROSS JOIN", written)},
+		{Range: delRange, NewText: ""},
+	}, true
+}
+
+// writtenSpan returns the range of o, a span of FixedSrc, when the user wrote
+// it as is; declared variables, for one, are substituted in FixedSrc.
+func writtenSpan(f file.ParsedFile, o offsets) (lsp.Range, bool) {
+	r, ok := f.OffsetsToLspRange(o.start, o.end)
+	if !ok || f.Src[f.SrcOffset(r.Start):f.SrcOffset(r.End)] != f.FixedSrc[o.start:o.end] {
+		return lsp.Range{}, false
+	}
+	return r, true
+}
+
+// inConsecutiveOn reports whether j is the right side of another join without
+// parentheses, or has such a join as its right side; the parser only builds
+// that shape from consecutive ON clauses.
+func inConsecutiveOn(j *googlesql.ASTJoin) bool {
+	if rhs, err := j.Rhs(); err != nil || isJoin(rhs) {
+		return true
+	}
+	parent, err := j.Parent()
+	if err != nil {
+		return true
+	}
+	p, ok := parent.(*googlesql.ASTJoin)
+	if !ok {
+		return false
+	}
+	rhs, err := p.Rhs()
+	return err != nil || rhs != nil && astOffsets(rhs) == astOffsets(j)
+}
+
+func isJoin(n googlesql.ASTTableExpressionNode) bool {
+	_, ok := n.(*googlesql.ASTJoin)
+	return ok
+}
+
+// fromKeyword returns the FROM keyword of the clause holding j, so that a
+// comma is replaced in the case the query is written in.
+func fromKeyword(src string, j *googlesql.ASTJoin) string {
+	var n googlesql.ASTNode = j
+	for n != nil {
+		if _, ok := n.(*googlesql.ASTFromClause); ok {
+			at := astOffsets(n)
+			if inBounds(src, at) && at.end-at.start >= len("FROM") {
+				return src[at.start : at.start+len("FROM")]
+			}
+			break
+		}
+		parent, err := n.Parent()
+		if err != nil {
+			break
+		}
+		n = parent
+	}
+	return "FROM"
 }

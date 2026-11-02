@@ -19,10 +19,10 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`null-comparison`](#null-comparison) | on | warning | yes | | `= NULL` / `!= NULL` comparisons, which always yield NULL |
 | [`in-null`](#in-null) | on | warning | | | `IN (NULL)` / `NOT IN (NULL)` lists of only NULLs, which always yield NULL |
 | [`not-in-nullable`](#not-in-nullable) | on | warning | | | `x NOT IN (subquery)` over a `NULLABLE` table column, which yields no rows once that column holds a NULL |
-| [`cross-join`](#cross-join) | on | warning | | | Joins without a join condition, which return the Cartesian product of both sides |
+| [`cross-join`](#cross-join) | on | warning | yes | | Joins without a join condition, which return the Cartesian product of both sides |
 | [`union-column-order`](#union-column-order) | on | warning | yes | | Set operation inputs whose columns are the first input's columns in a different order |
 | [`insert-column-order`](#insert-column-order) | on | warning | yes | | `INSERT ... SELECT` queries whose columns are the target columns in a different order |
-| [`left-join-as-inner`](#left-join-as-inner) | on | warning | | | `LEFT` / `RIGHT JOIN`s whose `WHERE` clause rejects the NULL rows of the optional side |
+| [`left-join-as-inner`](#left-join-as-inner) | on | warning | yes | | `LEFT` / `RIGHT JOIN`s whose `WHERE` clause rejects the NULL rows of the optional side |
 | [`variable-column-shadow`](#variable-column-shadow) | on | warning | | | A column compared with itself because its bare name was meant as a same-named `DECLARE` variable |
 | [`join-key-implicit-cast`](#join-key-implicit-cast) | on | warning | | | `ON` / `USING` join keys of different types, so one side is implicitly cast (e.g. `INT64` to `FLOAT64`) |
 | [`self-comparison`](#self-comparison) | on | warning | | | Comparisons whose two sides are the same column, e.g. `a.id = a.id` meant as `a.id = b.id` |
@@ -70,6 +70,8 @@ An inner join with no join condition (a comma join `FROM a, b` or `JOIN b ON TRU
 
 Not reported: an explicit `CROSS JOIN`, `UNNEST`, outer and lateral joins, a side that yields at most one row (an aggregate without `GROUP BY`, `SELECT` without `FROM`, `LIMIT 1`, also through CTEs), pipe `|> JOIN`, statements bqls cannot trace, view definitions, and unreferenced CTEs. Write `CROSS JOIN` to mark an intended product.
 
+The quick fix does that: it replaces the comma, or `[INNER] JOIN` together with `ON TRUE`, with `CROSS JOIN`, which returns the same rows. It is not offered when the `ON` clause is anything but a literal `TRUE` (e.g. a `DECLARE`d variable), a comment is in the way, the join has a hint (`INNER HASH JOIN`), or the join is part of consecutive `ON` clauses (`a JOIN b JOIN c ON ... ON ...`), where dropping one `ON` would regroup the joins.
+
 #### `union-column-order`
 
 A set operation input (`UNION ALL`, `UNION DISTINCT`, `INTERSECT`, `EXCEPT`) whose columns are the first input's columns in a different order. Set operations match columns by position, so when the types agree the values are silently swapped. Names are the explicit aliases or the implicit alias of a column path (`t.a` is `a`); a column without a name (`SELECT x + 1`) is left out of the comparison, and inputs whose names merely differ are not reported. Reported on the select list of the reordered input.
@@ -93,6 +95,8 @@ A `LEFT JOIN` (or `RIGHT JOIN`) whose `WHERE` clause filters the optional side w
 A top-level `AND` term counts when it is certainly NULL or FALSE for such a row: `=`, `!=`, `<`, `<=`, `>`, `>=`, `LIKE`, `IN (...)` / `BETWEEN` on the tested value, `NOT` of those, `IS NOT NULL`, `IS TRUE`, `IS FALSE`, or a bare boolean column, where the column may be wrapped in `CAST`, struct field access or arithmetic.
 
 Not reported: `IS NULL`, `COALESCE` / `IFNULL` / `IF` and other functions, `OR`, `IS [NOT] DISTINCT FROM`, subqueries, conditions in `ON` or `HAVING` or an outer query, `FULL` and `UNNEST` joins, and a `USING` column (it is the preserved side's).
+
+The quick fix replaces `LEFT [OUTER]` / `RIGHT [OUTER]` with `INNER` (keeping a join hint such as `HASH`), which returns the same rows. It is not offered for `RIGHT JOIN ... USING`, whose `USING` columns come from the right side while `INNER JOIN`'s come from the left, or when a comment is between the keywords. If keeping the unmatched rows was the intent, move the condition into `ON` instead.
 
 #### `variable-column-shadow`
 
