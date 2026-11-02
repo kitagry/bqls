@@ -54,6 +54,18 @@ func TestRun_Fix(t *testing.T) {
 					"SELECT a.x FROM (SELECT x FROM UNNEST([1, 2]) AS x) AS a INNER JOIN (SELECT x FROM UNNEST([1]) AS x) AS b ON a.x = b.x WHERE b.x = 1;\n",
 			},
 		},
+		"column order fixes are written back": {
+			files: map[string]string{
+				"a.sql": "SELECT 1 AS a, 2 AS b UNION ALL SELECT 2 AS b, 1 AS a\n",
+				"b.sql": "CREATE TEMP TABLE t (a INT64, b INT64);\nINSERT INTO t SELECT 2 AS b, 1 AS a;\n",
+			},
+			args:     []string{"--fix", "a.sql", "b.sql"},
+			wantCode: 0,
+			wantFiles: map[string]string{
+				"a.sql": "SELECT 1 AS a, 2 AS b UNION ALL SELECT 1 AS a, 2 AS b\n",
+				"b.sql": "CREATE TEMP TABLE t (a INT64, b INT64);\nINSERT INTO t (b, a) SELECT 2 AS b, 1 AS a;\n",
+			},
+		},
 		"fixes of disabled rules are not applied": {
 			files:     map[string]string{"a.sql": unusedCTESQL},
 			args:      []string{"--fix", "--disable", "unused-cte", "a.sql"},
