@@ -42,6 +42,18 @@ func TestRun_Fix(t *testing.T) {
 				"a.sql": "SELECT x FROM UNNEST([1]) AS x WHERE x IS NULL OR x IN (NULL)\n",
 			},
 		},
+		"join rewrites are written back": {
+			files: map[string]string{
+				"a.sql": "SELECT a.x, b.y FROM (SELECT x FROM UNNEST([1, 2]) AS x) AS a, (SELECT y FROM UNNEST([3, 4]) AS y) AS b;\n" +
+					"SELECT a.x FROM (SELECT x FROM UNNEST([1, 2]) AS x) AS a LEFT JOIN (SELECT x FROM UNNEST([1]) AS x) AS b ON a.x = b.x WHERE b.x = 1;\n",
+			},
+			args:     []string{"--fix", "a.sql"},
+			wantCode: 0,
+			wantFiles: map[string]string{
+				"a.sql": "SELECT a.x, b.y FROM (SELECT x FROM UNNEST([1, 2]) AS x) AS a CROSS JOIN (SELECT y FROM UNNEST([3, 4]) AS y) AS b;\n" +
+					"SELECT a.x FROM (SELECT x FROM UNNEST([1, 2]) AS x) AS a INNER JOIN (SELECT x FROM UNNEST([1]) AS x) AS b ON a.x = b.x WHERE b.x = 1;\n",
+			},
+		},
 		"fixes of disabled rules are not applied": {
 			files:     map[string]string{"a.sql": unusedCTESQL},
 			args:      []string{"--fix", "--disable", "unused-cte", "a.sql"},

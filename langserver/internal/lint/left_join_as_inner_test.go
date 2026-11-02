@@ -123,7 +123,7 @@ func TestLeftJoinAsInner(t *testing.T) {
 			for _, d := range got {
 				text := textInRange(tt.src, d)
 				join := strings.ToUpper(strings.Fields(text)[0]) + " JOIN"
-				if d.Rule != "left-join-as-inner" || d.Message != leftJoinAsInnerMessage(join) || d.Severity != lint.SeverityWarning || len(d.SuggestedFixes) != 0 {
+				if d.Rule != "left-join-as-inner" || d.Message != leftJoinAsInnerMessage(join) || d.Severity != lint.SeverityWarning {
 					t.Errorf("unexpected diagnostic metadata: %+v", d)
 				}
 				gotText = append(gotText, text)
@@ -131,6 +131,86 @@ func TestLeftJoinAsInner(t *testing.T) {
 			if strings.Join(gotText, "|") != strings.Join(tt.want, "|") {
 				t.Errorf("reported ranges = %q, want %q", gotText, tt.want)
 			}
+			if len(got) == 0 {
+				return
+			}
+
+			parseWithTable(t, applyFixes(t, tt.src, got))
+		})
+	}
+}
+
+func TestLeftJoinAsInnerFix(t *testing.T) {
+	tests := map[string]struct {
+		src string
+		// wantFixed is empty when no fix is offered.
+		wantFixed string
+	}{
+		"left join": {
+			src:       "SELECT a.x FROM p.d.t AS a LEFT JOIN p.d.t AS b ON a.x = b.x WHERE b.x = 1",
+			wantFixed: "SELECT a.x FROM p.d.t AS a INNER JOIN p.d.t AS b ON a.x = b.x WHERE b.x = 1",
+		},
+		"left outer join": {
+			src:       "SELECT a.x FROM p.d.t AS a LEFT OUTER JOIN p.d.t AS b ON a.x = b.x WHERE b.x = 1",
+			wantFixed: "SELECT a.x FROM p.d.t AS a INNER JOIN p.d.t AS b ON a.x = b.x WHERE b.x = 1",
+		},
+		"right join": {
+			src:       "SELECT b.x FROM p.d.t AS a RIGHT JOIN p.d.t AS b ON a.x = b.x WHERE a.x = 1",
+			wantFixed: "SELECT b.x FROM p.d.t AS a INNER JOIN p.d.t AS b ON a.x = b.x WHERE a.x = 1",
+		},
+		"right outer join": {
+			src:       "SELECT b.x FROM p.d.t AS a RIGHT OUTER JOIN p.d.t AS b ON a.x = b.x WHERE a.x = 1",
+			wantFixed: "SELECT b.x FROM p.d.t AS a INNER JOIN p.d.t AS b ON a.x = b.x WHERE a.x = 1",
+		},
+		"lowercase keywords stay lowercase": {
+			src:       "select a.x from p.d.t as a left outer join p.d.t as b on a.x = b.x where b.x = 1",
+			wantFixed: "select a.x from p.d.t as a inner join p.d.t as b on a.x = b.x where b.x = 1",
+		},
+		"keywords across lines": {
+			src:       "SELECT a.x\nFROM p.d.t AS a\nLEFT\n  OUTER JOIN p.d.t AS b ON a.x = b.x\nWHERE b.x = 1",
+			wantFixed: "SELECT a.x\nFROM p.d.t AS a\nINNER JOIN p.d.t AS b ON a.x = b.x\nWHERE b.x = 1",
+		},
+		"join hint is kept": {
+			src:       "SELECT a.x FROM p.d.t AS a LEFT HASH JOIN p.d.t AS b ON a.x = b.x WHERE b.x = 1",
+			wantFixed: "SELECT a.x FROM p.d.t AS a INNER HASH JOIN p.d.t AS b ON a.x = b.x WHERE b.x = 1",
+		},
+		"left join using": {
+			src:       "SELECT x FROM p.d.t AS a LEFT JOIN p.d.t AS b USING (x) WHERE b.x = 1",
+			wantFixed: "SELECT x FROM p.d.t AS a INNER JOIN p.d.t AS b USING (x) WHERE b.x = 1",
+		},
+		"pipe join": {
+			src:       "FROM p.d.t AS a\n|> LEFT JOIN p.d.t AS b ON a.x = b.x\n|> WHERE b.x = 1",
+			wantFixed: "FROM p.d.t AS a\n|> INNER JOIN p.d.t AS b ON a.x = b.x\n|> WHERE b.x = 1",
+		},
+		// The USING column is the right side's for RIGHT JOIN but the left
+		// side's for INNER JOIN, which may differ in type or value (-0.0 = 0.0).
+		"right join using": {
+			src: "SELECT x FROM p.d.t AS a RIGHT JOIN p.d.t AS b USING (x) WHERE a.x = 1",
+		},
+		"comment between the keywords": {
+			src: "SELECT a.x FROM p.d.t AS a LEFT /* keep */ JOIN p.d.t AS b ON a.x = b.x WHERE b.x = 1",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := lint.Run(t.Context(), parseWithTable(t, tt.src), lint.Config{}, lint.Env{}, lint.LeftJoinAsInner)
+			if len(got) != 1 {
+				t.Fatalf("got %d diagnostics, want 1: %+v", len(got), got)
+			}
+			fixes := got[0].SuggestedFixes
+			if tt.wantFixed == "" {
+				if len(fixes) != 0 {
+					t.Errorf("unexpected fixes: %+v", fixes)
+				}
+				return
+			}
+			if len(fixes) != 1 || fixes[0].Title != "Replace with INNER JOIN" {
+				t.Fatalf("fixes = %+v, want one titled %q", fixes, "Replace with INNER JOIN")
+			}
+			if fixed := applyFixes(t, tt.src, got); fixed != tt.wantFixed {
+				t.Errorf("fixed = %q, want %q", fixed, tt.wantFixed)
+			}
+			parseWithTable(t, tt.wantFixed)
 		})
 	}
 }
