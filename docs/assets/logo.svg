@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="bqls logo">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5B9BFF"/>
+      <stop offset="1" stop-color="#2E5BDB"/>
+    </linearGradient>
+    <linearGradient id="top" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#A9CBFF"/>
+      <stop offset="1" stop-color="#6FA2FF"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#body)" d="M20 26v72c0 9.9 19.7 18 44 18s44-8.1 44-18V26z"/>
+  <ellipse cx="64" cy="26" rx="44" ry="16" fill="url(#top)"/>
+  <path fill="none" stroke="#FFFFFF" stroke-opacity=".28" stroke-width="3" d="M20 50c0 9.9 19.7 18 44 18s44-8.1 44-18M20 74c0 9.9 19.7 18 44 18s44-8.1 44-18"/>
+  <path fill="none" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" d="M50 64 36 78l14 14M78 64l14 14-14 14"/>
+  <circle cx="64" cy="78" r="5" fill="#FFD166"/>
+</svg>
