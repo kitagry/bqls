@@ -25,4 +25,5 @@ var Analyzers = []*Analyzer{
 	JoinKeyImplicitCast,
 	SelfComparison,
 	MissingOrderBy,
+	TimestampStringLiteral,
 }
