@@ -1,12 +1,17 @@
 package lintcli
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	bq "cloud.google.com/go/bigquery"
+	"github.com/golang/mock/gomock"
 	"github.com/google/go-cmp/cmp"
+	"github.com/kitagry/bqls/langserver/internal/bigquery"
+	"github.com/kitagry/bqls/langserver/internal/bigquery/mock_bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lint"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 )
@@ -52,6 +57,18 @@ func TestRun_Fix(t *testing.T) {
 				"a.sql": "SELECT x FROM UNNEST([1]) AS x WHERE x NOT IN (1)\n",
 			},
 		},
+		"join rewrites are written back": {
+			files: map[string]string{
+				"a.sql": "SELECT a.x, b.y FROM (SELECT x FROM UNNEST([1, 2]) AS x) AS a, (SELECT y FROM UNNEST([3, 4]) AS y) AS b;\n" +
+					"SELECT a.x FROM (SELECT x FROM UNNEST([1, 2]) AS x) AS a LEFT JOIN (SELECT x FROM UNNEST([1]) AS x) AS b ON a.x = b.x WHERE b.x = 1;\n",
+			},
+			args:     []string{"--fix", "a.sql"},
+			wantCode: 0,
+			wantFiles: map[string]string{
+				"a.sql": "SELECT a.x, b.y FROM (SELECT x FROM UNNEST([1, 2]) AS x) AS a CROSS JOIN (SELECT y FROM UNNEST([3, 4]) AS y) AS b;\n" +
+					"SELECT a.x FROM (SELECT x FROM UNNEST([1, 2]) AS x) AS a INNER JOIN (SELECT x FROM UNNEST([1]) AS x) AS b ON a.x = b.x WHERE b.x = 1;\n",
+			},
+		},
 		"column order fixes are written back": {
 			files: map[string]string{
 				"a.sql": "SELECT 1 AS a, 2 AS b UNION ALL SELECT 2 AS b, 1 AS a\n",
@@ -93,6 +110,34 @@ func TestRun_Fix(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRun_FixSelectStar(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeFiles(t, map[string]string{
+		".git/HEAD":  "",
+		".bqls.yaml": "lint:\n  rules:\n    select-star:\n      enabled: true\n      min_columns: 2\n",
+		"a.sql":      "SELECT *\nFROM p.d.t\n",
+	})
+	ctrl := gomock.NewController(t)
+	c := mock_bigquery.NewMockClient(ctrl)
+	c.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+	c.EXPECT().Close().Return(nil).AnyTimes()
+	c.EXPECT().GetTableMetadata(gomock.Any(), "p", "d", "t").Return(&bq.TableMetadata{
+		Schema: bq.Schema{{Name: "a", Type: bq.IntegerFieldType}, {Name: "b", Type: bq.StringFieldType}},
+	}, nil).AnyTimes()
+
+	got := runWith(t, func(context.Context, string, string) (bigquery.Client, error) { return c, nil }, "", "--fix", "a.sql")
+	if got.code != 0 {
+		t.Errorf("exit code = %d, want 0 (stdout: %s, stderr: %s)", got.code, got.stdout, got.stderr)
+	}
+	b, err := os.ReadFile("a.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "SELECT\n  a,\n  b\nFROM p.d.t\n"; string(b) != want {
+		t.Errorf("a.sql = %q, want %q", b, want)
 	}
 }
 
