@@ -261,6 +261,13 @@ const FIX_DIFF = [
   [["g-g", "+INNER JOIN `bigquery-public-data.austin_bikeshare.bikeshare_trips` AS t"]],
 ];
 
+// What `bqls lint --fix` printed to stderr, one line per fixed file.
+const FIX_SUMMARY = [
+  "bqls lint: queries/idle_stations.sql: fixed 1 finding (not-in-nullable)",
+  "bqls lint: queries/stations.sql: fixed 1 finding (union-column-order)",
+  "bqls lint: queries/walk_up_trips.sql: fixed 1 finding (left-join-as-inner)",
+];
+
 const DRYRUN_FINDINGS = [
   "queries/walk_up_trips.sql:1:1: warning: This query will process 91.18 MiB, which exceeds the threshold of 50 MiB (bytes-processed-threshold)",
 ];
@@ -474,8 +481,8 @@ command(`${LINT} queries/`, 900, LINT_FINDINGS.map(plain));
 wait(5000);
 command("echo $?", 0, [plain("1")]);
 wait(1200);
-command(`${LINT} --fix queries/`, 1000);
-wait(400);
+command(`${LINT} --fix queries/`, 1000, FIX_SUMMARY.map(plain));
+wait(1800);
 command("git diff -U0", 0, FIX_DIFF);
 wait(4000);
 command(`${LINT} queries/`, 900);

@@ -160,22 +160,28 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		}
 		diags, _ := p.Diagnose(ctx, in.uri, cfgs[i])
 		if *fix {
-			fixed, skipped := applyFixes(diags.Src, suggestedFixes(diags))
-			if skipped > 0 {
-				fmt.Fprintf(stderr, "bqls lint: %s: skipped %d fix(es) overlapping another fix; run again to apply them\n", in.name, skipped)
-			}
+			fixes, rules := suggestedFixes(diags)
+			fixed, applied := applyFixes(diags.Src, fixes)
 			if fixed != in.src {
+				written := true
 				if in.abs != "" {
 					if err := os.WriteFile(in.name, []byte(fixed), 0o644); err != nil {
 						fmt.Fprintf(stderr, "bqls lint: %v\n", err)
 						writeFailed = true
+						written = false
 					}
+				}
+				if written {
+					fmt.Fprintf(stderr, "bqls lint: %s: %s\n", in.name, fixSummary(applied, rules))
 				}
 				if err := p.UpdateFile(in.uri, fixed, 2); err != nil {
 					fmt.Fprintf(stderr, "bqls lint: %s: %v\n", in.name, err)
 					return exitFailure
 				}
 				diags, _ = p.Diagnose(ctx, in.uri, cfgs[i])
+			}
+			if skipped := len(fixes) - len(applied); skipped > 0 {
+				fmt.Fprintf(stderr, "bqls lint: %s: skipped %d fix(es) overlapping another fix; run again to apply them\n", in.name, skipped)
 			}
 			if in.abs == "" {
 				fixedStdin = &fixed
@@ -338,38 +344,64 @@ func loadConfigFile(path string) (lint.Config, error) {
 }
 
 // suggestedFixes returns the preferred fix of every diagnostic in position
-// order, so that applyFixes keeps the earlier of two overlapping fixes.
-func suggestedFixes(diags source.Diagnostics) []lint.SuggestedFix {
+// order, so that applyFixes keeps the earlier of two overlapping fixes, along
+// with the rule of each fix ("" for a fix of an analysis error).
+func suggestedFixes(diags source.Diagnostics) ([]lint.SuggestedFix, []string) {
 	type located struct {
-		pos lsp.Position
-		fix lint.SuggestedFix
+		pos  lsp.Position
+		rule string
+		fix  lint.SuggestedFix
 	}
 	var fixes []located
 	for i, e := range diags.Errors {
 		if fs := diags.ErrorFixes[i]; len(fs) > 0 {
-			fixes = append(fixes, located{e.Position, fs[0]})
+			fixes = append(fixes, located{e.Position, "", fs[0]})
 		}
 	}
 	for _, d := range diags.Lint {
 		if len(d.SuggestedFixes) > 0 {
-			fixes = append(fixes, located{d.Range.Start, d.SuggestedFixes[0]})
+			fixes = append(fixes, located{d.Range.Start, d.Rule, d.SuggestedFixes[0]})
 		}
 	}
 	slices.SortStableFunc(fixes, func(a, b located) int {
 		return cmp.Or(cmp.Compare(a.pos.Line, b.pos.Line), cmp.Compare(a.pos.Character, b.pos.Character))
 	})
 	result := make([]lint.SuggestedFix, len(fixes))
+	rules := make([]string, len(fixes))
 	for i, f := range fixes {
 		result[i] = f.fix
+		rules[i] = f.rule
 	}
-	return result
+	return result, rules
+}
+
+// fixSummary describes the applied fixes, e.g. "fixed 2 findings (in-null,
+// not-in-nullable)". Fixes of analysis errors have no rule to list.
+func fixSummary(applied []int, rules []string) string {
+	var names []string
+	for _, i := range applied {
+		if rules[i] != "" {
+			names = append(names, rules[i])
+		}
+	}
+	slices.Sort(names)
+	names = slices.Compact(names)
+
+	s := fmt.Sprintf("fixed %d finding", len(applied))
+	if len(applied) != 1 {
+		s += "s"
+	}
+	if len(names) > 0 {
+		s += " (" + strings.Join(names, ", ") + ")"
+	}
+	return s
 }
 
 // applyFixes applies fixes in order, skipping each fix with an edit that
 // overlaps an edit already taken, because the two were computed against the
 // same text and cannot both be applied safely. Positions are byte based.
-// It returns the new text and the number of skipped fixes.
-func applyFixes(src string, fixes []lint.SuggestedFix) (string, int) {
+// It returns the new text and the indices of the applied fixes.
+func applyFixes(src string, fixes []lint.SuggestedFix) (string, []int) {
 	lineStarts := []int{0}
 	for i := range len(src) {
 		if src[i] == '\n' {
@@ -393,8 +425,8 @@ func applyFixes(src string, fixes []lint.SuggestedFix) (string, int) {
 		return a.start == b.start || (a.start < b.end && b.start < a.end)
 	}
 	var accepted []span
-	skipped := 0
-	for _, fix := range fixes {
+	var applied []int
+	for fi, fix := range fixes {
 		spans := make([]span, len(fix.Edits))
 		conflict := false
 		for i, e := range fix.Edits {
@@ -402,10 +434,10 @@ func applyFixes(src string, fixes []lint.SuggestedFix) (string, int) {
 			conflict = conflict || slices.ContainsFunc(accepted, func(a span) bool { return overlaps(a, spans[i]) })
 		}
 		if conflict {
-			skipped++
 			continue
 		}
 		accepted = append(accepted, spans...)
+		applied = append(applied, fi)
 	}
 
 	// Applying from the end keeps the offsets of earlier spans valid.
@@ -413,7 +445,7 @@ func applyFixes(src string, fixes []lint.SuggestedFix) (string, int) {
 	for _, s := range accepted {
 		src = src[:s.start] + s.text + src[s.end:]
 	}
-	return src, skipped
+	return src, applied
 }
 
 type input struct {

@@ -3,6 +3,7 @@ package lintcli
 import (
 	"context"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ func TestRun_Fix(t *testing.T) {
 		args       []string
 		wantCode   int
 		wantStdout string
+		wantStderr string
 		wantFiles  map[string]string
 	}{
 		"lint and error fixes are written back": {
@@ -31,6 +33,8 @@ func TestRun_Fix(t *testing.T) {
 			},
 			args:     []string{"--fix", "a.sql", "b.sql"},
 			wantCode: 0,
+			wantStderr: "bqls lint: a.sql: fixed 1 finding (null-comparison)\n" +
+				"bqls lint: b.sql: fixed 1 finding\n",
 			wantFiles: map[string]string{
 				"a.sql": "SELECT x FROM UNNEST([1]) AS x WHERE x IS NULL\n",
 				"b.sql": "SELECT x FROM UNNEST([1]) AS x WHERE x IS NULL\n",
@@ -42,6 +46,7 @@ func TestRun_Fix(t *testing.T) {
 			},
 			args:       []string{"--fix", "a.sql"},
 			wantCode:   1,
+			wantStderr: "bqls lint: a.sql: fixed 1 finding (null-comparison)\n",
 			wantStdout: "a.sql:1:51: warning: IN with only NULL values always yields NULL (in-null)\n",
 			wantFiles: map[string]string{
 				"a.sql": "SELECT x FROM UNNEST([1]) AS x WHERE x IS NULL OR x IN (NULL /* c */)\n",
@@ -51,8 +56,9 @@ func TestRun_Fix(t *testing.T) {
 			files: map[string]string{
 				"a.sql": "SELECT x FROM UNNEST([1]) AS x WHERE x NOT IN (NULL, 1, NULL)\n",
 			},
-			args:     []string{"--fix", "a.sql"},
-			wantCode: 0,
+			args:       []string{"--fix", "a.sql"},
+			wantCode:   0,
+			wantStderr: "bqls lint: a.sql: fixed 1 finding (in-null)\n",
 			wantFiles: map[string]string{
 				"a.sql": "SELECT x FROM UNNEST([1]) AS x WHERE x NOT IN (1)\n",
 			},
@@ -64,16 +70,18 @@ func TestRun_Fix(t *testing.T) {
 				"a.sql":      "SELECT ts FROM UNNEST([CURRENT_TIMESTAMP()]) AS ts WHERE ts >= '2024-01-01'\n",
 				".bqls.yaml": "lint:\n  rules:\n    timestamp-string-literal:\n      enabled: true\n      time_zone: Asia/Tokyo\n",
 			},
-			args:     []string{"--fix", "a.sql"},
-			wantCode: 0,
+			args:       []string{"--fix", "a.sql"},
+			wantCode:   0,
+			wantStderr: "bqls lint: a.sql: fixed 1 finding (timestamp-string-literal)\n",
 			wantFiles: map[string]string{
 				"a.sql": "SELECT ts FROM UNNEST([CURRENT_TIMESTAMP()]) AS ts WHERE ts >= TIMESTAMP('2024-01-01', 'UTC')\n",
 			},
 		},
 		"extraction pattern keeps its first capturing group": {
-			files:    map[string]string{"a.sql": "SELECT REGEXP_EXTRACT('ab', '(a)(b)')\n"},
-			args:     []string{"--fix", "a.sql"},
-			wantCode: 0,
+			files:      map[string]string{"a.sql": "SELECT REGEXP_EXTRACT('ab', '(a)(b)')\n"},
+			args:       []string{"--fix", "a.sql"},
+			wantCode:   0,
+			wantStderr: "bqls lint: a.sql: fixed 1 finding (regexp-literal)\n",
 			wantFiles: map[string]string{
 				"a.sql": "SELECT REGEXP_EXTRACT('ab', '(a)(?:b)')\n",
 			},
@@ -83,8 +91,9 @@ func TestRun_Fix(t *testing.T) {
 				"a.sql": "SELECT a.x, b.y FROM (SELECT x FROM UNNEST([1, 2]) AS x) AS a, (SELECT y FROM UNNEST([3, 4]) AS y) AS b;\n" +
 					"SELECT a.x FROM (SELECT x FROM UNNEST([1, 2]) AS x) AS a LEFT JOIN (SELECT x FROM UNNEST([1]) AS x) AS b ON a.x = b.x WHERE b.x = 1;\n",
 			},
-			args:     []string{"--fix", "a.sql"},
-			wantCode: 0,
+			args:       []string{"--fix", "a.sql"},
+			wantCode:   0,
+			wantStderr: "bqls lint: a.sql: fixed 2 findings (cross-join, left-join-as-inner)\n",
 			wantFiles: map[string]string{
 				"a.sql": "SELECT a.x, b.y FROM (SELECT x FROM UNNEST([1, 2]) AS x) AS a CROSS JOIN (SELECT y FROM UNNEST([3, 4]) AS y) AS b;\n" +
 					"SELECT a.x FROM (SELECT x FROM UNNEST([1, 2]) AS x) AS a INNER JOIN (SELECT x FROM UNNEST([1]) AS x) AS b ON a.x = b.x WHERE b.x = 1;\n",
@@ -97,10 +106,33 @@ func TestRun_Fix(t *testing.T) {
 			},
 			args:     []string{"--fix", "a.sql", "b.sql"},
 			wantCode: 0,
+			wantStderr: "bqls lint: a.sql: fixed 1 finding (union-column-order)\n" +
+				"bqls lint: b.sql: fixed 1 finding (insert-column-order)\n",
 			wantFiles: map[string]string{
 				"a.sql": "SELECT 1 AS a, 2 AS b UNION ALL SELECT 1 AS a, 2 AS b\n",
 				"b.sql": "CREATE TEMP TABLE t (a INT64, b INT64);\nINSERT INTO t (b, a) SELECT 2 AS b, 1 AS a;\n",
 			},
+		},
+		"fixes that overlap an applied fix are skipped": {
+			files: map[string]string{
+				"a.sql": "SELECT x FROM UNNEST([1]) AS x WHERE (x = CAST(NULL AS INT64)) IN (NULL)\n",
+			},
+			args:       []string{"--fix", "a.sql"},
+			wantCode:   1,
+			wantStdout: "a.sql:1:39: warning: Comparison with NULL using = always yields NULL; use IS NULL (null-comparison)\n",
+			wantStderr: "bqls lint: a.sql: fixed 1 finding (in-null)\n" +
+				"bqls lint: a.sql: skipped 1 fix(es) overlapping another fix; run again to apply them\n",
+			wantFiles: map[string]string{
+				"a.sql": "SELECT x FROM UNNEST([1]) AS x WHERE (x = CAST(NULL AS INT64)) IS NULL\n",
+			},
+		},
+		// stdout stays machine readable; the summary is for people.
+		"the summary stays on stderr with the json format": {
+			files:      map[string]string{"a.sql": nullComparisonSQL},
+			args:       []string{"--fix", "--format", "json", "a.sql"},
+			wantCode:   0,
+			wantStdout: "[]\n",
+			wantStderr: "bqls lint: a.sql: fixed 1 finding (null-comparison)\n",
 		},
 		"fixes of disabled rules are not applied": {
 			files:     map[string]string{"a.sql": unusedCTESQL},
@@ -120,6 +152,9 @@ func TestRun_Fix(t *testing.T) {
 			}
 			if diff := cmp.Diff(tt.wantStdout, got.stdout); diff != "" {
 				t.Errorf("stdout diff (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(tt.wantStderr, got.stderr); diff != "" {
+				t.Errorf("stderr diff (-want +got):\n%s", diff)
 			}
 			for name, want := range tt.wantFiles {
 				b, err := os.ReadFile(name)
@@ -174,12 +209,37 @@ func TestRun_FixDoesNotRewriteUnchangedFiles(t *testing.T) {
 	if got.code != 0 {
 		t.Errorf("exit code = %d, want 0 (stderr: %s)", got.code, got.stderr)
 	}
+	if got.stderr != "" {
+		t.Errorf("stderr = %q, want nothing when no fix was applied", got.stderr)
+	}
 	info, err := os.Stat("a.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !info.ModTime().Equal(old) {
 		t.Errorf("a.sql was rewritten (mtime %v, want %v)", info.ModTime(), old)
+	}
+}
+
+func TestRun_FixWriteFailureIsNotReportedAsFixed(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can write read-only files")
+	}
+	t.Chdir(t.TempDir())
+	writeFiles(t, map[string]string{"a.sql": nullComparisonSQL})
+	if err := os.Chmod("a.sql", 0o444); err != nil {
+		t.Fatal(err)
+	}
+
+	got := runWith(t, mockFactory(t), "", "--fix", "a.sql")
+	if got.code != 2 {
+		t.Errorf("exit code = %d, want 2 (stderr: %s)", got.code, got.stderr)
+	}
+	if !strings.Contains(got.stderr, "permission denied") {
+		t.Errorf("stderr = %q, want the write error", got.stderr)
+	}
+	if strings.Contains(got.stderr, "fixed") {
+		t.Errorf("stderr = %q, want no summary for a file that was not written", got.stderr)
 	}
 }
 
@@ -193,7 +253,9 @@ func TestRun_FixStdin(t *testing.T) {
 	if want := "SELECT x FROM UNNEST([1]) AS x WHERE x IS NULL OR x IN (NULL /* c */)\n"; got.stdout != want {
 		t.Errorf("stdout = %q, want %q", got.stdout, want)
 	}
-	if want := "<stdin>:1:51: warning: IN with only NULL values always yields NULL (in-null)\n"; got.stderr != want {
+	// The summary comes while fixing, before the findings that are left.
+	if want := "bqls lint: <stdin>: fixed 1 finding (null-comparison)\n" +
+		"<stdin>:1:51: warning: IN with only NULL values always yields NULL (in-null)\n"; got.stderr != want {
 		t.Errorf("stderr = %q, want %q", got.stderr, want)
 	}
 }
@@ -218,29 +280,31 @@ func TestApplyFixes(t *testing.T) {
 		src         string
 		fixes       []lint.SuggestedFix
 		want        string
-		wantSkipped int
+		wantApplied []int
 	}{
 		"edits on several lines": {
-			src:   "abc\ndef\n",
-			fixes: []lint.SuggestedFix{fix(edit(1, 0, 1, 1, "D")), fix(edit(0, 1, 0, 2, "B"))},
-			want:  "aBc\nDef\n",
+			src:         "abc\ndef\n",
+			fixes:       []lint.SuggestedFix{fix(edit(1, 0, 1, 1, "D")), fix(edit(0, 1, 0, 2, "B"))},
+			want:        "aBc\nDef\n",
+			wantApplied: []int{0, 1},
 		},
 		"adjacent edits both apply": {
-			src:   "abcdef",
-			fixes: []lint.SuggestedFix{fix(edit(0, 0, 0, 3, "X")), fix(edit(0, 3, 0, 6, "Y"))},
-			want:  "XY",
+			src:         "abcdef",
+			fixes:       []lint.SuggestedFix{fix(edit(0, 0, 0, 3, "X")), fix(edit(0, 3, 0, 6, "Y"))},
+			want:        "XY",
+			wantApplied: []int{0, 1},
 		},
 		"overlapping fix is skipped": {
 			src:         "abcdef",
 			fixes:       []lint.SuggestedFix{fix(edit(0, 0, 0, 4, "X")), fix(edit(0, 2, 0, 6, "Y"))},
 			want:        "Xef",
-			wantSkipped: 1,
+			wantApplied: []int{0},
 		},
 		"insertions at the same position conflict": {
 			src:         "ab",
 			fixes:       []lint.SuggestedFix{fix(edit(0, 1, 0, 1, "X")), fix(edit(0, 1, 0, 1, "Y"))},
 			want:        "aXb",
-			wantSkipped: 1,
+			wantApplied: []int{0},
 		},
 		"a fix is skipped as a whole": {
 			src: "abcdef",
@@ -249,19 +313,20 @@ func TestApplyFixes(t *testing.T) {
 				fix(edit(0, 4, 0, 5, "Y"), edit(0, 1, 0, 3, "Z")),
 			},
 			want:        "Xcdef",
-			wantSkipped: 1,
+			wantApplied: []int{0},
 		},
 		"multi-line edit": {
-			src:   "ab\ncd\nef",
-			fixes: []lint.SuggestedFix{fix(edit(0, 1, 2, 1, "-"))},
-			want:  "a-f",
+			src:         "ab\ncd\nef",
+			fixes:       []lint.SuggestedFix{fix(edit(0, 1, 2, 1, "-"))},
+			want:        "a-f",
+			wantApplied: []int{0},
 		},
 	}
 	for n, tt := range tests {
 		t.Run(n, func(t *testing.T) {
-			got, skipped := applyFixes(tt.src, tt.fixes)
-			if got != tt.want || skipped != tt.wantSkipped {
-				t.Errorf("applyFixes() = (%q, %d), want (%q, %d)", got, skipped, tt.want, tt.wantSkipped)
+			got, applied := applyFixes(tt.src, tt.fixes)
+			if got != tt.want || !slices.Equal(applied, tt.wantApplied) {
+				t.Errorf("applyFixes() = (%q, %v), want (%q, %v)", got, applied, tt.want, tt.wantApplied)
 			}
 		})
 	}
