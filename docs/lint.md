@@ -32,6 +32,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`nondeterministic-cte`](#nondeterministic-cte) | on | warning | | | `RAND()` / `GENERATE_UUID()` in a CTE that is evaluated more than once, so each reference sees different values |
 | [`window-default-frame`](#window-default-frame) | on | warning | yes | | `LAST_VALUE` / `NTH_VALUE` whose window has `ORDER BY` but no frame, so the default frame ends at the current row |
 | [`regexp-literal`](#regexp-literal) | on | warning | yes | | Constant regular expressions BigQuery rejects: invalid RE2, more than one capturing group in `REGEXP_EXTRACT` and friends, or `REGEXP_REPLACE` references to missing groups |
+| [`array-null-element`](#array-null-element) | off | warning | yes | | Arrays that may hold a NULL element and reach the result, `CREATE TABLE ... AS SELECT` or `INSERT`, which BigQuery fails to write |
 | **Cost** | | | | | |
 | [`partition-filter`](#partition-filter) | on | warning | | | Partitioned tables read without a filter on the partition column |
 | [`partition-filter-not-prunable`](#partition-filter-not-prunable) | off | warning | | | Partition column filters written in a form BigQuery documents as unable to prune partitions |
@@ -198,6 +199,16 @@ These fail whether or not any row matches, but only when the call is evaluated: 
 The quick fixes for too many capturing groups each keep one group and make the others non-capturing, e.g. `r'(\w+)@(?:\w+)'` keeps group 1, which is the one `bqls lint --fix` applies. A fix is not offered when a parenthesis it changes is written as an escape sequence (`'\x28'`).
 
 Not reported: patterns and replacements that are not literals (`DECLARE`d variables, query parameters, `CONCAT(...)`), and errors where Go's RE2 parser, which bqls uses, may disagree with BigQuery's: `\C` (any byte), unknown `\p{...}` classes (Unicode versions differ), and size limits. `BYTES` patterns are read as Latin-1, as BigQuery does.
+
+#### `array-null-element`
+
+Off by default. An array that may hold a NULL element and is written out: an output column of a query, `CREATE TABLE ... AS SELECT` or `INSERT`, or an `INSERT ... VALUES` value. BigQuery [fails such a query](https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#array_type) with `Array cannot have a null element; error in writing field ...`, although the same array is fine inside the query (`UNNEST`, `ARRAY_LENGTH`, `TO_JSON_STRING`, ...). Reported are an `ARRAY_AGG(x)` without `IGNORE NULLS`, an `ARRAY(SELECT x ...)` and an array literal or constructor (`[...]`) whose `x` / element is a `NULL` literal or a `NULLABLE` table column, also when the array reaches the output through aliases, CTEs and derived tables.
+
+The quick fix adds `IGNORE NULLS` to an `ARRAY_AGG` (`ARRAY_AGG(x IGNORE NULLS ORDER BY ...)`). This changes the result: the NULLs are dropped, so the array gets shorter and its positions no longer line up with, e.g., another `ARRAY_AGG` over the same rows. It is not offered with an explicit `RESPECT NULLS`, nor on an analytic `ARRAY_AGG(...) OVER (...)`, which BigQuery does not allow `IGNORE NULLS` on.
+
+The rule is off by default because a column is `NULLABLE` unless declared otherwise, so many columns that never hold a NULL would be reported, while a NULL that does turn up fails the query instead of returning a wrong result. It needs table metadata, and like `not-in-nullable` it follows the element only while it is passed through unchanged.
+
+Not reported: arrays nested in a `STRUCT`, `CREATE VIEW` (the query does not run), `DECLARE` / `SET`, set operations, a computed element (`IFNULL`, `STRUCT(...)`, functions), `REQUIRED` columns, views and other non-table sources, and an element or array that any `WHERE` / `HAVING` / `QUALIFY` / `JOIN ... ON` condition in the statement mentions (e.g. `x IS NOT NULL`, or `NOT EXISTS (SELECT 1 FROM UNNEST(arr) AS e WHERE e IS NULL)`).
 
 ### Cost
 

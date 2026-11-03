@@ -30,4 +30,5 @@ var Analyzers = []*Analyzer{
 	NondeterministicCTE,
 	WindowDefaultFrame,
 	RegexpLiteral,
+	ArrayNullElement,
 }
