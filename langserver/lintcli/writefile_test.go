@@ -163,6 +163,9 @@ func TestRun_FixInReadOnlyDirectoryFails(t *testing.T) {
 	if !strings.Contains(got.stderr, "q/a.sql") || !strings.Contains(got.stderr, "permission denied") {
 		t.Errorf("stderr = %q, want the write error naming q/a.sql", got.stderr)
 	}
+	if strings.Contains(got.stderr, ".bqls-") {
+		t.Errorf("stderr = %q, want no mention of the temporary file", got.stderr)
+	}
 	assertUnchanged(t, "q/a.sql", nullComparisonSQL)
 	if names := dirEntries(t, "q"); !slices.Equal(names, []string{"a.sql"}) {
 		t.Errorf("directory holds %v, want only a.sql", names)
@@ -246,5 +249,29 @@ func TestRun_FixKeepsFileGroup(t *testing.T) {
 	}
 	if st, ok := info.Sys().(*syscall.Stat_t); !ok || int(st.Gid) != gid {
 		t.Errorf("gid = %v, want %d", info.Sys(), gid)
+	}
+}
+
+func TestWriteFileAtomic_RefusesNonRegularFile(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := syscall.Mkfifo("a.sql", 0o644); err != nil {
+		t.Skipf("mkfifo: %v", err)
+	}
+
+	// Opening the FIFO for writing would block with no reader, so a hang here
+	// is the failure.
+	err := writeFileAtomic("a.sql", []byte(fixedNullComparisonSQL))
+	if err == nil {
+		t.Fatal("writeFileAtomic succeeded, want an error for a FIFO")
+	}
+	info, err := os.Lstat("a.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&fs.ModeNamedPipe == 0 {
+		t.Errorf("a.sql mode = %v, want it to stay a FIFO", info.Mode())
+	}
+	if names := dirEntries(t, "."); !slices.Equal(names, []string{"a.sql"}) {
+		t.Errorf("directory holds %v, want only a.sql", names)
 	}
 }

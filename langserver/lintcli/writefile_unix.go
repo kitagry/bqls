@@ -16,5 +16,9 @@ func keepOwner(f tempFile, orig fs.FileInfo) {
 	if !ok {
 		return
 	}
-	_ = f.Chown(int(st.Uid), int(st.Gid))
+	// Giving the file away fails as a whole for anyone but root, which would
+	// also lose a group the user could still set on its own.
+	if f.Chown(int(st.Uid), int(st.Gid)) != nil {
+		_ = f.Chown(-1, int(st.Gid))
+	}
 }

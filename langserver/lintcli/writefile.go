@@ -1,6 +1,7 @@
 package lintcli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -42,6 +43,11 @@ func writeFileAtomic(name string, data []byte) (err error) {
 	if err != nil {
 		return err
 	}
+	// Renaming over a FIFO or a device would replace it with a plain file, and
+	// opening a FIFO whose reader is gone below would block forever.
+	if !info.Mode().IsRegular() {
+		return errors.New("not a regular file")
+	}
 	// Rename only needs the directory to be writable, but a read-only file is
 	// one the user means to keep as it is.
 	f, err := os.OpenFile(target, os.O_WRONLY, 0)
@@ -52,21 +58,24 @@ func writeFileAtomic(name string, data []byte) (err error) {
 
 	tmp, err := createTemp(filepath.Dir(target), "."+filepath.Base(target)+".bqls-*")
 	if err != nil {
-		return err
+		return withoutTempPath(err)
 	}
 	defer func() {
 		if err != nil {
 			tmp.Close()
 			os.Remove(tmp.Name())
+			err = withoutTempPath(err)
 		}
 	}()
 	if _, err := tmp.Write(data); err != nil {
 		return err
 	}
-	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+	// Before the mode, as a chown by anyone but root clears the setuid and
+	// setgid bits.
+	keepOwner(tmp, info)
+	if err := tmp.Chmod(info.Mode() & (fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky)); err != nil {
 		return err
 	}
-	keepOwner(tmp, info)
 	// Without it a crash soon after the rename can leave the file empty on
 	// file systems that write data back lazily. The directory is not synced:
 	// losing the rename in a crash only leaves the original file.
@@ -77,4 +86,18 @@ func writeFileAtomic(name string, data []byte) (err error) {
 		return err
 	}
 	return rename(tmp.Name(), target)
+}
+
+// withoutTempPath drops the temporary file's name from err: the file is gone
+// by the time the error is shown, and the caller names the file being fixed.
+func withoutTempPath(err error) error {
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Err
+	}
+	var linkErr *os.LinkError
+	if errors.As(err, &linkErr) {
+		return linkErr.Err
+	}
+	return err
 }
