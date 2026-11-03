@@ -165,7 +165,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			var writeErr error
 			if fixed != in.src {
 				if in.abs != "" {
-					writeErr = os.WriteFile(in.name, []byte(fixed), 0o644)
+					writeErr = writeFileAtomic(in.name, []byte(fixed))
 				}
 				// A file that could not be written is reported, and dry-run, as
 				// it is on disk rather than as the fixed text nobody will see.
