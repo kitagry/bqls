@@ -29,6 +29,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`missing-order-by`](#missing-order-by) | off | warning | | | `ROW_NUMBER()` filters, `ARRAY_AGG` / `STRING_AGG` with `LIMIT`, and indexed `ARRAY_AGG` results without `ORDER BY`, which pick arbitrary rows |
 | [`timestamp-string-literal`](#timestamp-string-literal) | off | warning | yes | `time_zone` | String literals without a time zone compared with a `TIMESTAMP`, which are read as UTC |
 | [`nondeterministic-cte`](#nondeterministic-cte) | on | warning | | | `RAND()` / `GENERATE_UUID()` in a CTE that is evaluated more than once, so each reference sees different values |
+| [`array-null-element`](#array-null-element) | off | warning | yes | | Arrays that may hold a NULL element and reach the result, `CREATE TABLE ... AS SELECT` or `INSERT`, which BigQuery fails to write |
 | **Cost** | | | | | |
 | [`partition-filter`](#partition-filter) | on | warning | | | Partitioned tables read without a filter on the partition column |
 | [`partition-filter-not-prunable`](#partition-filter-not-prunable) | off | warning | | | Partition column filters written in a form BigQuery documents as unable to prune partitions |
@@ -159,6 +160,16 @@ Off by default: such comparisons are common and often do mean UTC.
 A CTE referenced once from another CTE that is itself referenced twice also runs twice. The call is reported when it decides which rows the CTE returns (`WHERE`, `JOIN ... ON`, `GROUP BY`, `ORDER BY ... LIMIT`, window ordering), or when it flows into an output column that at least two evaluations read.
 
 Not reported: `CURRENT_TIMESTAMP` / `CURRENT_DATE` / `CURRENT_DATETIME` / `CURRENT_TIME`, which BigQuery fixes for the whole statement; recursive CTEs (materialized); calls outside a CTE; references from unreferenced CTEs; a random column that only one evaluation reads (e.g. the other one only does `COUNT(*)` or `SELECT * EXCEPT (r)`); `EXISTS`; `ORDER BY RAND()` without `LIMIT`; and column flows bqls does not follow. References that read disjoint rows (`... WHERE kind = 'a' UNION ALL ... WHERE kind = 'b'`) are still reported, since bqls cannot tell the rows apart.
+
+#### `array-null-element`
+
+Off by default. An array that may hold a NULL element and is written out: an output column of a query, `CREATE TABLE ... AS SELECT` or `INSERT`, or an `INSERT ... VALUES` value. BigQuery [fails such a query](https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#array_type) with `Array cannot have a null element; error in writing field ...`, although the same array is fine inside the query (`UNNEST`, `ARRAY_LENGTH`, `TO_JSON_STRING`, ...). Reported are an `ARRAY_AGG(x)` without `IGNORE NULLS`, an `ARRAY(SELECT x ...)` and an array literal or constructor (`[...]`) whose `x` / element is a `NULL` literal or a `NULLABLE` table column, also when the array reaches the output through aliases, CTEs and derived tables.
+
+The quick fix adds `IGNORE NULLS` to an `ARRAY_AGG` (`ARRAY_AGG(x IGNORE NULLS ORDER BY ...)`). This changes the result: the NULLs are dropped, so the array gets shorter and its positions no longer line up with, e.g., another `ARRAY_AGG` over the same rows. It is not offered with an explicit `RESPECT NULLS`, nor on an analytic `ARRAY_AGG(...) OVER (...)`, which BigQuery does not allow `IGNORE NULLS` on.
+
+The rule is off by default because a column is `NULLABLE` unless declared otherwise, so many columns that never hold a NULL would be reported, while a NULL that does turn up fails the query instead of returning a wrong result. It needs table metadata, and like `not-in-nullable` it follows the element only while it is passed through unchanged.
+
+Not reported: arrays nested in a `STRUCT`, `CREATE VIEW` (the query does not run), `DECLARE` / `SET`, set operations, a computed element (`IFNULL`, `STRUCT(...)`, functions), `REQUIRED` columns, views and other non-table sources, and an element or array that any `WHERE` / `HAVING` / `QUALIFY` / `JOIN ... ON` condition in the statement mentions (e.g. `x IS NOT NULL`, or `NOT EXISTS (SELECT 1 FROM UNNEST(arr) AS e WHERE e IS NULL)`).
 
 ### Cost
 

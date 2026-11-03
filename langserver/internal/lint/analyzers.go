@@ -27,4 +27,5 @@ var Analyzers = []*Analyzer{
 	MissingOrderBy,
 	TimestampStringLiteral,
 	NondeterministicCTE,
+	ArrayNullElement,
 }
