@@ -22,6 +22,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`cross-join`](#cross-join) | on | warning | yes | | Joins without a join condition, which return the Cartesian product of both sides |
 | [`union-column-order`](#union-column-order) | on | warning | yes | | Set operation inputs whose columns are the first input's columns in a different order |
 | [`insert-column-order`](#insert-column-order) | on | warning | yes | | `INSERT ... SELECT` queries whose columns are the target columns in a different order |
+| [`insert-null-into-required`](#insert-null-into-required) | off | warning | | | `INSERT` / `UPDATE` / `MERGE` values that may be NULL written to a `REQUIRED` column, which BigQuery rejects only at run time |
 | [`left-join-as-inner`](#left-join-as-inner) | on | warning | yes | | `LEFT` / `RIGHT JOIN`s whose `WHERE` clause rejects the NULL rows of the optional side |
 | [`variable-column-shadow`](#variable-column-shadow) | on | warning | yes | | A column compared with itself because its bare name was meant as a same-named `DECLARE` variable |
 | [`join-key-implicit-cast`](#join-key-implicit-cast) | on | warning | | | `ON` / `USING` join keys of different types, so one side is implicitly cast (e.g. `INT64` to `FLOAT64`) |
@@ -94,6 +95,20 @@ An `INSERT ... SELECT` whose query lists the target columns in a different order
 The quick fix makes the column list follow the query's names: without a column list it adds one after the table (`INSERT INTO t (b, a) SELECT b, a ...`), quoting names that need it, and an existing column list is reordered in place. A column without a name (`x + 1`) keeps its current target. It is not offered when the names involved are not unique or the column list contains a comment.
 
 Skipped: queries with `*` or pipe syntax, a set operation matching `BY NAME` / `CORRESPONDING`, `INSERT ... VALUES`, and queries that read the target table itself (`INSERT INTO edges SELECT dst, src FROM edges` is how a relation is made symmetric).
+
+#### `insert-null-into-required`
+
+A value that may be NULL written to a `REQUIRED` column of the target table by `INSERT` (with or without a column list, `VALUES` or a query), `UPDATE ... SET`, or the `INSERT` / `UPDATE SET` of a `MERGE`. BigQuery checks the mode only while writing rows, so such a statement passes analysis and dry run but fails at run time with `Required field ... cannot be null` once a row holds a NULL there. `REQUIRED` fields of a `STRUCT` written as `STRUCT(...)` are checked too (`Required field s.f cannot be null`), as is a `REQUIRED` `RECORD` column written as NULL. Reported on the value, or on the select list item of `INSERT ... SELECT`; on the target table when the query has `*` or pipe syntax.
+
+A value counts as possibly NULL only when it is:
+
+- a `NULL` literal, also `CAST(NULL AS T)`,
+- a `NULLABLE` column of a regular table, followed while it is passed through unchanged (column references, aliases, casts, joins, `GROUP BY` keys, CTEs and derived tables) and no `WHERE` / `HAVING` / `QUALIFY` / `JOIN ... ON` condition in the statement, nor the `UPDATE` `WHERE`, `MERGE ... ON` or `WHEN ... AND` condition, mentions it, or
+- a column from the optional side of a `LEFT` / `RIGHT` / `FULL JOIN`, also through CTEs and derived tables, unless a condition outside that join mentions any column of that side (e.g. `WHERE b.id IS NOT NULL` or `WHERE b.status = 'active'`, which drop the unmatched rows). The join's own `ON`, the `ON` of other outer joins, and conditions inside the optional side do not count, since they keep the unmatched rows.
+
+Not reported, to avoid false positives: computed values (`COALESCE`, `IFNULL`, `IF`, functions, aggregates, arithmetic, struct fields), `REQUIRED` source columns, set operations, `UNNEST`, views and other non-table sources, `DEFAULT`, script variables and query parameters, a whole `STRUCT` copied from a table column, `REPEATED` fields, and nested `UPDATE` targets such as `SET s.f = ...`.
+
+This rule depends on the table schema, so it needs table metadata. It is off by default: copying from a table whose columns are all `NULLABLE` (e.g. a staging table loaded with schema auto-detection) into a `REQUIRED` table is common even when the data never holds NULLs, and such statements already fail loudly at run time. Enable it to catch these before running the statement. There is no quick fix, since any replacement value (`COALESCE(x, 0)`) or filter (`WHERE x IS NOT NULL`) changes what the statement writes.
 
 #### `left-join-as-inner`
 
