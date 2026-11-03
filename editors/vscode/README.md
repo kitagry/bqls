@@ -22,6 +22,21 @@ manually and point `bqls.path` at it:
 go install github.com/kitagry/bqls@latest
 ```
 
+### bqls version
+
+The automatic download installs bqls **v0.8.3**. A `bqls` found on your
+`PATH` (or set via `bqls.path`) takes precedence and is used as-is, so make
+sure it is recent enough for the features you use:
+
+| Feature                                                      | Minimum bqls version |
+| ------------------------------------------------------------ | -------------------- |
+| Execute Query, job histories, Save Result, Datasets explorer | v0.6.0               |
+| "Add Project…" in the Datasets explorer                      | v0.7.1               |
+| Cancelling a running query from the progress notification    | v0.7.2               |
+| `bqls.lint.rules` (enable/disable rules by name)             | v0.8.0               |
+| `bqls.lint.rules` object form with rule options              | v0.8.1               |
+| `bytes-processed-threshold` lint rule                        | v0.8.2               |
+
 You also need to authenticate with Google Cloud:
 
 ```bash
