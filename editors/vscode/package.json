@@ -185,5 +185,8 @@
 		"esbuild": "^0.28.2",
 		"typescript": "^7.0.2",
 		"vitest": "^5.0.5"
+	},
+	"overrides": {
+		"minimatch": "^11.0.4"
 	}
 }
