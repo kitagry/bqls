@@ -31,6 +31,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`timestamp-string-literal`](#timestamp-string-literal) | off | warning | yes | `time_zone` | String literals without a time zone compared with a `TIMESTAMP`, which are read as UTC |
 | [`nondeterministic-cte`](#nondeterministic-cte) | on | warning | | | `RAND()` / `GENERATE_UUID()` in a CTE that is evaluated more than once, so each reference sees different values |
 | [`window-default-frame`](#window-default-frame) | on | warning | yes | | `LAST_VALUE` / `NTH_VALUE` whose window has `ORDER BY` but no frame, so the default frame ends at the current row |
+| [`regexp-literal`](#regexp-literal) | on | warning | yes | | Constant regular expressions BigQuery rejects: invalid RE2, more than one capturing group in `REGEXP_EXTRACT` and friends, or `REGEXP_REPLACE` references to missing groups |
 | **Cost** | | | | | |
 | [`partition-filter`](#partition-filter) | on | warning | | | Partitioned tables read without a filter on the partition column |
 | [`partition-filter-not-prunable`](#partition-filter-not-prunable) | off | warning | | | Partition column filters written in a form BigQuery documents as unable to prune partitions |
@@ -183,6 +184,20 @@ Not reported: `CURRENT_TIMESTAMP` / `CURRENT_DATE` / `CURRENT_DATETIME` / `CURRE
 Not reported: an explicit frame, also one written in a named window, and also when it is the default one written out (`RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`); `FIRST_VALUE` and `NTH_VALUE(x, 1)`, which the default frame already gives the right row; `LAST_VALUE(x IGNORE NULLS)`, the usual way to carry the last non-NULL value forward; aggregates such as `SUM` and `ARRAY_AGG`, whose running results are what the default frame is for; and windows ordered only by their `PARTITION BY` columns, where every row is a peer and the frame is the whole partition.
 
 The quick fix adds `ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` after the last clause of the call's `OVER` clause, e.g. `OVER (PARTITION BY id ORDER BY ts ROWS BETWEEN ...)`. A named window gets parentheses (`OVER w` becomes `OVER (w ROWS BETWEEN ...)`), and the `WINDOW` clause itself is left alone, since other calls may use it. The fix changes the result to the one the function name suggests.
+
+#### `regexp-literal`
+
+A constant regular expression that BigQuery rejects when it evaluates the call. Patterns are [RE2](https://github.com/google/re2/wiki/Syntax) and are checked only when written as a `STRING` or `BYTES` literal (raw and triple-quoted strings included) in `REGEXP_CONTAINS`, `REGEXP_EXTRACT`, `REGEXP_EXTRACT_ALL`, `REGEXP_SUBSTR`, `REGEXP_INSTR` or `REGEXP_REPLACE`. Reported on the literal:
+
+- A pattern RE2 cannot parse, e.g. `'('`, `r'\Z'`, `'(?=a)'` (no lookaround) or `'a{1001}'` (counts above 1000). The message gives the reason.
+- A pattern with more than one capturing group in `REGEXP_EXTRACT`, `REGEXP_EXTRACT_ALL`, `REGEXP_SUBSTR` or `REGEXP_INSTR` ("Regular expressions passed into extraction functions must not have more than 1 capturing group"), e.g. `REGEXP_EXTRACT(s, r'(\w+)@(\w+)')`. Named groups (`(?P<name>...)`, `(?<name>...)`) count; `(?:...)` does not.
+- A `REGEXP_REPLACE` replacement that refers to a group the pattern does not have (`\2` with one group, `\1` with none), or whose backslash is followed by anything but a digit or a backslash (`r'\n'`, a trailing `\`). Only `\0` to `\9` are group references, and `\\` is a literal backslash.
+
+These fail whether or not any row matches, but only when the call is evaluated: a query over no rows, or a call in a branch that is never taken, still succeeds.
+
+The quick fixes for too many capturing groups each keep one group and make the others non-capturing, e.g. `r'(\w+)@(?:\w+)'` keeps group 1, which is the one `bqls lint --fix` applies. A fix is not offered when a parenthesis it changes is written as an escape sequence (`'\x28'`).
+
+Not reported: patterns and replacements that are not literals (`DECLARE`d variables, query parameters, `CONCAT(...)`), and errors where Go's RE2 parser, which bqls uses, may disagree with BigQuery's: `\C` (any byte), unknown `\p{...}` classes (Unicode versions differ), and size limits. `BYTES` patterns are read as Latin-1, as BigQuery does.
 
 ### Cost
 
