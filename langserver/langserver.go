@@ -105,7 +105,7 @@ func (h *Handler) setupByInitializeParams() error {
 	newBQClient := h.newBQClient
 	if newBQClient == nil {
 		newBQClient = func(ctx context.Context, projectID, location string) (bigquery.Client, error) {
-			return bigquery.New(ctx, projectID, location, true, h.logger)
+			return bigquery.New(ctx, projectID, location, true, h.logger, h.notifyAuthError)
 		}
 	}
 	bqClient, err := newBQClient(

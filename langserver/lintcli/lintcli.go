@@ -47,7 +47,7 @@ func newBigQueryClient(ctx context.Context, projectID, location string) (bigquer
 	// The LSP's persistent cache is skipped: it only speeds up listing APIs that
 	// lint never calls, and it would write a SQLite file on every CI run.
 	// Duplicate metadata lookups are handled by memoClient instead.
-	return bigquery.New(ctx, projectID, location, false, newLogger(io.Discard))
+	return bigquery.New(ctx, projectID, location, false, newLogger(io.Discard), nil)
 }
 
 type ruleToggle struct {

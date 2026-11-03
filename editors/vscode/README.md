@@ -36,6 +36,7 @@ sure it is recent enough for the features you use:
 | `bqls.lint.rules` (enable/disable rules by name)             | v0.8.0               |
 | `bqls.lint.rules` object form with rule options              | v0.8.1               |
 | `bytes-processed-threshold` lint rule                        | v0.8.2               |
+| "Login" button when the credentials are missing or expired   | v0.8.4               |
 
 You also need to authenticate with Google Cloud:
 
@@ -43,6 +44,8 @@ You also need to authenticate with Google Cloud:
 gcloud auth login
 gcloud auth application-default login
 ```
+
+If the credentials are missing or expire later, bqls shows a warning with a **Login** button. It runs `gcloud auth application-default login` in the integrated terminal, and bqls picks up the new credentials once the login succeeds.
 
 ## Settings
 

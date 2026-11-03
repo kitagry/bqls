@@ -16,8 +16,12 @@ type InitializeOption struct {
 	// the bqls/publishVirtualTextDocument notification and can render a
 	// pending state. Clients that omit this (zero value: false) keep
 	// getting the fully-synchronous bqls/virtualTextDocument response.
-	SupportsAsyncVirtualTextDocument bool        `json:"supports_async_virtual_text_document"`
-	Lint                             lint.Config `json:"lint"`
+	SupportsAsyncVirtualTextDocument bool `json:"supports_async_virtual_text_document"`
+	// SupportsAuthenticationRequiredNotification declares that the client
+	// handles the bqls/authenticationRequired notification, e.g. by offering
+	// to log in. Other clients get the guidance via window/showMessage.
+	SupportsAuthenticationRequiredNotification bool        `json:"supports_authentication_required_notification"`
+	Lint                                       lint.Config `json:"lint"`
 }
 
 func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
@@ -71,6 +75,7 @@ func (h *Handler) buildInitializeResult() lsp.InitializeResult {
 					CommandSaveResult,
 					CommandSearchTables,
 					CommandListProjects,
+					CommandReloadCredentials,
 				},
 			},
 		},
