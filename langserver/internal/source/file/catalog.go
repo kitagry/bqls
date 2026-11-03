@@ -277,6 +277,91 @@ func (c *Catalog) hasTable(namePath []string) bool {
 	return slices.ContainsFunc(c.scriptObjects, func(o scriptObject) bool { return o.key == key && o.table != nil })
 }
 
+// withRowAccessPolicyTarget layers over current the target table of ALTER ROW
+// ACCESS POLICY, named by the last identifier of namePath as written, because
+// the validator requires that name while the catalog names a table by its full
+// path, which hover, completion and lint rely on for the other statements. The
+// full path is kept as the table's FullName.
+func (c *Catalog) withRowAccessPolicyTarget(namePath []string, current googlesql.CatalogNode) (googlesql.CatalogNode, error) {
+	table := c.findTable(namePath)
+	if table == nil {
+		return current, nil
+	}
+	fullName, err := table.Name()
+	if err != nil {
+		return nil, err
+	}
+	target, err := googlesql.NewSimpleTable(namePath[len(namePath)-1], 0)
+	if err != nil {
+		return nil, err
+	}
+	if err := target.SetFullName(fullName); err != nil {
+		return nil, err
+	}
+	n, err := table.NumColumns()
+	if err != nil {
+		return nil, err
+	}
+	for i := range n {
+		col, err := table.GetColumn(i)
+		if err != nil {
+			return nil, err
+		}
+		name, err := col.Name()
+		if err != nil {
+			return nil, err
+		}
+		typ, err := col.GetType()
+		if err != nil {
+			return nil, err
+		}
+		isPseudo, err := col.IsPseudoColumn()
+		if err != nil {
+			return nil, err
+		}
+		isWritable, err := col.IsWritableColumn()
+		if err != nil {
+			return nil, err
+		}
+		if err := addColumn(target, fullName, name, typ, isPseudo, isWritable); err != nil {
+			return nil, err
+		}
+	}
+
+	root, err := googlesql.NewSimpleCatalog("", c.typeFactory)
+	if err != nil {
+		return nil, err
+	}
+	parent := root
+	for _, name := range namePath[:len(namePath)-1] {
+		if parent, err = parent.MakeOwnedSimpleCatalog(name); err != nil {
+			return nil, err
+		}
+	}
+	// Owned so that the table lives as long as the analyzer output, which
+	// keeps the catalog alive but not the Go handles of its sub-catalogs.
+	if err := parent.AddOwnedTable3(namePath[len(namePath)-1], target); err != nil {
+		return nil, err
+	}
+	return googlesql.NewMultiCatalogCreate("", []googlesql.CatalogNode{root, current})
+}
+
+// findTable returns the table loaded from BigQuery or created by the script,
+// or nil.
+func (c *Catalog) findTable(namePath []string) *googlesql.SimpleTable {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	key := strings.ToLower(strings.Join(c.scriptPaths(namePath)[0], "."))
+	// Script objects come first because their layer shadows the base catalog.
+	for _, o := range c.scriptObjects {
+		if o.key == key && o.table != nil {
+			return o.table
+		}
+	}
+	return c.tables[key]
+}
+
 // hasProcedure is hasTable for procedures.
 func (c *Catalog) hasProcedure(namePath []string) bool {
 	c.mu.Lock()
@@ -862,6 +947,8 @@ func ddlTargetPath(n googlesql.ASTNode) *googlesql.ASTPathExpression {
 		pe, err = stmt.TableName()
 	case *googlesql.ASTAlterAllRowAccessPoliciesStatement:
 		pe, err = stmt.TableNamePath()
+	case *googlesql.ASTAlterRowAccessPolicyStatement:
+		pe, err = stmt.Path()
 	case *googlesql.ASTCreateIndexStatement:
 		pe, err = stmt.TableName()
 	case *googlesql.ASTDropIndexStatement:

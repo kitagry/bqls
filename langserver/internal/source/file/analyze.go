@@ -243,7 +243,30 @@ func (a *Analyzer) AnalyzeStatement(rawText string, stmt googlesql.ASTStatementN
 	}); err != nil {
 		return nil, err
 	}
-	return googlesql.AnalyzeStatementFromParserAST(stmt, opts, rawText, a.scopeCatalog(rawText, stmt, catalog), catalog.TypeFactory())
+	scope := a.scopeCatalog(rawText, stmt, catalog)
+	if alter, ok := stmt.(*googlesql.ASTAlterRowAccessPolicyStatement); ok {
+		scope = a.withRowAccessPolicyTarget(alter, scope, catalog)
+	}
+	return googlesql.AnalyzeStatementFromParserAST(stmt, opts, rawText, scope, catalog.TypeFactory())
+}
+
+// withRowAccessPolicyTarget returns scope unchanged when the target cannot be
+// layered, so that the analyzer reports the statement's own errors.
+func (a *Analyzer) withRowAccessPolicyTarget(stmt *googlesql.ASTAlterRowAccessPolicyStatement, scope googlesql.CatalogNode, catalog *Catalog) googlesql.CatalogNode {
+	pe, err := stmt.Path()
+	if err != nil || pe == nil {
+		return scope
+	}
+	namePath, err := pe.ToIdentifierVector()
+	if err != nil || len(namePath) == 0 {
+		return scope
+	}
+	layered, err := catalog.withRowAccessPolicyTarget(namePath, scope)
+	if err != nil {
+		a.logger.Debugf("failed to layer the target table of ALTER ROW ACCESS POLICY: %v", err)
+		return scope
+	}
+	return layered
 }
 
 // analyzeScriptStatement analyzes the expressions and the query of a script
