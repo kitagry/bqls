@@ -35,4 +35,4 @@ jobs:
           exit 1
         fi
     - name: test
-      run: go test -v ./... -count=1
+      run: go test ./...
