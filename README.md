@@ -68,6 +68,8 @@ gcloud auth login
 gcloud auth application-default login
 ```
 
+If the credentials are missing or expire later, bqls shows this guidance instead of a raw BigQuery error. After you log in again, bqls picks up the new credentials without a restart.
+
 **3. Set up your editor**
 
 - **Neovim**: install [bqls.nvim](https://github.com/kitagry/bqls.nvim) and call `require("lspconfig").bqls.setup({})`. See [Neovim](#neovim).

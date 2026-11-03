@@ -156,11 +156,12 @@ func (mr *MockClientMockRecorder) JobFromProject(ctx, projectID, jobID, location
 }
 
 // Jobs mocks base method.
-func (m *MockClient) Jobs(ctx context.Context) *bigquery.JobIterator {
+func (m *MockClient) Jobs(ctx context.Context) (*bigquery.JobIterator, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Jobs", ctx)
 	ret0, _ := ret[0].(*bigquery.JobIterator)
-	return ret0
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // Jobs indicates an expected call of Jobs.

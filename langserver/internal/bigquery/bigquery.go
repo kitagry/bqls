@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/bigquery"
 	"github.com/sirupsen/logrus"
@@ -64,7 +65,7 @@ type Client interface {
 	JobFromProject(ctx context.Context, projectID, jobID, location string) (BigqueryJob, error)
 
 	// Jobs returns the iterator of all jobs.
-	Jobs(ctx context.Context) *bigquery.JobIterator
+	Jobs(ctx context.Context) (*bigquery.JobIterator, error)
 
 	// SearchTables searches for BigQuery tables matching the given query via Data Catalog.
 	SearchTables(ctx context.Context, projectIDs []string, query string) ([]TableSearchResult, error)
@@ -75,7 +76,14 @@ type client struct {
 	cloudresourcemanagerService *cloudresourcemanager.Service
 }
 
-func New(ctx context.Context, projectID, location string, withCache bool, looger *logrus.Logger) (Client, error) {
+// authRetryInterval keeps a burst of calls failing to authenticate, e.g.
+// loading every table of a query, from recreating the client for each.
+const authRetryInterval = 10 * time.Second
+
+// New creates a Client. When onAuthError is not nil, missing or expired
+// credentials don't fail it: onAuthError is called on an authentication error
+// instead, and the client picks up a new login without a restart.
+func New(ctx context.Context, projectID, location string, withCache bool, looger *logrus.Logger, onAuthError func(err error)) (Client, error) {
 	if projectID == "" {
 		var err error
 		projectID, err = getDefaultProjectID(ctx, looger)
@@ -84,6 +92,35 @@ func New(ctx context.Context, projectID, location string, withCache bool, looger
 		}
 	}
 
+	if location == "" {
+		location = defaultLocation
+	}
+
+	var client Client
+	var err error
+	if onAuthError == nil {
+		client, err = newClient(ctx, projectID, location)
+	} else {
+		client, err = NewAuthGuard(ctx, projectID, func(ctx context.Context) (Client, error) {
+			return newClient(ctx, projectID, location)
+		}, onAuthError, authRetryInterval)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// The cache wraps the guard so that recreating the client keeps it.
+	if withCache {
+		client, err = newCache(client)
+		if err != nil {
+			return nil, fmt.Errorf("newCache: %w", err)
+		}
+	}
+
+	return client, nil
+}
+
+func newClient(ctx context.Context, projectID, location string) (Client, error) {
 	cloudresourcemanagerService, err := cloudresourcemanager.NewService(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("cloudresourcemanager.NewService: %w", err)
@@ -93,21 +130,9 @@ func New(ctx context.Context, projectID, location string, withCache bool, looger
 	if err != nil {
 		return nil, fmt.Errorf("bigquery.NewClient: %w", err)
 	}
-
-	if location == "" {
-		location = defaultLocation
-	}
 	bqClient.Location = location
 
-	var client Client = &client{bqClient, cloudresourcemanagerService}
-	if withCache {
-		client, err = newCache(client)
-		if err != nil {
-			return nil, fmt.Errorf("newCache: %w", err)
-		}
-	}
-
-	return client, nil
+	return &client{bqClient, cloudresourcemanagerService}, nil
 }
 
 func getDefaultProjectID(ctx context.Context, logger *logrus.Logger) (projectID string, err error) {
@@ -307,8 +332,8 @@ func (c *client) JobFromProject(ctx context.Context, projectID, jobID, location 
 	return newJobWrapper(job), nil
 }
 
-func (c *client) Jobs(ctx context.Context) *bigquery.JobIterator {
-	return c.bqClient.Jobs(ctx)
+func (c *client) Jobs(ctx context.Context) (*bigquery.JobIterator, error) {
+	return c.bqClient.Jobs(ctx), nil
 }
 
 func (c *client) SearchTables(ctx context.Context, projectIDs []string, query string) ([]TableSearchResult, error) {
