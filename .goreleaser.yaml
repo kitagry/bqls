@@ -16,6 +16,15 @@ builds:
     goarch:
       - amd64
       - arm64
+    hooks:
+      post:
+        # Anything that dirties the work tree during the release (e.g. an
+        # unignored output dir) makes Go stamp vcs.modified=true, which shows
+        # up as "(modified)" in --version. Fail before publishing instead.
+        # Snapshots are skipped because they are often built from local edits.
+        - cmd: >-
+            sh -c '{{ if not .IsSnapshot }}if go version -m "{{ .Path }}" | grep -q "vcs.modified=true"; then echo "{{ .Path }} was built from a modified work tree" >&2; exit 1; fi{{ end }}'
+          output: true
 
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
