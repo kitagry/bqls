@@ -29,5 +29,6 @@ var Analyzers = []*Analyzer{
 	TimestampStringLiteral,
 	NondeterministicCTE,
 	WindowDefaultFrame,
+	RegexpLiteral,
 	ArrayNullElement,
 }

@@ -70,6 +70,14 @@ func TestRun_Fix(t *testing.T) {
 				"a.sql": "SELECT ts FROM UNNEST([CURRENT_TIMESTAMP()]) AS ts WHERE ts >= TIMESTAMP('2024-01-01', 'UTC')\n",
 			},
 		},
+		"extraction pattern keeps its first capturing group": {
+			files:    map[string]string{"a.sql": "SELECT REGEXP_EXTRACT('ab', '(a)(b)')\n"},
+			args:     []string{"--fix", "a.sql"},
+			wantCode: 0,
+			wantFiles: map[string]string{
+				"a.sql": "SELECT REGEXP_EXTRACT('ab', '(a)(?:b)')\n",
+			},
+		},
 		"join rewrites are written back": {
 			files: map[string]string{
 				"a.sql": "SELECT a.x, b.y FROM (SELECT x FROM UNNEST([1, 2]) AS x) AS a, (SELECT y FROM UNNEST([3, 4]) AS y) AS b;\n" +
