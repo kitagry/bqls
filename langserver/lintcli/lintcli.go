@@ -171,14 +171,16 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 						written = false
 					}
 				}
+				// A file that could not be written is reported, and dry-run, as
+				// it is on disk rather than as the fixed text nobody will see.
 				if written {
 					fmt.Fprintf(stderr, "bqls lint: %s: %s\n", in.name, fixSummary(applied, rules))
+					if err := p.UpdateFile(in.uri, fixed, 2); err != nil {
+						fmt.Fprintf(stderr, "bqls lint: %s: %v\n", in.name, err)
+						return exitFailure
+					}
+					diags, _ = p.Diagnose(ctx, in.uri, cfgs[i])
 				}
-				if err := p.UpdateFile(in.uri, fixed, 2); err != nil {
-					fmt.Fprintf(stderr, "bqls lint: %s: %v\n", in.name, err)
-					return exitFailure
-				}
-				diags, _ = p.Diagnose(ctx, in.uri, cfgs[i])
 			}
 			if skipped := len(fixes) - len(applied); skipped > 0 {
 				fmt.Fprintf(stderr, "bqls lint: %s: skipped %d fix(es) overlapping another fix; run again to apply them\n", in.name, skipped)

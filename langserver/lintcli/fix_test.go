@@ -221,7 +221,7 @@ func TestRun_FixDoesNotRewriteUnchangedFiles(t *testing.T) {
 	}
 }
 
-func TestRun_FixWriteFailureIsNotReportedAsFixed(t *testing.T) {
+func TestRun_FixWriteFailureReportsTheFileOnDisk(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root can write read-only files")
 	}
@@ -231,9 +231,15 @@ func TestRun_FixWriteFailureIsNotReportedAsFixed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := runWith(t, mockFactory(t), "", "--fix", "a.sql")
+	// dryRunClient fails the test if the unsaved fixed text is dry-run.
+	factory := dryRunClient(t, map[string]int64{nullComparisonSQL: 2 << 40})
+	got := runWith(t, factory, "", "--fix", "--dry-run", "--enable", "bytes-processed-threshold", "a.sql")
 	if got.code != 2 {
 		t.Errorf("exit code = %d, want 2 (stderr: %s)", got.code, got.stderr)
+	}
+	if want := "a.sql:1:1: warning: This query will process 2 TiB, which exceeds the threshold of 1 TiB (bytes-processed-threshold)\n" +
+		"a.sql:1:38: warning: Comparison with NULL using = always yields NULL; use IS NULL (null-comparison)\n"; got.stdout != want {
+		t.Errorf("stdout = %q, want %q", got.stdout, want)
 	}
 	if !strings.Contains(got.stderr, "permission denied") {
 		t.Errorf("stderr = %q, want the write error", got.stderr)
