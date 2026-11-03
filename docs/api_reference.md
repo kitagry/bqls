@@ -212,6 +212,19 @@ Response:
 }
 ```
 
+### `bqls.reloadCredentials`
+
+Recreate the BigQuery client so that it picks up new Application Default Credentials, e.g. right after `gcloud auth application-default login`, and re-run diagnostics for the open documents. Without it, bqls recreates the client on a later BigQuery call after an authentication error.
+
+Request:
+
+```json
+{
+    "command": "bqls.reloadCredentials"
+}
+```
+
+Response: `null`
 
 # Custom API
 
@@ -302,5 +315,19 @@ interface PublishVirtualTextDocumentParams {
     result?: QueryResult;
     // Set instead of contents/result if the fetch failed.
     error?: string;
+}
+```
+
+## `bqls/authenticationRequired`
+
+A notification pushed by the server when BigQuery rejects the credentials, e.g. Application Default Credentials are missing, expired, or need reauthentication. Only sent to clients that opted in via `supports_authentication_required_notification` in `initializationOptions`, so that they can offer to log in; other clients get the same guidance via `window/showMessage`. It is sent once until a BigQuery call succeeds again. A client can send [`bqls.reloadCredentials`](#bqlsreloadcredentials) after the user logs in.
+
+```ts
+interface AuthenticationRequiredParams {
+    // Guidance to show, telling the user to run `gcloud auth login` and
+    // `gcloud auth application-default login`.
+    message: string;
+    // The authentication error BigQuery returned.
+    error: string;
 }
 ```

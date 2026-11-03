@@ -22,14 +22,15 @@ import (
 )
 
 const (
-	CommandExecuteQuery     = "bqls.executeQuery"
-	CommandCancelQuery      = "bqls.cancelQuery"
-	CommandListDatasets     = "bqls.listDatasets"
-	CommandListTables       = "bqls.listTables"
-	CommandListJobHistories = "bqls.listJobHistories"
-	CommandSaveResult       = "bqls.saveResult"
-	CommandSearchTables     = "bqls.searchTables"
-	CommandListProjects     = "bqls.listProjects"
+	CommandExecuteQuery      = "bqls.executeQuery"
+	CommandCancelQuery       = "bqls.cancelQuery"
+	CommandListDatasets      = "bqls.listDatasets"
+	CommandListTables        = "bqls.listTables"
+	CommandListJobHistories  = "bqls.listJobHistories"
+	CommandSaveResult        = "bqls.saveResult"
+	CommandSearchTables      = "bqls.searchTables"
+	CommandListProjects      = "bqls.listProjects"
+	CommandReloadCredentials = "bqls.reloadCredentials"
 )
 
 const (
@@ -113,6 +114,8 @@ func (h *Handler) handleWorkspaceExecuteCommand(ctx context.Context, conn *jsonr
 		return h.commandSearchTables(ctx, params)
 	case CommandListProjects:
 		return h.commandListProjects(ctx, params)
+	case CommandReloadCredentials:
+		return h.commandReloadCredentials()
 	default:
 		return nil, fmt.Errorf("unknown command: %s", params.Command)
 	}
@@ -307,7 +310,10 @@ func (h *Handler) commandListJobHistories(ctx context.Context, params lsp.Execut
 }
 
 func (h *Handler) listJobs(ctx context.Context, projectID string, allUsers bool, pageSize int) ([]lsp.JobHistory, error) {
-	it := h.bqClient.Jobs(ctx)
+	it, err := h.bqClient.Jobs(ctx)
+	if err != nil {
+		return nil, err
+	}
 	it.ProjectID = projectID
 	it.AllUsers = allUsers
 
