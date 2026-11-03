@@ -228,7 +228,7 @@ const BQLS_YAML = [
   "  rules:",
   "    bytes-processed-threshold:",
   "      enabled: true",
-  "      max_bytes: 1GiB",
+  "      max_bytes: 50MiB",
 ];
 
 const LINT_FINDINGS = [
@@ -259,6 +259,10 @@ const FIX_DIFF = [
   [["g-c", "@@ -3 +3 @@"], ["", " FROM `bigquery-public-data.austin_bikeshare.bikeshare_stations` AS s"]],
   [["g-r", "-LEFT JOIN `bigquery-public-data.austin_bikeshare.bikeshare_trips` AS t"]],
   [["g-g", "+INNER JOIN `bigquery-public-data.austin_bikeshare.bikeshare_trips` AS t"]],
+];
+
+const DRYRUN_FINDINGS = [
+  "queries/walk_up_trips.sql:1:1: warning: This query will process 91.18 MiB, which exceeds the threshold of 50 MiB (bytes-processed-threshold)",
 ];
 
 // ---- Timeline -----------------------------------------------------------------
@@ -473,15 +477,15 @@ wait(1200);
 command(`${LINT} --fix queries/`, 1000);
 wait(400);
 command("git diff -U0", 0, FIX_DIFF);
-wait(4500);
+wait(4000);
 command(`${LINT} queries/`, 900);
 wait(200);
 command("echo $?", 0, [plain("0")]);
 wait(1000);
-command(`${LINT} --dry-run queries/`, 1000);
-wait(200);
-command("echo $?", 0, [plain("0")]);
-wait(2200);
+command(`${LINT} --dry-run queries/`, 1300, DRYRUN_FINDINGS.map(plain));
+wait(3000);
+command("echo $?", 0, [plain("1")]);
+wait(1700);
 
 // ---- Rendering --------------------------------------------------------------
 
