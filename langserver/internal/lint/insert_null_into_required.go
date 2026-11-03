@@ -22,14 +22,7 @@ var InsertNullIntoRequired = &Analyzer{
 // unchanged copy of a column from the optional side of an outer join whose
 // side no condition outside the join reads. Anything computed is skipped.
 func runInsertNullIntoRequired(pass *Pass) {
-	inserts := make(map[offsets]*googlesql.ASTInsertStatement)
-	for _, s := range file.ListAstNode[*googlesql.ASTInsertStatement](pass.File.Node) {
-		path, err := s.GetTargetPathForNonNested()
-		if err != nil || path == nil {
-			continue
-		}
-		inserts[astOffsets(path)] = s
-	}
+	inserts := insertStatementsByTarget(pass)
 
 	for _, output := range pass.File.RNode {
 		stmt, err := output.ResolvedStatement()
@@ -185,6 +178,20 @@ type dmlValue struct {
 	id   int32
 	// at is where to report the value.
 	at offsets
+}
+
+// insertStatementsByTarget maps the AST INSERT statements by the offsets of
+// their target path, which match those of the resolved statement's table scan.
+func insertStatementsByTarget(pass *Pass) map[offsets]*googlesql.ASTInsertStatement {
+	inserts := make(map[offsets]*googlesql.ASTInsertStatement)
+	for _, s := range file.ListAstNode[*googlesql.ASTInsertStatement](pass.File.Node) {
+		path, err := s.GetTargetPathForNonNested()
+		if err != nil || path == nil {
+			continue
+		}
+		inserts[astOffsets(path)] = s
+	}
+	return inserts
 }
 
 // dmlTarget is the table a DML statement writes to.

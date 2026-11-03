@@ -19,6 +19,7 @@ var Analyzers = []*Analyzer{
 	UnionColumnOrder,
 	InsertColumnOrder,
 	InsertNullIntoRequired,
+	InsertMissingRequired,
 	BytesProcessedThreshold,
 	SelectStar,
 	LeftJoinAsInner,
