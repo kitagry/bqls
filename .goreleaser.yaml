@@ -2,6 +2,14 @@ version: 2
 
 project_name: bqls
 
+git:
+  # vscode-v* tags belong to the VS Code extension, which is released
+  # separately. Without this, goreleaser can pick one as the current or
+  # previous tag, breaking the snapshot version and the changelog range.
+  # Needs goreleaser >= v2.15.4.
+  ignore_tags:
+    - "vscode-v*"
+
 builds:
   - id: bqls
     main: .
