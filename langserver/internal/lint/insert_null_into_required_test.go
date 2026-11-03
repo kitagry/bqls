@@ -31,6 +31,11 @@ var requiredTables = map[string]*bq.TableMetadata{
 	"p.d.view": {Type: bq.ViewTable, Schema: bq.Schema{
 		{Name: "id", Type: bq.IntegerFieldType, Required: true},
 	}},
+	"p.d.def": {Type: bq.RegularTable, Schema: bq.Schema{
+		{Name: "id", Type: bq.IntegerFieldType, Required: true},
+		{Name: "created", Type: bq.TimestampFieldType, Required: true, DefaultValueExpression: "CURRENT_TIMESTAMP()"},
+		{Name: "v", Type: bq.IntegerFieldType},
+	}},
 	"p.d.src": {Type: bq.RegularTable, Schema: bq.Schema{
 		{Name: "id", Type: bq.IntegerFieldType, Required: true},
 		{Name: "v", Type: bq.IntegerFieldType},

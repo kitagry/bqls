@@ -23,6 +23,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`union-column-order`](#union-column-order) | on | warning | yes | | Set operation inputs whose columns are the first input's columns in a different order |
 | [`insert-column-order`](#insert-column-order) | on | warning | yes | | `INSERT ... SELECT` queries whose columns are the target columns in a different order |
 | [`insert-null-into-required`](#insert-null-into-required) | off | warning | | | `INSERT` / `UPDATE` / `MERGE` values that may be NULL written to a `REQUIRED` column, which BigQuery rejects only at run time |
+| [`insert-missing-required`](#insert-missing-required) | on | warning | | | `INSERT` / `MERGE ... INSERT` column lists that leave out a `REQUIRED` column without a default value, which BigQuery rejects only at run time |
 | [`left-join-as-inner`](#left-join-as-inner) | on | warning | yes | | `LEFT` / `RIGHT JOIN`s whose `WHERE` clause rejects the NULL rows of the optional side |
 | [`variable-column-shadow`](#variable-column-shadow) | on | warning | yes | | A column compared with itself because its bare name was meant as a same-named `DECLARE` variable |
 | [`join-key-implicit-cast`](#join-key-implicit-cast) | on | warning | | | `ON` / `USING` join keys of different types, so one side is implicitly cast (e.g. `INT64` to `FLOAT64`) |
@@ -111,6 +112,19 @@ A value counts as possibly NULL only when it is:
 Not reported, to avoid false positives: computed values (`COALESCE`, `IFNULL`, `IF`, functions, aggregates, arithmetic, struct fields), `REQUIRED` source columns, set operations, `UNNEST`, views and other non-table sources, `DEFAULT`, script variables and query parameters, a whole `STRUCT` copied from a table column, `REPEATED` fields, and nested `UPDATE` targets such as `SET s.f = ...`.
 
 This rule depends on the table schema, so it needs table metadata. It is off by default: copying from a table whose columns are all `NULLABLE` (e.g. a staging table loaded with schema auto-detection) into a `REQUIRED` table is common even when the data never holds NULLs, and such statements already fail loudly at run time. Enable it to catch these before running the statement. There is no quick fix, since any replacement value (`COALESCE(x, 0)`) or filter (`WHERE x IS NOT NULL`) changes what the statement writes.
+
+#### `insert-missing-required`
+
+An `INSERT` column list, or the column list of a `MERGE ... WHEN NOT MATCHED THEN INSERT (...)`, that leaves out a `REQUIRED` column of the target table which has no default value (`DEFAULT` in the column definition, `defaultValueExpression` in the schema). BigQuery fills an omitted column with its default or NULL, so such a statement passes analysis and dry run but fails at run time with `Required field ... cannot be null` once it writes a row. Reported on the column list, once per missing column.
+
+```sql
+-- my_dataset.t: id INT64 NOT NULL, v INT64
+INSERT INTO my_dataset.t (v) VALUES (1);  -- leaves out `id`
+```
+
+Not reported: `INSERT` and `MERGE ... INSERT VALUES (...)` without a column list and `INSERT ROW`, which write every column, `REQUIRED` columns with a default value, views and other non-table targets. Only top-level columns are checked: a `STRUCT` value always has every field, and an omitted `NULLABLE` `RECORD` column is NULL as a whole. An `INSERT ... SELECT` whose query returns no rows succeeds at run time, but is reported too.
+
+This rule depends on the table schema, so it needs table metadata. Unlike [`insert-null-into-required`](#insert-null-into-required), it is on by default: a missing column fails every row the statement writes, so a report is never a false positive. There is no quick fix, since bqls cannot know the value to add.
 
 #### `left-join-as-inner`
 
