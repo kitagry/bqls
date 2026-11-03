@@ -47,15 +47,18 @@ func runRegexpLiteral(pass *Pass) {
 			if err != nil || len(args) < 2 {
 				continue
 			}
-			lit, re, ok := checkRegexpPattern(pass, args[1])
-			if !ok {
+			lit, re, invalid := checkRegexpPattern(pass, args[1])
+			if invalid {
 				continue
 			}
-			if singleGroupFunctions[name] && re.MaxCap() > 1 {
+			if singleGroupFunctions[name] && re != nil && re.MaxCap() > 1 {
 				pass.Report(Diagnostic{
 					Range:   lit.loc,
 					Message: fmt.Sprintf("The regular expression %s has %d capturing groups, but REGEXP_EXTRACT, REGEXP_EXTRACT_ALL, REGEXP_SUBSTR and REGEXP_INSTR allow at most one, so the query fails when this is evaluated; make the other groups non-capturing with (?:...)", lit.src, re.MaxCap()),
 				})
+			}
+			if name == "regexp_replace" && len(args) >= 3 {
+				checkRegexpReplacement(pass, args[2], lit, re)
 			}
 		}
 	}
@@ -63,14 +66,14 @@ func runRegexpLiteral(pass *Pass) {
 
 // checkRegexpPattern reports expr when it is an invalid pattern literal, and
 // returns it parsed when it is a valid one.
-func checkRegexpPattern(pass *Pass, expr googlesql.ResolvedExprNode) (stringLiteral, *syntax.Regexp, bool) {
+func checkRegexpPattern(pass *Pass, expr googlesql.ResolvedExprNode) (lit stringLiteral, re *syntax.Regexp, invalid bool) {
 	lit, ok := writtenStringLiteral(pass, expr)
 	if !ok {
 		return stringLiteral{}, nil, false
 	}
 	re, err := syntax.Parse(lit.value, syntax.Perl)
 	if err == nil {
-		return lit, re, true
+		return lit, re, false
 	}
 	var serr *syntax.Error
 	if !errors.As(err, &serr) || !reportedByRE2(serr) {
@@ -80,7 +83,52 @@ func checkRegexpPattern(pass *Pass, expr googlesql.ResolvedExprNode) (stringLite
 		Range:   lit.loc,
 		Message: fmt.Sprintf("Invalid regular expression %s: %s: `%s`, so the query fails when this is evaluated", lit.src, serr.Code, serr.Expr),
 	})
-	return stringLiteral{}, nil, false
+	return stringLiteral{}, nil, true
+}
+
+// checkRegexpReplacement applies RE2's CheckRewriteString, which BigQuery
+// runs before replacing anything: a backslash must be followed by a digit or
+// a backslash, and \N must name a group of pattern. pattern is checked only
+// when re is not nil.
+func checkRegexpReplacement(pass *Pass, expr googlesql.ResolvedExprNode, pattern stringLiteral, re *syntax.Regexp) {
+	lit, ok := writtenStringLiteral(pass, expr)
+	if !ok {
+		return
+	}
+	group := 0
+	for i := 0; i < len(lit.value); i++ {
+		if lit.value[i] != '\\' {
+			continue
+		}
+		i++
+		if i < len(lit.value) && lit.value[i] == '\\' {
+			continue
+		}
+		if i == len(lit.value) || lit.value[i] < '0' || lit.value[i] > '9' {
+			pass.Report(Diagnostic{
+				Range:   lit.loc,
+				Message: fmt.Sprintf(`In the replacement %s, a backslash must be followed by a digit or another backslash (write \\ for a literal backslash), so the query fails when this is evaluated`, lit.src),
+			})
+			return
+		}
+		group = max(group, int(lit.value[i]-'0'))
+	}
+	if re != nil && group > re.MaxCap() {
+		pass.Report(Diagnostic{
+			Range:   lit.loc,
+			Message: fmt.Sprintf(`The replacement %s refers to group \%d, but the regular expression %s has %s, so the query fails when this is evaluated`, lit.src, group, pattern.src, capturingGroups(re.MaxCap())),
+		})
+	}
+}
+
+func capturingGroups(n int) string {
+	switch n {
+	case 0:
+		return "no capturing groups"
+	case 1:
+		return "1 capturing group"
+	}
+	return fmt.Sprintf("%d capturing groups", n)
 }
 
 // reportedByRE2 reports whether BigQuery's RE2 is known to reject the

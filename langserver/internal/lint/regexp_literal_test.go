@@ -145,3 +145,75 @@ func TestRegexpLiteral_TooManyCapturingGroups(t *testing.T) {
 		})
 	}
 }
+
+func missingGroupMsg(repl string, group int, pattern, groups string) string {
+	return fmt.Sprintf(`The replacement %s refers to group \%d, but the regular expression %s has %s, so the query fails when this is evaluated`, repl, group, pattern, groups)
+}
+
+func badRewriteMsg(repl string) string {
+	return `In the replacement ` + repl + `, a backslash must be followed by a digit or another backslash (write \\ for a literal backslash), so the query fails when this is evaluated`
+}
+
+func TestRegexpLiteral_Replacement(t *testing.T) {
+	tests := map[string]struct {
+		src  string
+		lit  string
+		msg  string
+		want bool
+	}{
+		"group beyond the last one": {
+			src: `SELECT REGEXP_REPLACE('ab', '(a)', r'\2')`, lit: `r'\2'`,
+			msg: missingGroupMsg(`r'\2'`, 2, "'(a)'", "1 capturing group"), want: true,
+		},
+		"reports the highest group": {
+			src: `SELECT REGEXP_REPLACE('ab', 'a', r'\1\3\2')`, lit: `r'\1\3\2'`,
+			msg: missingGroupMsg(`r'\1\3\2'`, 3, "'a'", "no capturing groups"), want: true,
+		},
+		"escaped backslash in a quoted string": {
+			src: `SELECT REGEXP_REPLACE('ab', '(a)(b)', '\\3')`, lit: `'\\3'`,
+			msg: missingGroupMsg(`'\\3'`, 3, "'(a)(b)'", "2 capturing groups"), want: true,
+		},
+		"BYTES": {
+			src: `SELECT REGEXP_REPLACE(b'ab', b'(a)', b'\\2')`, lit: `b'\\2'`,
+			msg: missingGroupMsg(`b'\\2'`, 2, "b'(a)'", "1 capturing group"), want: true,
+		},
+		"backslash before a letter": {
+			src: `SELECT REGEXP_REPLACE('ab', 'a', r'\n')`, lit: `r'\n'`,
+			msg: badRewriteMsg(`r'\n'`), want: true,
+		},
+		"backslash at the end": {
+			src: `SELECT REGEXP_REPLACE('ab', 'a', 'x\\')`, lit: `'x\\'`,
+			msg: badRewriteMsg(`'x\\'`), want: true,
+		},
+		// The rewrite string is checked on its own, whatever the pattern is.
+		"bad escape with a pattern that is not a literal": {
+			src: `SELECT REGEXP_REPLACE('ab', CONCAT('a', 'b'), r'\a')`, lit: `r'\a'`,
+			msg: badRewriteMsg(`r'\a'`), want: true,
+		},
+		"existing groups":                {src: `SELECT REGEXP_REPLACE('ab', '(a)(b)', r'\2\1')`},
+		"whole match":                    {src: `SELECT REGEXP_REPLACE('ab', 'a', r'\0')`},
+		"escaped backslash":              {src: `SELECT REGEXP_REPLACE('ab', 'a', r'\\1')`},
+		"single digit after a backslash": {src: `SELECT REGEXP_REPLACE('ab', '(a)', r'\10')`},
+		"pattern that is not a literal":  {src: `SELECT REGEXP_REPLACE('ab', CONCAT('a', 'b'), r'\2')`},
+		"replacement that is not a literal": {
+			src: "DECLARE v STRING DEFAULT r'\\2';\nSELECT REGEXP_REPLACE('ab', '(a)', v)",
+		},
+		// Only the invalid pattern is reported; BigQuery fails on it first.
+		"invalid pattern": {
+			src: `SELECT REGEXP_REPLACE('ab', '(', r'\2')`, lit: "'('",
+			msg: invalidRegexpMsg("'('", "missing closing ): `(`"), want: true,
+		},
+	}
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			var want []lint.Diagnostic
+			if tt.want {
+				want = []lint.Diagnostic{regexpDiag(tt.src, tt.lit, tt.msg)}
+			}
+			got := runRegexpLiteral(t, tt.src)
+			if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(lint.Diagnostic{}, "SuggestedFixes")); diff != "" {
+				t.Errorf("diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
