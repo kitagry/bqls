@@ -8,3 +8,4 @@ tsconfig.json
 **/*.map
 **/.eslintrc*
 scripts/**
+biome.json
