@@ -29,6 +29,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`missing-order-by`](#missing-order-by) | off | warning | | | `ROW_NUMBER()` filters, `ARRAY_AGG` / `STRING_AGG` with `LIMIT`, and indexed `ARRAY_AGG` results without `ORDER BY`, which pick arbitrary rows |
 | [`timestamp-string-literal`](#timestamp-string-literal) | off | warning | yes | `time_zone` | String literals without a time zone compared with a `TIMESTAMP`, which are read as UTC |
 | [`nondeterministic-cte`](#nondeterministic-cte) | on | warning | | | `RAND()` / `GENERATE_UUID()` in a CTE that is evaluated more than once, so each reference sees different values |
+| [`regexp-literal`](#regexp-literal) | on | warning | yes | | Constant regular expressions BigQuery rejects: invalid RE2, more than one capturing group in `REGEXP_EXTRACT` and friends, or `REGEXP_REPLACE` references to missing groups |
 | **Cost** | | | | | |
 | [`partition-filter`](#partition-filter) | on | warning | | | Partitioned tables read without a filter on the partition column |
 | [`partition-filter-not-prunable`](#partition-filter-not-prunable) | off | warning | | | Partition column filters written in a form BigQuery documents as unable to prune partitions |
@@ -159,6 +160,20 @@ Off by default: such comparisons are common and often do mean UTC.
 A CTE referenced once from another CTE that is itself referenced twice also runs twice. The call is reported when it decides which rows the CTE returns (`WHERE`, `JOIN ... ON`, `GROUP BY`, `ORDER BY ... LIMIT`, window ordering), or when it flows into an output column that at least two evaluations read.
 
 Not reported: `CURRENT_TIMESTAMP` / `CURRENT_DATE` / `CURRENT_DATETIME` / `CURRENT_TIME`, which BigQuery fixes for the whole statement; recursive CTEs (materialized); calls outside a CTE; references from unreferenced CTEs; a random column that only one evaluation reads (e.g. the other one only does `COUNT(*)` or `SELECT * EXCEPT (r)`); `EXISTS`; `ORDER BY RAND()` without `LIMIT`; and column flows bqls does not follow. References that read disjoint rows (`... WHERE kind = 'a' UNION ALL ... WHERE kind = 'b'`) are still reported, since bqls cannot tell the rows apart.
+
+#### `regexp-literal`
+
+A constant regular expression that BigQuery rejects when it evaluates the call. Patterns are [RE2](https://github.com/google/re2/wiki/Syntax) and are checked only when written as a `STRING` or `BYTES` literal (raw and triple-quoted strings included) in `REGEXP_CONTAINS`, `REGEXP_EXTRACT`, `REGEXP_EXTRACT_ALL`, `REGEXP_SUBSTR`, `REGEXP_INSTR` or `REGEXP_REPLACE`. Reported on the literal:
+
+- A pattern RE2 cannot parse, e.g. `'('`, `r'\Z'`, `'(?=a)'` (no lookaround) or `'a{1001}'` (counts above 1000). The message gives the reason.
+- A pattern with more than one capturing group in `REGEXP_EXTRACT`, `REGEXP_EXTRACT_ALL`, `REGEXP_SUBSTR` or `REGEXP_INSTR` ("Regular expressions passed into extraction functions must not have more than 1 capturing group"), e.g. `REGEXP_EXTRACT(s, r'(\w+)@(\w+)')`. Named groups (`(?P<name>...)`, `(?<name>...)`) count; `(?:...)` does not.
+- A `REGEXP_REPLACE` replacement that refers to a group the pattern does not have (`\2` with one group, `\1` with none), or whose backslash is followed by anything but a digit or a backslash (`r'\n'`, a trailing `\`). Only `\0` to `\9` are group references, and `\\` is a literal backslash.
+
+These fail whether or not any row matches, but only when the call is evaluated: a query over no rows, or a call in a branch that is never taken, still succeeds.
+
+The quick fixes for too many capturing groups each keep one group and make the others non-capturing, e.g. `r'(\w+)@(?:\w+)'` keeps group 1, which is the one `bqls lint --fix` applies. A fix is not offered when a parenthesis it changes is written as an escape sequence (`'\x28'`).
+
+Not reported: patterns and replacements that are not literals (`DECLARE`d variables, query parameters, `CONCAT(...)`), and errors where Go's RE2 parser, which bqls uses, may disagree with BigQuery's: `\C` (any byte), unknown `\p{...}` classes (Unicode versions differ), and size limits. `BYTES` patterns are read as Latin-1, as BigQuery does.
 
 ### Cost
 
