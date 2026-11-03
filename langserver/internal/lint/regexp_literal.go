@@ -29,6 +29,13 @@ var regexpFunctions = map[string]bool{
 	"regexp_replace":     true,
 }
 
+// singleGroupFunctions fail on a pattern with more than one capturing group.
+var singleGroupFunctions = map[string]bool{
+	"regexp_extract":     true,
+	"regexp_extract_all": true,
+	"regexp_instr":       true,
+}
+
 func runRegexpLiteral(pass *Pass) {
 	for _, output := range pass.File.RNode {
 		for _, call := range file.ListResolvedAstNode[*googlesql.ResolvedFunctionCall](output) {
@@ -40,25 +47,40 @@ func runRegexpLiteral(pass *Pass) {
 			if err != nil || len(args) < 2 {
 				continue
 			}
-			checkRegexpPattern(pass, args[1])
+			lit, re, ok := checkRegexpPattern(pass, args[1])
+			if !ok {
+				continue
+			}
+			if singleGroupFunctions[name] && re.MaxCap() > 1 {
+				pass.Report(Diagnostic{
+					Range:   lit.loc,
+					Message: fmt.Sprintf("The regular expression %s has %d capturing groups, but REGEXP_EXTRACT, REGEXP_EXTRACT_ALL, REGEXP_SUBSTR and REGEXP_INSTR allow at most one, so the query fails when this is evaluated; make the other groups non-capturing with (?:...)", lit.src, re.MaxCap()),
+				})
+			}
 		}
 	}
 }
 
-func checkRegexpPattern(pass *Pass, expr googlesql.ResolvedExprNode) {
+// checkRegexpPattern reports expr when it is an invalid pattern literal, and
+// returns it parsed when it is a valid one.
+func checkRegexpPattern(pass *Pass, expr googlesql.ResolvedExprNode) (stringLiteral, *syntax.Regexp, bool) {
 	lit, ok := writtenStringLiteral(pass, expr)
 	if !ok {
-		return
+		return stringLiteral{}, nil, false
 	}
-	_, err := syntax.Parse(lit.value, syntax.Perl)
+	re, err := syntax.Parse(lit.value, syntax.Perl)
+	if err == nil {
+		return lit, re, true
+	}
 	var serr *syntax.Error
 	if !errors.As(err, &serr) || !reportedByRE2(serr) {
-		return
+		return stringLiteral{}, nil, false
 	}
 	pass.Report(Diagnostic{
 		Range:   lit.loc,
 		Message: fmt.Sprintf("Invalid regular expression %s: %s: `%s`, so the query fails when this is evaluated", lit.src, serr.Code, serr.Expr),
 	})
+	return stringLiteral{}, nil, false
 }
 
 // reportedByRE2 reports whether BigQuery's RE2 is known to reject the

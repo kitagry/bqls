@@ -1,6 +1,7 @@
 package lint_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -99,6 +100,43 @@ func TestRegexpLiteral_InvalidPattern(t *testing.T) {
 			var want []lint.Diagnostic
 			if tt.want {
 				want = []lint.Diagnostic{regexpDiag(tt.src, tt.lit, tt.msg)}
+			}
+			got := runRegexpLiteral(t, tt.src)
+			if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(lint.Diagnostic{}, "SuggestedFixes")); diff != "" {
+				t.Errorf("diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func tooManyGroupsMsg(lit string, n int) string {
+	return fmt.Sprintf("The regular expression %s has %d capturing groups, but REGEXP_EXTRACT, REGEXP_EXTRACT_ALL, REGEXP_SUBSTR and REGEXP_INSTR allow at most one, so the query fails when this is evaluated; make the other groups non-capturing with (?:...)", lit, n)
+}
+
+func TestRegexpLiteral_TooManyCapturingGroups(t *testing.T) {
+	tests := map[string]struct {
+		src  string
+		lit  string
+		n    int
+		want bool
+	}{
+		"REGEXP_EXTRACT":     {src: "SELECT REGEXP_EXTRACT('ab', '(a)(b)')", lit: "'(a)(b)'", n: 2, want: true},
+		"REGEXP_EXTRACT_ALL": {src: "SELECT REGEXP_EXTRACT_ALL('ab', '(a)(b)(c)')", lit: "'(a)(b)(c)'", n: 3, want: true},
+		"REGEXP_SUBSTR":      {src: "SELECT REGEXP_SUBSTR('ab', '(a)(b)')", lit: "'(a)(b)'", n: 2, want: true},
+		"REGEXP_INSTR":       {src: "SELECT REGEXP_INSTR('ab', '(a)(b)')", lit: "'(a)(b)'", n: 2, want: true},
+		"named groups":       {src: "SELECT REGEXP_EXTRACT('ab', '(?P<x>a)(?<y>b)')", lit: "'(?P<x>a)(?<y>b)'", n: 2, want: true},
+		"nested groups":      {src: "SELECT REGEXP_EXTRACT('ab', '((a)b)')", lit: "'((a)b)'", n: 2, want: true},
+		"BYTES":              {src: "SELECT REGEXP_EXTRACT(b'ab', b'(a)(b)')", lit: "b'(a)(b)'", n: 2, want: true},
+		"one group":          {src: "SELECT REGEXP_EXTRACT('ab', '(a)(?:b)')"},
+		"escaped parens":     {src: `SELECT REGEXP_EXTRACT('ab', r'\(a\)(b)[(]\Q(\E')`},
+		"REGEXP_CONTAINS":    {src: "SELECT REGEXP_CONTAINS('ab', '(a)(b)')"},
+		"REGEXP_REPLACE":     {src: "SELECT REGEXP_REPLACE('ab', '(a)(b)', 'x')"},
+	}
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			var want []lint.Diagnostic
+			if tt.want {
+				want = []lint.Diagnostic{regexpDiag(tt.src, tt.lit, tooManyGroupsMsg(tt.lit, tt.n))}
 			}
 			got := runRegexpLiteral(t, tt.src)
 			if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(lint.Diagnostic{}, "SuggestedFixes")); diff != "" {
