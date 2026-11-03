@@ -72,6 +72,7 @@ func TestRun_DryRun(t *testing.T) {
 			want: result{
 				code:   1,
 				stdout: "a.sql:1:1: warning: This query will process 2 TiB, which exceeds the threshold of 1 TiB (bytes-processed-threshold)\n",
+				stderr: "bqls lint: a.sql: fixed 1 finding (unused-cte)\n",
 			},
 		},
 	}

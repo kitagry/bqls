@@ -9,7 +9,7 @@ The scenes are:
 3. A lint warning (`null-comparison`) fixed with its quick fix
 4. The dry-run cost estimate shown on save
 5. `Execute Query` and the job result in a split
-6. `bqls lint` in a terminal, as in CI: the findings of schema-aware rules (`not-in-nullable`, `union-column-order`, `left-join-as-inner`) and the exit code, `--fix` and the resulting `git diff`, a clean rerun, and `--dry-run`, which lets `bytes-processed-threshold` (set in `.bqls.yaml`) flag the query that would scan 91.18 MiB
+6. `bqls lint` in a terminal, as in CI: the findings of schema-aware rules (`not-in-nullable`, `union-column-order`, `left-join-as-inner`) and the exit code, `--fix` with its summary of the fixed files and the resulting `git diff`, a clean rerun, and `--dry-run`, which lets `bytes-processed-threshold` (set in `.bqls.yaml`) flag the query that would scan 91.18 MiB
 
 ## Regenerating
 
@@ -50,6 +50,7 @@ The timeline is the list of steps at the bottom of the `<script>` in `demo.html`
 | Dry-run message | `langserver/diagnostic.go` (`This query will process ... when run.`) |
 | Job document and result table | `buildBigQueryJobMarkedString` in `langserver/internal/source/project.go`, and `convert_data_to_markdown` in bqls.nvim |
 | `bqls lint` output and exit codes | `writeText` and `run` in `langserver/lintcli/lintcli.go`; the messages come from `not_in_nullable.go`, `union_column_order.go`, `left_join_as_inner.go`, and `bytes_processed_threshold.go` in `langserver/internal/lint/` |
+| `--fix` summary | `fixSummary` and `run` in `langserver/lintcli/lintcli.go` |
 | `git diff` after `--fix` | The quick fixes of the same three rules, applied by `applyFixes` in `langserver/lintcli/lintcli.go` |
 | `.bqls.yaml` | `ParseConfigFile` in `langserver/internal/lint/config_file.go` |
 
