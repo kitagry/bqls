@@ -2,3 +2,4 @@ build/
 docs/demo/node_modules/
 docs/demo/frames/
 docs/demo/demo.mp4
+dist/
