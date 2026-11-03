@@ -29,6 +29,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`missing-order-by`](#missing-order-by) | off | warning | | | `ROW_NUMBER()` filters, `ARRAY_AGG` / `STRING_AGG` with `LIMIT`, and indexed `ARRAY_AGG` results without `ORDER BY`, which pick arbitrary rows |
 | [`timestamp-string-literal`](#timestamp-string-literal) | off | warning | yes | `time_zone` | String literals without a time zone compared with a `TIMESTAMP`, which are read as UTC |
 | [`nondeterministic-cte`](#nondeterministic-cte) | on | warning | | | `RAND()` / `GENERATE_UUID()` in a CTE that is evaluated more than once, so each reference sees different values |
+| [`window-default-frame`](#window-default-frame) | on | warning | yes | | `LAST_VALUE` / `NTH_VALUE` whose window has `ORDER BY` but no frame, so the default frame ends at the current row |
 | **Cost** | | | | | |
 | [`partition-filter`](#partition-filter) | on | warning | | | Partitioned tables read without a filter on the partition column |
 | [`partition-filter-not-prunable`](#partition-filter-not-prunable) | off | warning | | | Partition column filters written in a form BigQuery documents as unable to prune partitions |
@@ -159,6 +160,14 @@ Off by default: such comparisons are common and often do mean UTC.
 A CTE referenced once from another CTE that is itself referenced twice also runs twice. The call is reported when it decides which rows the CTE returns (`WHERE`, `JOIN ... ON`, `GROUP BY`, `ORDER BY ... LIMIT`, window ordering), or when it flows into an output column that at least two evaluations read.
 
 Not reported: `CURRENT_TIMESTAMP` / `CURRENT_DATE` / `CURRENT_DATETIME` / `CURRENT_TIME`, which BigQuery fixes for the whole statement; recursive CTEs (materialized); calls outside a CTE; references from unreferenced CTEs; a random column that only one evaluation reads (e.g. the other one only does `COUNT(*)` or `SELECT * EXCEPT (r)`); `EXISTS`; `ORDER BY RAND()` without `LIMIT`; and column flows bqls does not follow. References that read disjoint rows (`... WHERE kind = 'a' UNION ALL ... WHERE kind = 'b'`) are still reported, since bqls cannot tell the rows apart.
+
+#### `window-default-frame`
+
+`LAST_VALUE` or `NTH_VALUE(x, n)` (`n` > 1) whose window has `ORDER BY` but no `ROWS` / `RANGE` frame. Such a window [uses the default frame](https://cloud.google.com/bigquery/docs/reference/standard-sql/window-function-calls#def_window_frame) `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`, so `LAST_VALUE(x) OVER (PARTITION BY id ORDER BY ts)` returns `x` of the current row (or of its last peer), not of the last row of the partition, and `NTH_VALUE(x, 2)` returns NULL on the first row. Reported on the function name. A window taken from a named `WINDOW` clause is checked the same way.
+
+Not reported: an explicit frame, also one written in a named window, and also when it is the default one written out (`RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`); `FIRST_VALUE` and `NTH_VALUE(x, 1)`, which the default frame already gives the right row; `LAST_VALUE(x IGNORE NULLS)`, the usual way to carry the last non-NULL value forward; aggregates such as `SUM` and `ARRAY_AGG`, whose running results are what the default frame is for; and windows ordered only by their `PARTITION BY` columns, where every row is a peer and the frame is the whole partition.
+
+The quick fix adds `ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` after the last clause of the call's `OVER` clause, e.g. `OVER (PARTITION BY id ORDER BY ts ROWS BETWEEN ...)`. A named window gets parentheses (`OVER w` becomes `OVER (w ROWS BETWEEN ...)`), and the `WINDOW` clause itself is left alone, since other calls may use it. The fix changes the result to the one the function name suggests.
 
 ### Cost
 
