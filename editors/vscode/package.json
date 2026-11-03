@@ -25,6 +25,11 @@
 	],
 	"main": "./dist/extension.js",
 	"contributes": {
+		"taskDefinitions": [
+			{
+				"type": "bqls"
+			}
+		],
 		"languages": [
 			{
 				"id": "sql",
