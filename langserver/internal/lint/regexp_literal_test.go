@@ -217,3 +217,84 @@ func TestRegexpLiteral_Replacement(t *testing.T) {
 		})
 	}
 }
+
+func TestRegexpLiteral_TooManyCapturingGroupsFix(t *testing.T) {
+	const call = "SELECT REGEXP_EXTRACT('ab', "
+	type fix struct{ title, fixed string }
+	keep := func(group int, pattern string) fix {
+		return fix{fmt.Sprintf("Make every capturing group except group %d non-capturing", group), call + pattern + ")"}
+	}
+	tests := map[string]struct {
+		pattern string
+		want    []fix
+	}{
+		"two groups": {
+			pattern: "'(a)(b)'",
+			want:    []fix{keep(1, "'(a)(?:b)'"), keep(2, "'(?:a)(b)'")},
+		},
+		"nested groups": {
+			pattern: "'((a)b)(c)'",
+			want: []fix{
+				keep(1, "'((?:a)b)(?:c)'"),
+				keep(2, "'(?:(a)b)(?:c)'"),
+				keep(3, "'(?:(?:a)b)(c)'"),
+			},
+		},
+		"named groups": {
+			pattern: "'(?P<x>a)(?<y>b)'",
+			want:    []fix{keep(1, "'(?P<x>a)(?:b)'"), keep(2, "'(?:a)(?<y>b)'")},
+		},
+		"escapes in a quoted string": {
+			pattern: `'(\\d+)-(\\d+)'`,
+			want:    []fix{keep(1, `'(\\d+)-(?:\\d+)'`), keep(2, `'(?:\\d+)-(\\d+)'`)},
+		},
+		"parens that are not groups": {
+			pattern: `r'[(][[:alpha:]](a)\(\Q(\E(b)'`,
+			want:    []fix{keep(1, `r'[(][[:alpha:]](a)\(\Q(\E(?:b)'`), keep(2, `r'[(][[:alpha:]](?:a)\(\Q(\E(b)'`)},
+		},
+		"triple-quoted raw string": {
+			pattern: `R"""(a)'(b)"""`,
+			want:    []fix{keep(1, `R"""(a)'(?:b)"""`), keep(2, `R"""(?:a)'(b)"""`)},
+		},
+		"multibyte text before a group": {
+			pattern: "'é(a)(b)'",
+			want:    []fix{keep(1, "'é(a)(?:b)'"), keep(2, "'é(?:a)(b)'")},
+		},
+		"BYTES with an escape": {
+			pattern: `b'\xff(a)(b)'`,
+			want:    []fix{keep(1, `b'\xff(a)(?:b)'`), keep(2, `b'\xff(?:a)(b)'`)},
+		},
+		// The first group's paren is written as an escape, which cannot take
+		// "?:" after it.
+		"group opened by an escape": {
+			pattern: `'\x28a)(b)'`,
+			want:    []fix{keep(1, `'\x28a)(?:b)'`)},
+		},
+	}
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			src := call + tt.pattern + ")"
+			if strings.HasPrefix(tt.pattern, "b") {
+				src = "SELECT REGEXP_EXTRACT(b'ab', " + tt.pattern + ")"
+				for i := range tt.want {
+					tt.want[i].fixed = strings.Replace(tt.want[i].fixed, "'ab'", "b'ab'", 1)
+				}
+			}
+			diags := runRegexpLiteral(t, src)
+			if len(diags) != 1 {
+				t.Fatalf("got %d diagnostics, want 1: %+v", len(diags), diags)
+			}
+			var got []fix
+			for _, f := range diags[0].SuggestedFixes {
+				fixed := applyFixes(t, src, []lint.Diagnostic{{SuggestedFixes: []lint.SuggestedFix{f}}})
+				got = append(got, fix{f.Title, fixed})
+				if after := runRegexpLiteral(t, fixed); len(after) != 0 {
+					t.Errorf("diagnostics after %q: %+v", f.Title, after)
+				}
+			}
+			if diff := cmp.Diff(tt.want, got, cmp.AllowUnexported(fix{})); diff != "" {
+				t.Errorf("fixes diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
