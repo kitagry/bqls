@@ -381,11 +381,9 @@ Storage info
 				}, nil).MinTimes(0)
 				return bqClient
 			},
-			// Only the type, because the target table is named by its last
-			// identifier for the validator, so its columns do not lead to the
-			// table metadata.
 			expectMarkedStrings: []lsp.MarkedString{
-				{Language: "sql", Value: "name: STRING"},
+				{Language: "sql", Value: "name: STRING (nullable)"},
+				lsp.RawMarkedString("name description"),
 			},
 		},
 		"hover column after statement with unfixable error": {
@@ -1607,4 +1605,68 @@ func builtinFunctionURL(t *testing.T, name string) string {
 		t.Fatalf("built-in function %s has no URL", name)
 	}
 	return f.URL
+}
+
+func TestProject_TermDocument_DDLTargetTable(t *testing.T) {
+	tests := map[string]string{
+		"CREATE ROW ACCESS POLICY":      "CREATE ROW ACCESS POLICY pol ON project.dataset.|table FILTER USING (name = 'a')",
+		"ALTER ROW ACCESS POLICY":       "ALTER ROW ACCESS POLICY pol ON project.dataset.|table FILTER USING (name = 'a')",
+		"DROP ROW ACCESS POLICY":        "DROP ROW ACCESS POLICY pol ON project.dataset.|table",
+		"DROP ALL ROW ACCESS POLICIES":  "DROP ALL ROW ACCESS POLICIES ON project.dataset.|table",
+		"CREATE SEARCH INDEX":           "CREATE SEARCH INDEX idx ON project.dataset.|table (ALL COLUMNS)",
+		"DROP SEARCH INDEX":             "DROP SEARCH INDEX idx ON project.dataset.|table",
+		"ALTER TABLE":                   "ALTER TABLE project.dataset.|table ADD COLUMN x INT64",
+		"backticked ALTER TABLE target": "ALTER TABLE `project.dataset.|table` SET OPTIONS (description = 'd')",
+	}
+
+	for n, sql := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetDefaultProject().Return("project").AnyTimes()
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").Return(&bq.TableMetadata{
+				FullID:           "project:dataset.table",
+				CreationTime:     time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+				LastModifiedTime: time.Date(2023, 6, 17, 0, 0, 0, 0, time.UTC),
+				Schema: bq.Schema{
+					{Name: "name", Type: bq.StringFieldType},
+				},
+			}, nil).MinTimes(0)
+			p := source.NewProjectWithBQClient("/", bqClient, logrus.New())
+
+			files, path, position, err := helper.GetUTF16LspPosition(map[lsp.DocumentURI]string{"file1.sql": sql})
+			if err != nil {
+				t.Fatalf("failed to get position: %v", err)
+			}
+			for uri, content := range files {
+				p.UpdateFile(uri, content, 1)
+			}
+
+			got, err := p.TermDocument(context.Background(), path, position)
+			if err != nil {
+				t.Fatalf("TermDocument returned error: %v", err)
+			}
+
+			want := []lsp.MarkedString{
+				lsp.RawMarkedString(`Table: project.dataset.table
+
+Table info
+
+* Created: 2023-06-17 00:00:00
+* Last modified: 2023-06-17 00:00:00
+
+Storage info
+
+* Number of rows: 0
+* Total logical bytes: 0 bytes
+
+[Docs](https://console.cloud.google.com/bigquery?project=project&ws=!1m5!1m4!4m3!1sproject!2sdataset!3stable)
+`),
+				lsp.RawMarkedString("| Name | Type | Mode | Description |\n| --- | --- | --- | --- |\n| name | STRING | NULLABLE |  |\n"),
+			}
+			if diff := cmp.Diff(want, got, cmpopts.IgnoreUnexported(lsp.MarkedString{})); diff != "" {
+				t.Errorf("project.TermDocument result diff (-expect, +got)\n%s", diff)
+			}
+		})
+	}
 }

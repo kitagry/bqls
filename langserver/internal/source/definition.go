@@ -51,7 +51,7 @@ func (p *Project) lookupIdent(ctx context.Context, uri lsp.DocumentURI, parsedFi
 	}
 
 	if pathExpr, ok := file.SearchAstNode[*googlesql.ASTPathExpression](parsedFile.Node, termOffset); ok {
-		if name, ok := file.DMLTargetTableName(pathExpr); ok {
+		if name, ok := file.TargetTableName(pathExpr); ok {
 			return p.listupTableEntries(ctx, name), nil
 		}
 	}
