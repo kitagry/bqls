@@ -89,6 +89,26 @@ func TestUnionColumnOrder(t *testing.T) {
 			src:  "INSERT INTO p.d.t (x) SELECT a FROM (SELECT 1 AS a, 2 AS b UNION ALL SELECT 2 AS b, 1 AS a)",
 			want: []report{{sub: "2 AS b, 1 AS a", op: "UNION ALL", got: "`b`, `a`", want: "`a`, `b`"}},
 		},
+		"followed by ORDER BY": {
+			src:  "SELECT 1 AS a, 2 AS b UNION ALL SELECT 2 AS b, 1 AS a ORDER BY 1",
+			want: []report{{sub: "2 AS b, 1 AS a", op: "UNION ALL", got: "`b`, `a`", want: "`a`, `b`"}},
+		},
+		"followed by LIMIT": {
+			src:  "SELECT 1 AS a, 2 AS b UNION ALL SELECT 2 AS b, 1 AS a LIMIT 1",
+			want: []report{{sub: "2 AS b, 1 AS a", op: "UNION ALL", got: "`b`, `a`", want: "`a`, `b`"}},
+		},
+		"followed by ORDER BY an expression": {
+			src:  "SELECT 1 AS a, 2 AS b UNION ALL SELECT 2 AS b, 1 AS a ORDER BY a + 1",
+			want: []report{{sub: "2 AS b, 1 AS a", op: "UNION ALL", got: "`b`, `a`", want: "`a`, `b`"}},
+		},
+		"subquery under ORDER BY is reported once": {
+			src:  "SELECT a FROM (SELECT 1 AS a, 2 AS b UNION ALL SELECT 2 AS b, 1 AS a) ORDER BY 1 LIMIT 1",
+			want: []report{{sub: "2 AS b, 1 AS a", op: "UNION ALL", got: "`b`, `a`", want: "`a`, `b`"}},
+		},
+		"followed by ORDER BY inside a CTE": {
+			src:  "WITH c AS (SELECT 1 AS a, 2 AS b UNION ALL SELECT 2 AS b, 1 AS a ORDER BY a LIMIT 1) SELECT a FROM c",
+			want: []report{{sub: "2 AS b, 1 AS a", op: "UNION ALL", got: "`b`, `a`", want: "`a`, `b`"}},
+		},
 		"same order": {
 			src: "SELECT 1 AS a, 2 AS b UNION ALL SELECT 3 AS a, 4 AS b",
 		},
@@ -121,6 +141,9 @@ func TestUnionColumnOrder(t *testing.T) {
 		},
 		"BY NAME": {
 			src: "SELECT 1 AS a, 2 AS b UNION ALL BY NAME SELECT 2 AS b, 1 AS a",
+		},
+		"pipe UNION ALL after ORDER BY is skipped": {
+			src: "SELECT 1 AS a, 2 AS b UNION ALL SELECT 1 AS a, 2 AS b ORDER BY 1 |> UNION ALL (SELECT 2 AS b, 1 AS a)",
 		},
 		"pipe UNION ALL is skipped": {
 			src: "SELECT 1 AS a, 2 AS b |> UNION ALL (SELECT 2 AS b, 1 AS a)",
@@ -199,6 +222,10 @@ func TestUnionColumnOrderFix(t *testing.T) {
 		"grouped by name": {
 			src:       "SELECT 1 AS a, 2 AS b UNION ALL SELECT x + 1 AS b, x AS a FROM p.d.t GROUP BY x",
 			wantFixed: "SELECT 1 AS a, 2 AS b UNION ALL SELECT x AS a, x + 1 AS b FROM p.d.t GROUP BY x",
+		},
+		"ordinal in ORDER BY of the whole set operation is kept": {
+			src:       "SELECT 1 AS a, 2 AS b UNION ALL SELECT 2 AS b, 1 AS a ORDER BY 1 LIMIT 1",
+			wantFixed: "SELECT 1 AS a, 2 AS b UNION ALL SELECT 1 AS a, 2 AS b ORDER BY 1 LIMIT 1",
 		},
 		"ordinal in the first input is kept": {
 			src:       "SELECT x AS a, x + 1 AS b FROM p.d.t1 GROUP BY 1, 2 UNION ALL SELECT 2 AS b, 1 AS a",
