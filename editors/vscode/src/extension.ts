@@ -12,6 +12,13 @@ import {
 	TransportKind,
 } from "vscode-languageclient/node";
 import { type InstallerDeps, resolveBqlsCommand } from "./bqlsInstaller";
+import {
+	type AuthenticationRequiredParams,
+	COMMAND_RELOAD_CREDENTIALS,
+	handleAuthenticationRequired,
+	type LoginDeps,
+	NOTIFICATION_AUTHENTICATION_REQUIRED,
+} from "./gcloudLogin";
 import type {
 	PublishVirtualTextDocumentParams,
 	VirtualTextDocumentResult,
@@ -363,6 +370,7 @@ function buildSettings(): {
 	project_id: string;
 	location: string;
 	supports_async_virtual_text_document: boolean;
+	supports_authentication_required_notification: boolean;
 	lint: { rules: Record<string, LintRuleSetting> };
 } {
 	const config = vscode.workspace.getConfiguration("bqls");
@@ -370,6 +378,7 @@ function buildSettings(): {
 		project_id: config.get<string>("projectId") ?? "",
 		location: config.get<string>("location") ?? "",
 		supports_async_virtual_text_document: true,
+		supports_authentication_required_notification: true,
 		lint: {
 			rules: config.get<Record<string, LintRuleSetting>>("lint.rules") ?? {},
 		},
@@ -571,6 +580,73 @@ async function searchTablesInExplorer(): Promise<void> {
 	}
 }
 
+async function isGcloudAvailable(): Promise<boolean> {
+	try {
+		// gcloud is a batch file on Windows, which needs a shell to run.
+		await execFileAsync("gcloud", ["--version"], {
+			shell: process.platform === "win32",
+		});
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+// runGcloudLogin runs the login as a task so that it shows up in the
+// integrated terminal, where gcloud prints the URL to open, and its exit code
+// tells whether the login succeeded.
+async function runGcloudLogin(): Promise<number | undefined> {
+	const task = new vscode.Task(
+		{ type: "bqls" },
+		vscode.workspace.workspaceFolders?.[0] ?? vscode.TaskScope.Workspace,
+		"gcloud auth application-default login",
+		"bqls",
+		new vscode.ShellExecution("gcloud", [
+			"auth",
+			"application-default",
+			"login",
+		]),
+	);
+	task.presentationOptions = {
+		reveal: vscode.TaskRevealKind.Always,
+		focus: true,
+	};
+	return new Promise((resolve, reject) => {
+		const listener = vscode.tasks.onDidEndTaskProcess((event) => {
+			if (event.execution.task === task) {
+				listener.dispose();
+				resolve(event.exitCode);
+			}
+		});
+		vscode.tasks.executeTask(task).then(undefined, (err) => {
+			listener.dispose();
+			reject(err);
+		});
+	});
+}
+
+function createLoginDeps(): LoginDeps {
+	return {
+		showWarningMessage: async (message, ...items) =>
+			vscode.window.showWarningMessage(message, ...items),
+		showErrorMessage: async (message, ...items) =>
+			vscode.window.showErrorMessage(message, ...items),
+		showInformationMessage: async (message) =>
+			vscode.window.showInformationMessage(message),
+		isGcloudAvailable,
+		runLogin: runGcloudLogin,
+		reloadCredentials: async () => {
+			await client?.sendRequest("workspace/executeCommand", {
+				command: COMMAND_RELOAD_CREDENTIALS,
+				arguments: [],
+			});
+		},
+		openExternal: async (url) => {
+			await vscode.env.openExternal(vscode.Uri.parse(url));
+		},
+	};
+}
+
 export async function activate(
 	context: vscode.ExtensionContext,
 ): Promise<void> {
@@ -669,6 +745,18 @@ export async function activate(
 						previewHtml: buildPreviewHtml(params.result),
 					});
 				}
+			},
+		),
+	);
+
+	context.subscriptions.push(
+		client.onNotification(
+			NOTIFICATION_AUTHENTICATION_REQUIRED,
+			(params: AuthenticationRequiredParams) => {
+				handleAuthenticationRequired(params, createLoginDeps()).catch((err) => {
+					const message = err instanceof Error ? err.message : String(err);
+					void vscode.window.showErrorMessage(`bqls: ${message}`);
+				});
 			},
 		),
 	);
