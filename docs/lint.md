@@ -124,7 +124,7 @@ INSERT INTO my_dataset.t (v) VALUES (1);  -- leaves out `id`
 
 Not reported: `INSERT` and `MERGE ... INSERT VALUES (...)` without a column list and `INSERT ROW`, which write every column, `REQUIRED` columns with a default value, views and other non-table targets. Only top-level columns are checked: a `STRUCT` value always has every field, and an omitted `NULLABLE` `RECORD` column is NULL as a whole. An `INSERT ... SELECT` whose query returns no rows succeeds at run time, but is reported too.
 
-This rule depends on the table schema, so it needs table metadata. Unlike [`insert-null-into-required`](#insert-null-into-required), it is on by default: a missing column fails every row the statement writes, so a report is never a false positive. There is no quick fix, since bqls cannot know the value to add.
+This rule depends on the table schema, so it needs table metadata. Unlike [`insert-null-into-required`](#insert-null-into-required), it is on by default: a missing column fails every row the statement writes, so a report is a false positive only when the statement writes no rows. There is no quick fix, since bqls cannot know the value to add.
 
 #### `left-join-as-inner`
 

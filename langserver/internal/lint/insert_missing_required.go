@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	bq "cloud.google.com/go/bigquery"
 	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
@@ -20,13 +19,8 @@ var InsertMissingRequired = &Analyzer{
 // insert_column_list of a statement without one holds every column.
 func runInsertMissingRequired(pass *Pass) {
 	lists := make(map[offsets][]*googlesql.ASTColumnList)
-	for _, s := range file.ListAstNode[*googlesql.ASTInsertStatement](pass.File.Node) {
-		path, err := s.GetTargetPathForNonNested()
-		if err != nil || path == nil {
-			continue
-		}
+	for at, s := range insertStatementsByTarget(pass) {
 		if cl, err := s.ColumnList(); err == nil && cl != nil {
-			at := astOffsets(path)
 			lists[at] = append(lists[at], cl)
 		}
 	}
@@ -90,14 +84,14 @@ func checkMissingRequired(pass *Pass, target dmlTarget, cl *googlesql.ASTColumnL
 		}
 		listed[strings.ToLower(name)] = true
 	}
+	at := astOffsets(cl)
+	r, ok := pass.File.OffsetsToLspRange(at.start, at.end)
+	if !ok {
+		return
+	}
 	for _, f := range target.schema {
-		if !missingRequired(f, listed) {
+		if !f.Required || f.DefaultValueExpression != "" || listed[strings.ToLower(f.Name)] {
 			continue
-		}
-		at := astOffsets(cl)
-		r, ok := pass.File.OffsetsToLspRange(at.start, at.end)
-		if !ok {
-			return
 		}
 		pass.Report(Diagnostic{
 			Range:    r,
@@ -105,8 +99,4 @@ func checkMissingRequired(pass *Pass, target dmlTarget, cl *googlesql.ASTColumnL
 			Severity: SeverityWarning,
 		})
 	}
-}
-
-func missingRequired(f *bq.FieldSchema, listed map[string]bool) bool {
-	return f.Required && f.DefaultValueExpression == "" && !listed[strings.ToLower(f.Name)]
 }

@@ -40,6 +40,10 @@ func TestInsertMissingRequired(t *testing.T) {
 			src:  "MERGE p.d.t AS t USING p.d.src AS s ON t.id = s.id WHEN NOT MATCHED THEN INSERT (v) VALUES (s.v)",
 			want: []report{{text: "(v)", message: missingRequiredMessage("id", "p.d.t")}},
 		},
+		"inside a script block": {
+			src:  "BEGIN\n  INSERT INTO p.d.t (v) VALUES (1);\nEND",
+			want: []report{{text: "(v)", message: missingRequiredMessage("id", "p.d.t")}},
+		},
 		"merge with several insert clauses": {
 			src:  "MERGE p.d.t AS t USING p.d.src AS s ON t.id = s.id WHEN NOT MATCHED AND s.w > 0 THEN INSERT (id) VALUES (s.id) WHEN NOT MATCHED THEN INSERT (v) VALUES (s.v)",
 			want: []report{{text: "(v)", message: missingRequiredMessage("id", "p.d.t")}},
@@ -47,6 +51,7 @@ func TestInsertMissingRequired(t *testing.T) {
 
 		"all required columns listed":    {src: "INSERT INTO p.d.t (id) VALUES (1)"},
 		"columns in another order":       {src: "INSERT INTO p.d.t (v, id) VALUES (1, 2)"},
+		"quoted column name":             {src: "INSERT INTO p.d.t (`id`) VALUES (1)"},
 		"column name in another case":    {src: "INSERT INTO p.d.t (ID) VALUES (1)"},
 		"required column with a default": {src: "INSERT INTO p.d.def (id) VALUES (1)"},
 		"values without a column list":   {src: "INSERT INTO p.d.t VALUES (1, 2)"},
