@@ -3,6 +3,7 @@ package lintcli
 import (
 	"context"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -279,29 +280,31 @@ func TestApplyFixes(t *testing.T) {
 		src         string
 		fixes       []lint.SuggestedFix
 		want        string
-		wantSkipped int
+		wantApplied []int
 	}{
 		"edits on several lines": {
-			src:   "abc\ndef\n",
-			fixes: []lint.SuggestedFix{fix(edit(1, 0, 1, 1, "D")), fix(edit(0, 1, 0, 2, "B"))},
-			want:  "aBc\nDef\n",
+			src:         "abc\ndef\n",
+			fixes:       []lint.SuggestedFix{fix(edit(1, 0, 1, 1, "D")), fix(edit(0, 1, 0, 2, "B"))},
+			want:        "aBc\nDef\n",
+			wantApplied: []int{0, 1},
 		},
 		"adjacent edits both apply": {
-			src:   "abcdef",
-			fixes: []lint.SuggestedFix{fix(edit(0, 0, 0, 3, "X")), fix(edit(0, 3, 0, 6, "Y"))},
-			want:  "XY",
+			src:         "abcdef",
+			fixes:       []lint.SuggestedFix{fix(edit(0, 0, 0, 3, "X")), fix(edit(0, 3, 0, 6, "Y"))},
+			want:        "XY",
+			wantApplied: []int{0, 1},
 		},
 		"overlapping fix is skipped": {
 			src:         "abcdef",
 			fixes:       []lint.SuggestedFix{fix(edit(0, 0, 0, 4, "X")), fix(edit(0, 2, 0, 6, "Y"))},
 			want:        "Xef",
-			wantSkipped: 1,
+			wantApplied: []int{0},
 		},
 		"insertions at the same position conflict": {
 			src:         "ab",
 			fixes:       []lint.SuggestedFix{fix(edit(0, 1, 0, 1, "X")), fix(edit(0, 1, 0, 1, "Y"))},
 			want:        "aXb",
-			wantSkipped: 1,
+			wantApplied: []int{0},
 		},
 		"a fix is skipped as a whole": {
 			src: "abcdef",
@@ -310,19 +313,20 @@ func TestApplyFixes(t *testing.T) {
 				fix(edit(0, 4, 0, 5, "Y"), edit(0, 1, 0, 3, "Z")),
 			},
 			want:        "Xcdef",
-			wantSkipped: 1,
+			wantApplied: []int{0},
 		},
 		"multi-line edit": {
-			src:   "ab\ncd\nef",
-			fixes: []lint.SuggestedFix{fix(edit(0, 1, 2, 1, "-"))},
-			want:  "a-f",
+			src:         "ab\ncd\nef",
+			fixes:       []lint.SuggestedFix{fix(edit(0, 1, 2, 1, "-"))},
+			want:        "a-f",
+			wantApplied: []int{0},
 		},
 	}
 	for n, tt := range tests {
 		t.Run(n, func(t *testing.T) {
 			got, applied := applyFixes(tt.src, tt.fixes)
-			if skipped := len(tt.fixes) - len(applied); got != tt.want || skipped != tt.wantSkipped {
-				t.Errorf("applyFixes() = (%q, %d), want (%q, %d)", got, skipped, tt.want, tt.wantSkipped)
+			if got != tt.want || !slices.Equal(applied, tt.wantApplied) {
+				t.Errorf("applyFixes() = (%q, %v), want (%q, %v)", got, applied, tt.want, tt.wantApplied)
 			}
 		})
 	}
