@@ -32,7 +32,7 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 		return nil, nil
 	}
 
-	if name, ok := file.DMLTargetTableName(targetNode); ok {
+	if name, ok := file.TargetTableName(targetNode); ok {
 		if result, ok := p.termDocumentFromTableName(ctx, name); ok {
 			return result, nil
 		}
@@ -114,7 +114,7 @@ func (p *Project) TermDocument(ctx context.Context, uri lsp.DocumentURI, positio
 			return nil, fmt.Errorf("failed to find term: %v", term)
 		}
 
-		if result, ok := p.columnDocument(ctx, column); ok {
+		if result, ok := p.columnDocumentInTable(ctx, column, columnTableName(output, column)); ok {
 			return result, nil
 		}
 	}
@@ -164,10 +164,45 @@ func searchOrderByColumnRef(output *googlesql.AnalyzerOutput, targetNode *google
 	return columnRef, true
 }
 
+// columnTableName returns the path of the table that column belongs to.
+func columnTableName(output *googlesql.AnalyzerOutput, column *googlesql.ResolvedColumn) string {
+	tableName, _ := column.TableName()
+	stmt, err := output.ResolvedStatement()
+	if err != nil {
+		return tableName
+	}
+	// The target table of ALTER ROW ACCESS POLICY is analyzed under the last
+	// identifier of its path, so only its full name leads to the metadata.
+	alter, ok := stmt.(*googlesql.ResolvedAlterRowAccessPolicyStmt)
+	if !ok {
+		return tableName
+	}
+	scan, err := alter.TableScan()
+	if err != nil || scan == nil {
+		return tableName
+	}
+	table, err := scan.Table()
+	if err != nil || table == nil {
+		return tableName
+	}
+	if name, _ := table.Name(); name != tableName {
+		return tableName
+	}
+	fullName, err := table.FullName()
+	if err != nil {
+		return tableName
+	}
+	return fullName
+}
+
 // columnDocument describes column with the schema of its table, or only with
 // its type when the table metadata is not available.
 func (p *Project) columnDocument(ctx context.Context, column *googlesql.ResolvedColumn) ([]lsp.MarkedString, bool) {
 	tableName, _ := column.TableName()
+	return p.columnDocumentInTable(ctx, column, tableName)
+}
+
+func (p *Project) columnDocumentInTable(ctx context.Context, column *googlesql.ResolvedColumn, tableName string) ([]lsp.MarkedString, bool) {
 	tableMetadata, err := p.analyzer.GetTableMetadataFromPath(ctx, tableName)
 	if err != nil {
 		return []lsp.MarkedString{

@@ -165,6 +165,26 @@ SELECT a FROM data2|`,
 				},
 			},
 		},
+		"definition to ROW ACCESS POLICY target bq table": {
+			files: map[lsp.DocumentURI]string{
+				"a.sql": "ALTER ROW ACCESS POLICY pol ON project.dataset.table| FILTER USING (id = 1)",
+			},
+			defaultProject: "project",
+			bqTableMetadata: &bq.TableMetadata{
+				FullID: "project:dataset.table",
+				Schema: bq.Schema{
+					{
+						Name: "id",
+						Type: bq.IntegerFieldType,
+					},
+				},
+			},
+			expectLocations: []lsp.Location{
+				{
+					URI: lsp.NewTableVirtualTextDocumentURI("project", "dataset", "table"),
+				},
+			},
+		},
 		"definition to DELETE target bq table": {
 			files: map[lsp.DocumentURI]string{
 				"a.sql": "DELETE FROM `project.dataset.table|` WHERE id = 1",
