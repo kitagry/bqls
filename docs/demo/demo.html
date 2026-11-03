@@ -95,6 +95,15 @@
   .pum .k { color: var(--blue); }
   .pum .m { color: var(--overlay1); }
   .msgsep { background: var(--mantle); }
+  .term { font-size: 14px; line-height: 20px; }
+  .term .row { height: 20px; }
+  .term .cursor { height: 20px; }
+  .tp-dir { color: var(--blue); }
+  .tp { color: var(--green); }
+  .g-b { font-weight: 700; }
+  .g-c { color: var(--teal); }
+  .g-r { color: var(--red); }
+  .g-g { color: var(--green); }
   .keys {
     position: absolute; right: 18px; bottom: 58px;
     font: 700 15px/1 "JetBrains Mono", monospace; color: var(--crust);
@@ -109,7 +118,7 @@
     <span class="dot" style="background:#f38ba8"></span>
     <span class="dot" style="background:#f9e2af"></span>
     <span class="dot" style="background:#a6e3a1"></span>
-    <span class="title">nvim demo.sql</span>
+    <span class="title" id="title">nvim demo.sql</span>
     <span class="scene" id="scene"></span>
   </div>
   <div class="screen" id="screen"></div>
@@ -131,6 +140,7 @@ const SCENE_COLORS = {
   "Lint & quick fix": "var(--yellow)",
   "Dry-run cost estimate": "var(--peach)",
   "Query execution": "var(--mauve)",
+  "bqls lint CLI": "var(--teal)",
 };
 
 // ---- What bqls returns ------------------------------------------------------
@@ -206,6 +216,55 @@ function jobDocument(query) {
   ];
 }
 
+// What `bqls lint` printed for the files in the terminal scene, and the
+// `git diff -U0` after `bqls lint --fix`. The SQL reads
+// bigquery-public-data.austin_bikeshare and san_francisco_bikeshare.
+
+const TERM_DIR = "~/analytics";
+const TERM_PROJECT = "my-project";
+
+const BQLS_YAML = [
+  "lint:",
+  "  rules:",
+  "    bytes-processed-threshold:",
+  "      enabled: true",
+  "      max_bytes: 50MiB",
+];
+
+const LINT_FINDINGS = [
+  "queries/idle_stations.sql:3:7: warning: NOT IN yields NULL, never TRUE, once the subquery returns a NULL, and `start_station_id` of `bigquery-public-data.austin_bikeshare.bikeshare_trips` is NULLABLE; rewrite it with NOT EXISTS, or filter the subquery with `start_station_id IS NOT NULL` (not-in-nullable)",
+  "queries/stations.sql:4:8: warning: UNION ALL matches columns by position, not by name, but this input has `region_id`, `capacity` where the first input has `capacity`, `region_id`; reorder the columns or use UNION ALL BY NAME (union-column-order)",
+  "queries/walk_up_trips.sql:3:1: warning: this LEFT JOIN behaves as an INNER JOIN: the WHERE clause rejects the NULL columns of its unmatched rows; move the condition into the ON clause to keep those rows, or write INNER JOIN (left-join-as-inner)",
+];
+
+function diffHeader(file, index) {
+  return [
+    `diff --git a/${file} b/${file}`,
+    `index ${index} 100644`,
+    `--- a/${file}`,
+    `+++ b/${file}`,
+  ].map((l) => [["g-b", l]]);
+}
+
+const FIX_DIFF = [
+  ...diffHeader("queries/idle_stations.sql", "392b2aa..7d39590"),
+  [["g-c", "@@ -5 +5 @@"], ["", " WHERE station_id NOT IN ("]],
+  [["g-r", "-  FROM `bigquery-public-data.austin_bikeshare.bikeshare_trips`"]],
+  [["g-g", "+  FROM `bigquery-public-data.austin_bikeshare.bikeshare_trips` WHERE start_station_id IS NOT NULL"]],
+  ...diffHeader("queries/stations.sql", "79b3274..9ff6b15"),
+  [["g-c", "@@ -4 +4 @@"], ["", " UNION ALL"]],
+  [["g-r", "-SELECT name, region_id, capacity"]],
+  [["g-g", "+SELECT name, capacity, region_id"]],
+  ...diffHeader("queries/walk_up_trips.sql", "5d371cb..aa6ef53"),
+  [["g-c", "@@ -3 +3 @@"], ["", " FROM `bigquery-public-data.austin_bikeshare.bikeshare_stations` AS s"]],
+  [["g-r", "-LEFT JOIN `bigquery-public-data.austin_bikeshare.bikeshare_trips` AS t"]],
+  [["g-g", "+INNER JOIN `bigquery-public-data.austin_bikeshare.bikeshare_trips` AS t"]],
+];
+
+const DRYRUN_FINDINGS = [
+  "queries/walk_up_trips.sql:1:1: warning: This query will process 91.18 MiB, which exceeds the threshold of 50 MiB (bytes-processed-threshold)",
+];
+
 // ---- Timeline -----------------------------------------------------------------
 // Each step mutates a fresh state, given its progress p in [0, 1]; render(t)
 // replays every step that has started by t.
@@ -235,6 +294,10 @@ function insert(s, text) {
 
 // Typing speed varies a little per character, like a person typing.
 function type(text, ms = 52) {
+  typing(text, ms, insert);
+}
+
+function typing(text, ms, apply) {
   const offsets = [];
   let acc = 0;
   for (let i = 0; i < text.length; i++) {
@@ -245,7 +308,7 @@ function type(text, ms = 52) {
     const elapsed = p * acc;
     let n = 0;
     while (n < text.length && offsets[n] <= elapsed && (n < text.length - 1 || p >= 1)) n++;
-    insert(s, text.slice(0, n));
+    apply(s, text.slice(0, n));
   });
 }
 
@@ -292,8 +355,22 @@ function initialState() {
   return {
     buf: [""], cur: { r: 0, c: 0 }, mode: "NORMAL", top: 0, modified: false,
     pum: null, hover: false, diags: [], msg: null, cmd: "", keys: null, scene: "",
-    split: null,
+    split: null, term: null,
   };
+}
+
+const plain = (text) => [["", text]];
+const promptLine = (cmd) => [["tp-dir", TERM_DIR], ["tp", " $ "], ["", cmd]];
+
+// A command typed at the prompt, then its output after `run` ms; the next
+// prompt appears together with the output, as in a real shell.
+function command(cmd, run, output = []) {
+  wait(350);
+  typing(cmd, 38, (s, t) => { s.term.input = t; });
+  wait(300);
+  at((s) => { s.term.lines.push(promptLine(cmd)); s.term.input = null; });
+  wait(run);
+  at((s) => { s.term.lines.push(...output); s.term.input = ""; });
 }
 
 // Scene 1: completion
@@ -327,7 +404,7 @@ keys("<C-y>", accept, 500);
 keys("<Esc>", (s) => { s.mode = "NORMAL"; s.cmd = ""; s.cur.c--; }, 300);
 scene("Hover");
 keys("j3w", (s) => { s.cur = { r: 2, c: 35 }; }, 450);
-keys("K", (s) => { s.hover = true; }, 5200);
+keys("K", (s) => { s.hover = true; }, 4400);
 keys("<Esc>", (s) => { s.hover = false; }, 300);
 
 // Scene 3: lint and quick fix
@@ -344,7 +421,7 @@ at((s) => {
   const c = s.buf[4].indexOf(LINT_TEXT);
   s.diags = [{ r: 4, c0: c, c1: c + LINT_TEXT.length, msg: LINT_MESSAGE }];
 });
-wait(2200);
+wait(1800);
 keys("gra", (s) => {
   codeActions(s, ["Replace with IS NOT NULL", "Ignore null-comparison on this line", "Execute Query"]);
 }, 2200);
@@ -369,7 +446,7 @@ keys(":w<CR>", (s) => { s.cmd = ":w"; }, 350);
 at((s) => { s.cmd = fileInfo(s); s.modified = false; });
 wait(700);
 at((s) => { s.cmd = DRYRUN_MESSAGE; });
-wait(3000);
+wait(2500);
 
 // Scene 5: query execution
 scene("Query execution");
@@ -384,7 +461,31 @@ keys("G", (s) => {
   const n = s.split.lines.length;
   s.split.cur = { r: n - 1, c: 0 };
   s.split.top = Math.max(0, n - splitHeights().top);
-}, 4800);
+}, 4000);
+
+// Scene 6: the same rules from the command line, e.g. in CI
+scene("bqls lint CLI");
+at((s) => { s.term = { lines: [], input: "" }; s.keys = null; });
+wait(300);
+command("cat .bqls.yaml", 0, BQLS_YAML.map(plain));
+wait(1200);
+const LINT = `bqls lint --project ${TERM_PROJECT}`;
+command(`${LINT} queries/`, 900, LINT_FINDINGS.map(plain));
+wait(5000);
+command("echo $?", 0, [plain("1")]);
+wait(1200);
+command(`${LINT} --fix queries/`, 1000);
+wait(400);
+command("git diff -U0", 0, FIX_DIFF);
+wait(4000);
+command(`${LINT} queries/`, 900);
+wait(200);
+command("echo $?", 0, [plain("0")]);
+wait(1000);
+command(`${LINT} --dry-run queries/`, 1300, DRYRUN_FINDINGS.map(plain));
+wait(3000);
+command("echo $?", 0, [plain("1")]);
+wait(1700);
 
 // ---- Rendering --------------------------------------------------------------
 
@@ -495,12 +596,65 @@ function renderCursor(out, row, col, char, insertMode) {
   out.push(`<div class="cursor${insertMode ? " bar-c" : ""}" style="top:${y}px;left:${ch(GUTTER + col)}">${insertMode ? "" : esc(char || " ")}</div>`);
 }
 
+// The terminal hard-wraps at a fixed width, like a real one, so long lint
+// messages continue on the next rows.
+const TERM_COLS = 104;
+const TERM_LH = 20;
+const TERM_ROWS = 25;
+
+function wrapSegments(segs) {
+  const rows = [[]];
+  let col = 0;
+  for (const [cls, text] of segs) {
+    let rest = text;
+    while (rest.length) {
+      if (col === TERM_COLS) { rows.push([]); col = 0; }
+      const take = rest.slice(0, TERM_COLS - col);
+      rows[rows.length - 1].push([cls, take]);
+      col += take.length;
+      rest = rest.slice(take.length);
+    }
+  }
+  return { rows, col };
+}
+
+function renderTerminal(out, term) {
+  const rows = term.lines.flatMap((l) => wrapSegments(l).rows);
+  let cursor = null;
+  if (term.input !== null) {
+    const w = wrapSegments(promptLine(term.input));
+    rows.push(...w.rows);
+    cursor = { row: rows.length - 1, col: w.col };
+    if (w.col === TERM_COLS) cursor = { row: rows.length, col: 0 };
+  }
+  const top = Math.max(0, (cursor ? cursor.row + 1 : rows.length) - TERM_ROWS);
+  rows.slice(top, top + TERM_ROWS).forEach((segs, i) => {
+    const html = segs.map(([cls, text]) => cls ? `<span class="${cls}">${esc(text)}</span>` : esc(text)).join("");
+    out.push(`<div class="row" style="top:${PAD_TOP + i * TERM_LH}px;padding-left:1ch">${html}</div>`);
+  });
+  if (cursor) {
+    out.push(`<div class="cursor" style="top:${PAD_TOP + (cursor.row - top) * TERM_LH}px;left:calc(${cursor.col} * 1ch + 1ch)"> </div>`);
+  }
+}
+
 function render(t) {
   const s = initialState();
   for (const st of STEPS) {
     if (t < st.start) break;
     const p = st.d === 0 ? 1 : Math.min(1, (t - st.start) / st.d);
     st.f(s, p, st.start);
+  }
+
+  const screen = document.getElementById("screen");
+  screen.classList.toggle("term", !!s.term);
+  document.getElementById("title").textContent = s.term ? `bash — ${TERM_DIR}` : "nvim demo.sql";
+  if (s.term) {
+    const out = [];
+    renderTerminal(out, s.term);
+    if (s.keys && t < s.keys.until) out.push(`<div class="keys">${esc(s.keys.label)}</div>`);
+    screen.innerHTML = out.join("");
+    renderScene(s);
+    return;
   }
 
   const out = [];
@@ -573,7 +727,11 @@ function render(t) {
 
   if (s.keys && t < s.keys.until) out.push(`<div class="keys">${esc(s.keys.label)}</div>`);
 
-  document.getElementById("screen").innerHTML = out.join("");
+  screen.innerHTML = out.join("");
+  renderScene(s);
+}
+
+function renderScene(s) {
   const sc = document.getElementById("scene");
   sc.textContent = s.scene;
   sc.style.visibility = s.scene ? "visible" : "hidden";
