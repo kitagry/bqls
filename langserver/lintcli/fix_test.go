@@ -249,6 +249,25 @@ func TestRun_FixWriteFailureReportsTheFileOnDisk(t *testing.T) {
 	}
 }
 
+func TestRun_FixWriteFailureDoesNotNoteSkippedFixes(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can write read-only files")
+	}
+	t.Chdir(t.TempDir())
+	writeFiles(t, map[string]string{"a.sql": "SELECT x FROM UNNEST([1]) AS x WHERE (x = CAST(NULL AS INT64)) IN (NULL)\n"})
+	if err := os.Chmod("a.sql", 0o444); err != nil {
+		t.Fatal(err)
+	}
+
+	got := runWith(t, mockFactory(t), "", "--fix", "a.sql")
+	if got.code != 2 {
+		t.Errorf("exit code = %d, want 2 (stderr: %s)", got.code, got.stderr)
+	}
+	if strings.Contains(got.stderr, "skipped") {
+		t.Errorf("stderr = %q, want no note to run again for a file that was not written", got.stderr)
+	}
+}
+
 func TestRun_FixStdin(t *testing.T) {
 	src := "SELECT x FROM UNNEST([1]) AS x WHERE x = CAST(NULL AS INT64) OR x IN (NULL /* c */)\n"
 	got := runWith(t, mockFactory(t), src, "--fix", "-")

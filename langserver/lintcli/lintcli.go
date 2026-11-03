@@ -162,18 +162,17 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		if *fix {
 			fixes, rules := suggestedFixes(diags)
 			fixed, applied := applyFixes(diags.Src, fixes)
+			var writeErr error
 			if fixed != in.src {
-				written := true
 				if in.abs != "" {
-					if err := os.WriteFile(in.name, []byte(fixed), 0o644); err != nil {
-						fmt.Fprintf(stderr, "bqls lint: %v\n", err)
-						writeFailed = true
-						written = false
-					}
+					writeErr = os.WriteFile(in.name, []byte(fixed), 0o644)
 				}
 				// A file that could not be written is reported, and dry-run, as
 				// it is on disk rather than as the fixed text nobody will see.
-				if written {
+				if writeErr != nil {
+					fmt.Fprintf(stderr, "bqls lint: %v\n", writeErr)
+					writeFailed = true
+				} else {
 					fmt.Fprintf(stderr, "bqls lint: %s: %s\n", in.name, fixSummary(applied, rules))
 					if err := p.UpdateFile(in.uri, fixed, 2); err != nil {
 						fmt.Fprintf(stderr, "bqls lint: %s: %v\n", in.name, err)
@@ -182,7 +181,9 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 					diags, _ = p.Diagnose(ctx, in.uri, cfgs[i])
 				}
 			}
-			if skipped := len(fixes) - len(applied); skipped > 0 {
+			// Running again would not apply the skipped fixes to a file that
+			// could not be written, so the note would only mislead.
+			if skipped := len(fixes) - len(applied); skipped > 0 && writeErr == nil {
 				fmt.Fprintf(stderr, "bqls lint: %s: skipped %d fix(es) overlapping another fix; run again to apply them\n", in.name, skipped)
 			}
 			if in.abs == "" {
