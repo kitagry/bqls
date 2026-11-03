@@ -53,3 +53,18 @@ jobs:
       # otherwise only surfaces at publish time. vscode:prepublish runs the build.
       - name: package
         run: npx vsce package --no-dependencies -o "$RUNNER_TEMP/bqls.vsix"
+
+      # Catch dev-only files (configs, tests, source maps, ...) slipping into the
+      # published extension. Update this list deliberately when a runtime file is added.
+      - name: check packaged files
+        run: |
+          unzip -Z1 "$RUNNER_TEMP/bqls.vsix" | grep '^extension/' | sort > "$RUNNER_TEMP/actual.txt"
+          sort > "$RUNNER_TEMP/expected.txt" <<'EOF'
+          extension/LICENSE.txt
+          extension/dist/extension.js
+          extension/media/bqls.svg
+          extension/media/icon.png
+          extension/package.json
+          extension/readme.md
+          EOF
+          diff -u "$RUNNER_TEMP/expected.txt" "$RUNNER_TEMP/actual.txt"
