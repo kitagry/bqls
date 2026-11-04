@@ -44,6 +44,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`bytes-processed-threshold`](#bytes-processed-threshold) | off | warning | | `max_bytes` | Files whose dry-run estimate exceeds `max_bytes` |
 | **Unused code** | | | | | |
 | [`unused-cte`](#unused-cte) | on | information | yes | | `WITH` entries that are never referenced |
+| [`unused-column-in-cte`](#unused-column-in-cte) | on | information | yes | | Columns of a `WITH` entry's `SELECT` list that nothing downstream reads |
 | [`unused-declare`](#unused-declare) | on | information | yes | | `DECLARE` variables that are never referenced |
 | [`unused-temp-function`](#unused-temp-function) | on | information | yes | | `CREATE TEMP FUNCTION` definitions that are never called |
 | [`unused-temp-function-argument`](#unused-temp-function-argument) | on | information | | | Arguments of SQL temp functions that the body never references |
@@ -303,6 +304,21 @@ Reported on the first line of the first statement, so a `-- bqls:ignore bytes-pr
 #### `unused-cte`
 
 A `WITH` entry that is never referenced (a recursive CTE's self reference does not count). The quick fix removes the entry.
+
+#### `unused-column-in-cte`
+
+A column of a `WITH` entry's `SELECT` list that no reference to the CTE reads, reported on its alias (or the expression when it has none). The quick fix removes the column.
+
+A column counts as used when any expression reads it — in the `SELECT` list, `WHERE`, `JOIN ... ON` / `USING`, `GROUP BY`, `HAVING`, `QUALIFY`, `ORDER BY` or a window — or a `SELECT` list outputs it, including `SELECT *` / `t.*`, the final result, a set operation input and a subquery. This holds even in a subquery whose result is not read further, and in a CTE that is itself unused. A CTE referenced several times is checked against all its references, and `SELECT * EXCEPT (y) FROM a` does not read `y`.
+
+Not reported:
+
+- CTEs of a `WITH RECURSIVE` clause.
+- A CTE whose body is a set operation, a pipe query, `SELECT DISTINCT` (every column decides which rows are kept), `GROUP BY ALL` (every non-aggregate column is a grouping key), `SELECT AS STRUCT` / `AS VALUE`, or has `*` in its `SELECT` list.
+- A CTE none of whose columns are read, e.g. one only counted with `COUNT(*)`, and a CTE that is never referenced, which `unused-cte` reports.
+- A statement that bqls cannot follow: one that is not a query, `CREATE TABLE ... AS SELECT`, `CREATE VIEW`, `EXPORT DATA` or `INSERT` (such as `MERGE`), or one that passes the CTE through `PIVOT`, `UNPIVOT`, `MATCH_RECOGNIZE` or a table-valued function.
+
+There is no quick fix when a comment would be removed or left describing a different column, or when the CTE's `GROUP BY`, `HAVING`, `QUALIFY`, `WINDOW` or `ORDER BY` uses an ordinal such as `GROUP BY 1` (which would shift) or the alias of a removed column, or when the CTE aggregates without `GROUP BY` (removing its only aggregate would return one row per input row).
 
 #### `unused-declare`
 

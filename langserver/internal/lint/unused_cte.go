@@ -21,31 +21,59 @@ type offsets struct{ start, end int }
 // Usage comes from the resolved AST because the analyzer has already bound
 // every table reference: shadowed CTEs get unique names (e.g. `a_1`), and a
 // recursive self reference is a ResolvedRecursiveRefScan rather than a
-// ResolvedWithRefScan. Resolved WITH entries carry no location, so each one is
-// paired with its parser-AST entry through the enclosing query's location.
+// ResolvedWithRefScan.
 func runUnusedCTE(pass *Pass) {
+	// used is per statement because resolved names are only unique within one.
+	used := make(map[*googlesql.AnalyzerOutput]map[string]bool)
+	for _, wc := range resolvedWithClauses(pass) {
+		u, ok := used[wc.output]
+		if !ok {
+			u = make(map[string]bool)
+			for _, ref := range file.ListResolvedAstNode[*googlesql.ResolvedWithRefScan](wc.output) {
+				if name, err := ref.WithQueryName(); err == nil {
+					u[name] = true
+				}
+			}
+			used[wc.output] = u
+		}
+		for i := range wc.entries {
+			if !u[wc.names[i]] {
+				reportUnusedCTE(pass, wc.ast, wc.entries, i)
+			}
+		}
+	}
+}
+
+// resolvedWithClause is a parser-AST WITH clause paired with its resolved scan.
+type resolvedWithClause struct {
+	ast     *googlesql.ASTWithClause
+	ws      *googlesql.ResolvedWithScan
+	output  *googlesql.AnalyzerOutput
+	entries []cteEntry
+	// names holds the resolved name of each entry.
+	names []string
+}
+
+// resolvedWithClauses pairs each WITH clause with its resolved scan. Resolved
+// WITH entries carry no location, so they are paired through the enclosing
+// query's location.
+func resolvedWithClauses(pass *Pass) []resolvedWithClause {
 	type scope struct {
-		ws *googlesql.ResolvedWithScan
-		// used is per statement because resolved names are only unique within one.
-		used map[string]bool
+		ws     *googlesql.ResolvedWithScan
+		output *googlesql.AnalyzerOutput
 	}
 	withScans := make(map[offsets]scope)
 	for _, output := range pass.File.RNode {
-		used := make(map[string]bool)
-		for _, ref := range file.ListResolvedAstNode[*googlesql.ResolvedWithRefScan](output) {
-			if name, err := ref.WithQueryName(); err == nil {
-				used[name] = true
-			}
-		}
 		for _, ws := range file.ListResolvedAstNode[*googlesql.ResolvedWithScan](output) {
 			loc, err := ws.GetParseLocationRangeOrNULL()
 			if err != nil || loc == nil {
 				continue
 			}
-			withScans[offsets{file.ParseLocStart(loc), file.ParseLocEnd(loc)}] = scope{ws: ws, used: used}
+			withScans[offsets{file.ParseLocStart(loc), file.ParseLocEnd(loc)}] = scope{ws: ws, output: output}
 		}
 	}
 
+	var clauses []resolvedWithClause
 	for _, clause := range file.ListAstNode[*googlesql.ASTWithClause](pass.File.Node) {
 		parent, err := clause.Parent()
 		if err != nil || parent == nil {
@@ -60,18 +88,16 @@ func runUnusedCTE(pass *Pass) {
 		if !ok {
 			continue
 		}
-		for i := range entries {
-			if !sc.used[names[i]] {
-				reportUnusedCTE(pass, clause, entries, i)
-			}
-		}
+		clauses = append(clauses, resolvedWithClause{ast: clause, ws: sc.ws, output: sc.output, entries: entries, names: names})
 	}
+	return clauses
 }
 
 type cteEntry struct {
 	name string
 	// ident is the CTE name; span is `name AS (...)`.
 	ident, span offsets
+	query       *googlesql.ASTAliasedQuery
 }
 
 func withClauseEntries(clause *googlesql.ASTWithClause) []cteEntry {
@@ -97,7 +123,7 @@ func withClauseEntries(clause *googlesql.ASTWithClause) []cteEntry {
 		if err != nil {
 			return nil
 		}
-		entries = append(entries, cteEntry{name: name, ident: astOffsets(alias), span: astOffsets(aq)})
+		entries = append(entries, cteEntry{name: name, ident: astOffsets(alias), span: astOffsets(aq), query: aq})
 	}
 	return entries
 }
