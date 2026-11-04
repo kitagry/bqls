@@ -859,6 +859,17 @@ func isWildCardTable(path []string) bool {
 // TableLoadError reports, so that the caller can log them.
 func (c *Catalog) PreloadTablesFromAST(node *googlesql.ASTScript) error {
 	var errs []error
+	walkTableNames(node, func(name string) {
+		if err := c.EnsureTable([]string{name}); err != nil && c.TableLoadError(name) != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+		}
+	})
+	return errors.Join(errs...)
+}
+
+// walkTableNames calls fn with the name of every table that
+// PreloadTablesFromAST loads, as written in the query.
+func walkTableNames(node *googlesql.ASTScript, fn func(name string)) {
 	Walk(node, func(n googlesql.ASTNode) error { //nolint
 		var name string
 		var ok bool
@@ -869,15 +880,39 @@ func (c *Catalog) PreloadTablesFromAST(node *googlesql.ASTScript) error {
 		} else if pe := ddlTargetPath(n); pe != nil {
 			name, ok = joinPathExpression(pe)
 		}
-		if !ok {
-			return nil
-		}
-		if err := c.EnsureTable([]string{name}); err != nil && c.TableLoadError(name) != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+		if ok {
+			fn(name)
 		}
 		return nil
 	})
-	return errors.Join(errs...)
+}
+
+// TableID names a table as GetTableMetadata takes it.
+type TableID struct {
+	Project, Dataset, Table string
+}
+
+// TableReferences returns, without duplicates, the tables whose metadata
+// analyzing src fetches with GetTableMetadata, so that a caller can fetch them
+// ahead of the analysis. It is a guess: a CTE referenced through a dotted path
+// is listed too, and nothing is listed for src that does not parse.
+func TableReferences(src string, defaultProject func() string) []TableID {
+	script, err := ParseScript(src)
+	if err != nil {
+		return nil
+	}
+	var ids []TableID
+	walkTableNames(script, func(name string) {
+		ref, err := parseTablePath([]string{name}, defaultProject)
+		if err != nil || ref.informationSchema {
+			return
+		}
+		id := TableID{Project: ref.project, Dataset: ref.rest[0], Table: ref.rest[1]}
+		if !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	})
+	return ids
 }
 
 // PreloadProceduresFromAST loads the procedures that CALL statements refer to.

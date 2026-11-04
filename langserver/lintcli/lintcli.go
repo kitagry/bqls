@@ -23,6 +23,7 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/lint"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source"
+	"github.com/kitagry/bqls/langserver/internal/source/file"
 	"github.com/sirupsen/logrus"
 )
 
@@ -146,8 +147,20 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return exitFailure
 	}
 	memo := newMemoClient(client)
+	// Fetched in the background because a lookup joins a fetch in flight, so
+	// the first file is analyzed while the later files' tables are fetched.
+	// The references are listed up front, because googlesql runs one call at
+	// a time and parsing in the background would only wait on the analysis.
+	refs := tableReferences(inputs, memo.GetDefaultProject)
+	prefetched := make(chan struct{})
+	go func() {
+		defer close(prefetched)
+		memo.prefetchTables(ctx, refs)
+	}()
 	p := source.NewProjectWithBQClient("/", memo, newLogger(stderr))
 	defer p.Close()
+	// Deferred after Close so that it runs first: the client must outlive the fetches.
+	defer func() { <-prefetched }()
 
 	var findings []finding
 	var fixedStdin *string
@@ -541,72 +554,119 @@ func expandPath(arg string) ([]string, error) {
 type memoClient struct {
 	bigquery.Client
 	mu       sync.Mutex
-	tables   map[string]tableResult
-	routines map[string]routineResult
-	schemas  map[string]schemaResult
+	tables   map[string]*memoCall[*bq.TableMetadata]
+	routines map[string]*memoCall[*bq.RoutineMetadata]
+	schemas  map[string]*memoCall[bq.Schema]
 	failMsgs []string
 }
 
-type schemaResult struct {
-	schema bq.Schema
-	err    error
-}
-
-type routineResult struct {
-	md  *bq.RoutineMetadata
-	err error
-}
-
-type tableResult struct {
-	md  *bq.TableMetadata
-	err error
+// memoCall is a lookup that is in flight until done is closed.
+type memoCall[T any] struct {
+	done  chan struct{}
+	value T
+	err   error
 }
 
 func newMemoClient(c bigquery.Client) *memoClient {
-	return &memoClient{Client: c, tables: make(map[string]tableResult), routines: make(map[string]routineResult), schemas: make(map[string]schemaResult)}
+	return &memoClient{
+		Client:   c,
+		tables:   make(map[string]*memoCall[*bq.TableMetadata]),
+		routines: make(map[string]*memoCall[*bq.RoutineMetadata]),
+		schemas:  make(map[string]*memoCall[bq.Schema]),
+	}
+}
+
+// memoize calls fetch for the first lookup of key and makes the later ones
+// wait for its result. mu guards only calls, so that lookups of other keys
+// reach the API while fetch runs.
+func memoize[T any](mu *sync.Mutex, calls map[string]*memoCall[T], key string, fetch func() (T, error)) (T, error) {
+	mu.Lock()
+	call, ok := calls[key]
+	if !ok {
+		call = &memoCall[T]{done: make(chan struct{})}
+		calls[key] = call
+	}
+	mu.Unlock()
+	if ok {
+		<-call.done
+	} else {
+		call.value, call.err = fetch()
+		close(call.done)
+	}
+	return call.value, call.err
 }
 
 func (c *memoClient) GetTableMetadata(ctx context.Context, projectID, datasetID, tableID string) (*bq.TableMetadata, error) {
-	key := projectID + ":" + datasetID + ":" + tableID
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if r, ok := c.tables[key]; ok {
-		return r.md, r.err
-	}
-	md, err := c.Client.GetTableMetadata(ctx, projectID, datasetID, tableID)
-	c.tables[key] = tableResult{md, err}
+	md, err := c.fetchTable(ctx, projectID, datasetID, tableID)
 	c.recordFailure(err)
 	return md, err
 }
 
+func (c *memoClient) fetchTable(ctx context.Context, projectID, datasetID, tableID string) (*bq.TableMetadata, error) {
+	return memoize(&c.mu, c.tables, projectID+":"+datasetID+":"+tableID, func() (*bq.TableMetadata, error) {
+		return c.Client.GetTableMetadata(ctx, projectID, datasetID, tableID)
+	})
+}
+
 func (c *memoClient) GetRoutineMetadata(ctx context.Context, projectID, datasetID, routineID string) (*bq.RoutineMetadata, error) {
-	key := projectID + ":" + datasetID + ":" + routineID
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if r, ok := c.routines[key]; ok {
-		return r.md, r.err
-	}
-	md, err := c.Client.GetRoutineMetadata(ctx, projectID, datasetID, routineID)
-	c.routines[key] = routineResult{md, err}
+	md, err := memoize(&c.mu, c.routines, projectID+":"+datasetID+":"+routineID, func() (*bq.RoutineMetadata, error) {
+		return c.Client.GetRoutineMetadata(ctx, projectID, datasetID, routineID)
+	})
 	c.recordFailure(err)
 	return md, err
 }
 
 func (c *memoClient) DryRunSchema(ctx context.Context, query string) (bq.Schema, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if r, ok := c.schemas[query]; ok {
-		return r.schema, r.err
-	}
-	schema, err := c.Client.DryRunSchema(ctx, query)
-	c.schemas[query] = schemaResult{schema, err}
+	schema, err := memoize(&c.mu, c.schemas, query, func() (bq.Schema, error) {
+		return c.Client.DryRunSchema(ctx, query)
+	})
 	c.recordFailure(err)
 	return schema, err
 }
 
-// recordFailure must be called with c.mu held.
+// prefetchConcurrency bounds the metadata requests in flight, which are
+// cheap reads that take a few hundred milliseconds each.
+const prefetchConcurrency = 16
+
+// prefetchTables fetches the metadata of ids in parallel into the cache,
+// because the analysis looks tables up one at a time. Failures are not
+// recorded here, but when the analysis looks the table up, so that a table
+// the analysis never reads does not fail the run.
+func (c *memoClient) prefetchTables(ctx context.Context, ids []file.TableID) {
+	sem := make(chan struct{}, prefetchConcurrency)
+	var wg sync.WaitGroup
+	for _, id := range ids {
+		sem <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-sem }()
+			_, _ = c.fetchTable(ctx, id.Project, id.Dataset, id.Table)
+		})
+	}
+	wg.Wait()
+}
+
+// tableReferences returns the tables of every input, without duplicates.
+func tableReferences(inputs []input, defaultProject func() string) []file.TableID {
+	var ids []file.TableID
+	seen := make(map[file.TableID]bool)
+	for _, in := range inputs {
+		for _, id := range file.TableReferences(in.src, defaultProject) {
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids
+}
+
 func (c *memoClient) recordFailure(err error) {
-	if err != nil && bigquery.IsRuntimeFailure(err) && !slices.Contains(c.failMsgs, err.Error()) {
+	if err == nil || !bigquery.IsRuntimeFailure(err) {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !slices.Contains(c.failMsgs, err.Error()) {
 		c.failMsgs = append(c.failMsgs, err.Error())
 	}
 }

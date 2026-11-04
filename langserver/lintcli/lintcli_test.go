@@ -548,3 +548,46 @@ func TestRun_RoutineMetadataFetchedOncePerProcedure(t *testing.T) {
 		t.Errorf("run result diff (-want +got):\n%s", diff)
 	}
 }
+
+func TestRun_TablesOfAllFilesAreFetchedConcurrently(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeFiles(t, map[string]string{"a.sql": "SELECT x FROM `p.d.a`\n", "b.sql": "SELECT x FROM d.b\n"})
+
+	ctrl := gomock.NewController(t)
+	c := mock_bigquery.NewMockClient(ctrl)
+	c.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+	c.EXPECT().Close().Return(nil).AnyTimes()
+	wait := barrier(2)
+	c.EXPECT().GetTableMetadata(gomock.Any(), "p", "d", gomock.Any()).
+		DoAndReturn(func(context.Context, string, string, string) (*bq.TableMetadata, error) {
+			return &bq.TableMetadata{Schema: bq.Schema{{Name: "x", Type: bq.IntegerFieldType}}, Type: bq.RegularTable}, wait()
+		}).Times(2)
+	factory := func(context.Context, string, string) (bigquery.Client, error) { return c, nil }
+
+	got := runWith(t, factory, "", "a.sql", "b.sql")
+	if diff := cmp.Diff(result{}, got, cmp.AllowUnexported(result{})); diff != "" {
+		t.Errorf("run result diff (-want +got):\n%s", diff)
+	}
+}
+
+// The prefetch takes a path into an array of a table alias for a table, as
+// the analyzer does, and the lookup fails with not found.
+func TestRun_PrefetchedPathThatIsNotATableIsNotAFailure(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeFiles(t, map[string]string{"a.sql": "SELECT e FROM `p.d.t` AS t, t.arr AS e\n"})
+
+	ctrl := gomock.NewController(t)
+	c := mock_bigquery.NewMockClient(ctrl)
+	c.EXPECT().GetDefaultProject().Return("p").AnyTimes()
+	c.EXPECT().Close().Return(nil).AnyTimes()
+	c.EXPECT().GetTableMetadata(gomock.Any(), "p", "d", "t").
+		Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "arr", Type: bq.IntegerFieldType, Repeated: true}}, Type: bq.RegularTable}, nil).Times(1)
+	c.EXPECT().GetTableMetadata(gomock.Any(), "p", "t", "arr").
+		Return(nil, &googleapi.Error{Code: 404, Message: "Not found: Dataset p:t"}).Times(1)
+	factory := func(context.Context, string, string) (bigquery.Client, error) { return c, nil }
+
+	got := runWith(t, factory, "", "a.sql")
+	if diff := cmp.Diff(result{}, got, cmp.AllowUnexported(result{})); diff != "" {
+		t.Errorf("run result diff (-want +got):\n%s", diff)
+	}
+}
