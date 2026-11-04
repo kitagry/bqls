@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -18,6 +19,8 @@ var UnusedColumnInCTE = &Analyzer{
 }
 
 // cteColumnUsage holds what one statement does with the columns of its CTE references.
+// The analyzer's prune_unused_columns option cannot provide this: it prunes
+// table scans only, and leaves every column of a ResolvedWithRefScan.
 type cteColumnUsage struct {
 	// used holds the column ids that an expression reads or a SELECT list outputs.
 	used map[int32]bool
@@ -50,6 +53,9 @@ func runUnusedColumnInCTE(pass *Pass) {
 	}
 }
 
+// errUnfollowedScan stops the walk in newCTEColumnUsage.
+var errUnfollowedScan = errors.New("unfollowed scan")
+
 // newCTEColumnUsage returns nil when the statement passes columns somewhere
 // bqls does not follow.
 func newCTEColumnUsage(output *googlesql.AnalyzerOutput) *cteColumnUsage {
@@ -61,49 +67,46 @@ func newCTEColumnUsage(output *googlesql.AnalyzerOutput) *cteColumnUsage {
 	if !ok {
 		return nil
 	}
-	for _, scan := range file.ListResolvedAstNode[googlesql.ResolvedScanNode](output) {
-		if !followedScan(scan) {
-			return nil
-		}
-	}
 	u := &cteColumnUsage{used: make(map[int32]bool), refs: make(map[string][]*googlesql.ResolvedWithRefScan)}
 	u.markColumns(outputs)
-	for _, ref := range file.ListResolvedAstNode[*googlesql.ResolvedColumnRef](output) {
-		if col, err := ref.Column(); err == nil && col != nil {
-			u.markColumns([]*googlesql.ResolvedColumn{col})
-		}
-	}
 	// A column that a query outputs counts as used even when nothing reads
 	// the query's result. Without a SELECT list to compute, the output is the
-	// column list of the topmost ORDER BY or LIMIT scan.
-	for _, s := range file.ListResolvedAstNode[*googlesql.ResolvedProjectScan](output) {
-		u.markScan(s)
-	}
-	for _, s := range file.ListResolvedAstNode[*googlesql.ResolvedOrderByScan](output) {
-		u.markScan(s)
-	}
-	for _, s := range file.ListResolvedAstNode[*googlesql.ResolvedLimitOffsetScan](output) {
-		u.markScan(s)
-	}
-	for _, e := range file.ListResolvedAstNode[*googlesql.ResolvedWithEntry](output) {
-		if body, err := e.WithSubquery(); err == nil && body != nil {
-			u.markScan(body)
+	// column list of an ORDER BY or LIMIT scan; every such scan counts, which
+	// may hide an unused column behind e.g. `|> LIMIT` but never reports a
+	// used one.
+	// One walk, since every node access crosses into the analyzer.
+	err = file.WalkResolved(stmt, func(n googlesql.ResolvedNode) error {
+		if scan, ok := n.(googlesql.ResolvedScanNode); ok && !followedScan(scan) {
+			return errUnfollowedScan
 		}
-	}
-	for _, item := range file.ListResolvedAstNode[*googlesql.ResolvedSetOperationItem](output) {
-		if cols, err := item.OutputColumnList(); err == nil {
-			u.markColumns(cols)
+		switch n := n.(type) {
+		case *googlesql.ResolvedColumnRef:
+			if col, err := n.Column(); err == nil && col != nil {
+				u.markColumns([]*googlesql.ResolvedColumn{col})
+			}
+		case *googlesql.ResolvedProjectScan, *googlesql.ResolvedOrderByScan, *googlesql.ResolvedLimitOffsetScan:
+			u.markScan(n.(googlesql.ResolvedScanNode))
+		case *googlesql.ResolvedWithEntry:
+			if body, err := n.WithSubquery(); err == nil && body != nil {
+				u.markScan(body)
+			}
+		case *googlesql.ResolvedSetOperationItem:
+			if cols, err := n.OutputColumnList(); err == nil {
+				u.markColumns(cols)
+			}
+		case *googlesql.ResolvedSubqueryExpr:
+			if q, err := n.Subquery(); err == nil && q != nil {
+				u.markScan(q)
+			}
+		case *googlesql.ResolvedWithRefScan:
+			if name, err := n.WithQueryName(); err == nil {
+				u.refs[name] = append(u.refs[name], n)
+			}
 		}
-	}
-	for _, sub := range file.ListResolvedAstNode[*googlesql.ResolvedSubqueryExpr](output) {
-		if q, err := sub.Subquery(); err == nil && q != nil {
-			u.markScan(q)
-		}
-	}
-	for _, ref := range file.ListResolvedAstNode[*googlesql.ResolvedWithRefScan](output) {
-		if name, err := ref.WithQueryName(); err == nil {
-			u.refs[name] = append(u.refs[name], ref)
-		}
+		return nil
+	})
+	if err != nil {
+		return nil
 	}
 	return u
 }
@@ -209,6 +212,10 @@ func checkCTEColumns(pass *Pass, e cteEntry, entry *googlesql.ResolvedWithEntry,
 	if distinct, err := sel.Distinct(); err != nil || distinct {
 		return
 	}
+	// Likewise under GROUP BY ALL every non-aggregate column is a grouping key.
+	if groupByAll(sel) {
+		return
+	}
 	cols, ok := selectListColumns(sel)
 	if !ok || len(cols.names) != len(outputs) {
 		return
@@ -222,14 +229,20 @@ func checkCTEColumns(pass *Pass, e cteEntry, entry *googlesql.ResolvedWithEntry,
 		}
 		columns[j], spans[j] = col, astOffsets(col)
 	}
-	fixable := !referencesOrdinalOrAlias(q, sel, cols.names, unused)
+	// Removing the only aggregate of a query without GROUP BY would turn its
+	// single row into one row per input row.
+	fixable := !referencesOrdinalOrAlias(q, sel, cols.names, unused) && !aggregatesWithoutGroupBy(body)
 	for j, isUnused := range unused {
 		if !isUnused {
 			continue
 		}
-		name, err := outputs[j].Name()
-		if err != nil {
-			continue
+		name := cols.names[j]
+		if name == "" {
+			// The resolved name of an anonymous column is internal, e.g. `$col2`.
+			if !inBounds(pass.File.FixedSrc, spans[j]) {
+				continue
+			}
+			name = strings.Join(strings.Fields(pass.File.FixedSrc[spans[j].start:spans[j].end]), " ")
 		}
 		at := spans[j]
 		if alias, err := columns[j].Alias(); err == nil && alias != nil {
@@ -271,6 +284,55 @@ func cteSelect(e cteEntry) (*googlesql.ASTQuery, *googlesql.ASTSelect, bool) {
 	return q, sel, ok
 }
 
+func groupByAll(sel *googlesql.ASTSelect) bool {
+	g, err := sel.GroupBy()
+	if err != nil || g == nil {
+		return false
+	}
+	all, err := g.All()
+	return err != nil || all != nil
+}
+
+// aggregatesWithoutGroupBy reports whether the CTE body is a SELECT that
+// aggregates without grouping keys. It follows only the scans that a single
+// SELECT stacks on its aggregation, so a FROM subquery's aggregation is not
+// mistaken for the body's.
+func aggregatesWithoutGroupBy(body googlesql.ResolvedScanNode) bool {
+	scan, seenProject := body, false
+	for !isNilNode(scan) {
+		var next googlesql.ResolvedScanNode
+		var err error
+		switch s := scan.(type) {
+		case *googlesql.ResolvedAggregateScan:
+			n, err := s.GroupByListSize()
+			return err != nil || n == 0
+		case *googlesql.ResolvedWithScan:
+			next, err = s.Query()
+		case *googlesql.ResolvedOrderByScan:
+			next, err = s.InputScan()
+		case *googlesql.ResolvedLimitOffsetScan:
+			next, err = s.InputScan()
+		case *googlesql.ResolvedProjectScan:
+			if seenProject {
+				return false
+			}
+			seenProject = true
+			next, err = s.InputScan()
+		case *googlesql.ResolvedAnalyticScan:
+			next, err = s.InputScan()
+		case *googlesql.ResolvedFilterScan:
+			next, err = s.InputScan()
+		default:
+			return false
+		}
+		if err != nil {
+			return true
+		}
+		scan = next
+	}
+	return false
+}
+
 // referencesOrdinalOrAlias reports whether removing the unused columns from
 // the SELECT list could break the clauses that refer to it: an ordinal such as
 // `GROUP BY 1` would shift, and an alias would disappear.
@@ -281,28 +343,36 @@ func referencesOrdinalOrAlias(q *googlesql.ASTQuery, sel *googlesql.ASTSelect, n
 			removed[strings.ToLower(names[j])] = true
 		}
 	}
-	var clauses []googlesql.ASTNode
+	type clause struct {
+		node googlesql.ASTNode
+		// ordinals is whether the clause accepts ordinals; elsewhere an
+		// integer literal such as `HAVING COUNT(*) > 1` is just a value.
+		ordinals bool
+	}
+	var clauses []clause
 	if n, err := sel.GroupBy(); err == nil && n != nil {
-		clauses = append(clauses, n)
+		clauses = append(clauses, clause{n, true})
 	}
 	if n, err := sel.Having(); err == nil && n != nil {
-		clauses = append(clauses, n)
+		clauses = append(clauses, clause{n, false})
 	}
 	if n, err := sel.Qualify(); err == nil && n != nil {
-		clauses = append(clauses, n)
+		clauses = append(clauses, clause{n, false})
 	}
 	if n, err := sel.WindowClause(); err == nil && n != nil {
-		clauses = append(clauses, n)
+		clauses = append(clauses, clause{n, false})
 	}
 	if n, err := q.OrderBy(); err == nil && n != nil {
-		clauses = append(clauses, n)
+		clauses = append(clauses, clause{n, true})
 	}
 	found := false
 	for _, c := range clauses {
-		_ = file.Walk(c, func(n googlesql.ASTNode) error {
+		_ = file.Walk(c.node, func(n googlesql.ASTNode) error {
 			switch n := n.(type) {
 			case *googlesql.ASTIntLiteral:
-				found = true
+				if c.ordinals {
+					found = true
+				}
 			case *googlesql.ASTIdentifier:
 				if name, err := n.GetAsString(); err == nil && removed[strings.ToLower(name)] {
 					found = true

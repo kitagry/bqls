@@ -314,11 +314,11 @@ A column counts as used when any expression reads it — in the `SELECT` list, `
 Not reported:
 
 - CTEs of a `WITH RECURSIVE` clause.
-- A CTE whose body is a set operation, a pipe query, `SELECT DISTINCT` (every column decides which rows are kept), `SELECT AS STRUCT` / `AS VALUE`, or has `*` in its `SELECT` list.
+- A CTE whose body is a set operation, a pipe query, `SELECT DISTINCT` (every column decides which rows are kept), `GROUP BY ALL` (every non-aggregate column is a grouping key), `SELECT AS STRUCT` / `AS VALUE`, or has `*` in its `SELECT` list.
 - A CTE none of whose columns are read, e.g. one only counted with `COUNT(*)`, and a CTE that is never referenced, which `unused-cte` reports.
 - A statement that bqls cannot follow: one that is not a query, `CREATE TABLE ... AS SELECT`, `CREATE VIEW`, `EXPORT DATA` or `INSERT` (such as `MERGE`), or one that passes the CTE through `PIVOT`, `UNPIVOT`, `MATCH_RECOGNIZE` or a table-valued function.
 
-There is no quick fix when a comment would be removed or left describing a different column, or when the CTE's `GROUP BY`, `HAVING`, `QUALIFY`, `WINDOW` or `ORDER BY` uses an ordinal such as `GROUP BY 1` (which would shift) or the alias of a removed column.
+There is no quick fix when a comment would be removed or left describing a different column, or when the CTE's `GROUP BY`, `HAVING`, `QUALIFY`, `WINDOW` or `ORDER BY` uses an ordinal such as `GROUP BY 1` (which would shift) or the alias of a removed column, or when the CTE aggregates without `GROUP BY` (removing its only aggregate would return one row per input row).
 
 #### `unused-declare`
 

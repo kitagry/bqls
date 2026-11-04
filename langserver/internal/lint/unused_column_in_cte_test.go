@@ -133,6 +133,10 @@ func TestUnusedColumnInCTE_Detection(t *testing.T) {
 			src:  "WITH a AS (SELECT x, x + 1 AS y FROM `p.d.t`) SELECT y FROM a",
 			want: []string{"a.x"},
 		},
+		"anonymous column is named by its expression": {
+			src:  "WITH a AS (SELECT x, x  +  1 FROM `p.d.t`) SELECT x FROM a",
+			want: []string{"a.x + 1"},
+		},
 		"each statement is checked on its own": {
 			src:  "WITH a AS (SELECT 1 AS x, 2 AS y) SELECT x FROM a;\nWITH a AS (SELECT 1 AS x, 2 AS y) SELECT y FROM a;",
 			want: []string{"a.y", "a.x"},
@@ -169,6 +173,10 @@ func TestUnusedColumnInCTE_Detection(t *testing.T) {
 		},
 		"CTE body is SELECT DISTINCT": {
 			src:  "WITH a AS (SELECT DISTINCT x, x + 1 AS y FROM `p.d.t`) SELECT x FROM a",
+			want: nil,
+		},
+		"CTE body groups by ALL": {
+			src:  "WITH a AS (SELECT x AS k1, x + 1 AS k2, COUNT(*) AS n FROM `p.d.t` GROUP BY ALL) SELECT k1, n FROM a",
 			want: nil,
 		},
 		"CTE body selects *": {
@@ -255,6 +263,17 @@ func TestUnusedColumnInCTE_Fix(t *testing.T) {
 		"columns around a kept one": {
 			src:       "WITH a AS (SELECT 1 AS x, 2 AS y, 3 AS z) SELECT y FROM a",
 			wantFixed: "WITH a AS (SELECT 2 AS y) SELECT y FROM a",
+		},
+		"integer literal in HAVING is not an ordinal": {
+			src:       "WITH a AS (SELECT x AS k, x + 1 AS y, COUNT(*) AS n FROM `p.d.t` GROUP BY x HAVING COUNT(*) > 1) SELECT k, n FROM a",
+			wantFixed: "WITH a AS (SELECT x AS k, COUNT(*) AS n FROM `p.d.t` GROUP BY x HAVING COUNT(*) > 1) SELECT k, n FROM a",
+		},
+		"aggregate removed from a query with GROUP BY": {
+			src:       "WITH a AS (SELECT x AS k, MAX(x) AS m FROM `p.d.t` GROUP BY x) SELECT k FROM a",
+			wantFixed: "WITH a AS (SELECT x AS k FROM `p.d.t` GROUP BY x) SELECT k FROM a",
+		},
+		"no fix when the only aggregate of a query without GROUP BY is removed": {
+			src: "WITH a AS (SELECT MAX(x) AS m, 1 AS c FROM `p.d.t`) SELECT c FROM a",
 		},
 		"no fix when a trailing comment follows the column": {
 			src: "WITH a AS (SELECT\n  1 AS x,\n  2 AS y -- why\n) SELECT x FROM a",
