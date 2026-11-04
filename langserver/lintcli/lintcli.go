@@ -147,9 +147,20 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return exitFailure
 	}
 	memo := newMemoClient(client)
-	memo.prefetchTables(ctx, tableReferences(inputs, memo.GetDefaultProject))
+	// Fetched in the background because a lookup joins a fetch in flight, so
+	// the first file is analyzed while the later files' tables are fetched.
+	// The references are listed up front, because googlesql runs one call at
+	// a time and parsing in the background would only wait on the analysis.
+	refs := tableReferences(inputs, memo.GetDefaultProject)
+	prefetched := make(chan struct{})
+	go func() {
+		defer close(prefetched)
+		memo.prefetchTables(ctx, refs)
+	}()
 	p := source.NewProjectWithBQClient("/", memo, newLogger(stderr))
 	defer p.Close()
+	// Deferred after Close so that it runs first: the client must outlive the fetches.
+	defer func() { <-prefetched }()
 
 	var findings []finding
 	var fixedStdin *string
