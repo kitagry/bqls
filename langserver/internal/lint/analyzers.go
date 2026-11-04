@@ -6,6 +6,7 @@ var Analyzers = []*Analyzer{
 	InNull,
 	NotInNullable,
 	UnusedCTE,
+	UnusedColumnInCTE,
 	UnusedDeclare,
 	UnusedTempFunction,
 	UnusedTempFunctionArgument,
