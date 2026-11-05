@@ -44,6 +44,9 @@ type Catalog struct {
 	// scriptNode uses them.
 	scriptNames *catalogNames
 	scriptNode  googlesql.CatalogNode
+	// templatedFunctions are keyed by lowercased names, which GoogleSQL
+	// matches case-insensitively.
+	templatedFunctions map[string]*templatedFunction
 }
 
 // scriptObject is either a table or a procedure.
@@ -140,8 +143,16 @@ func (c *Catalog) TypeFactory() *googlesql.TypeFactory {
 	return c.typeFactory
 }
 
-func (c *Catalog) AddFunctionWithName(name string, fn *googlesql.Function) {
-	_ = c.catalog.AddFunction2(name, fn)
+func (c *Catalog) addFunction(name string, fn *googlesql.Function, tmpl *templatedFunction) {
+	if err := c.catalog.AddFunction2(name, fn); err != nil || tmpl == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.templatedFunctions == nil {
+		c.templatedFunctions = make(map[string]*templatedFunction)
+	}
+	c.templatedFunctions[strings.ToLower(name)] = tmpl
 }
 
 // EnsureTable loads a table from BigQuery if not already in the catalog.
