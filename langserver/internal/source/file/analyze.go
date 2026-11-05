@@ -1037,7 +1037,7 @@ func (a *Analyzer) createFunctionTypes(node *googlesql.ASTCreateFunctionStatemen
 		if err != nil {
 			continue
 		}
-		typ, err := getTypeFromTypeNode(typeNode, catalog.TypeFactory())
+		typ, err := a.analyzeTypeNode(sourceFile, typeNode, catalog)
 		if err != nil {
 			a.logger.Debug("failed to get type from parameter ", err)
 			return nil, nil
@@ -1073,7 +1073,7 @@ func (a *Analyzer) createFunctionTypes(node *googlesql.ASTCreateFunctionStatemen
 		return nil, &errResult
 	}
 
-	typ, err := getTypeFromTypeNode(returnTypeNode, catalog.TypeFactory())
+	typ, err := a.analyzeTypeNode(sourceFile, returnTypeNode, catalog)
 	if err != nil {
 		a.logger.Debug("failed to get type from return type ", err)
 		return nil, nil
@@ -1307,50 +1307,28 @@ func getDummyValueForTypeName(typeName string) string {
 	return "CAST(NULL/**/AS/**/" + compact + ")"
 }
 
-func getTypeFromTypeNode(node googlesql.ASTTypeNode, tf *googlesql.TypeFactory) (googlesql.Googlesql_TypeNode, error) {
-	if stn, ok := node.(*googlesql.ASTSimpleType); ok {
-		pathExpr, err := stn.TypeName()
-		if err != nil || pathExpr == nil {
-			return nil, fmt.Errorf("failed to get type name")
-		}
-		names, err := pathExpr.ToIdentifierVector()
-		if err != nil || len(names) == 0 {
-			return nil, fmt.Errorf("failed to get type name identifiers")
-		}
-		typeName := strings.Join(names, "")
-
-		switch typeName {
-		case "INT64":
-			return tf.GetInt64()
-		case "FLOAT64":
-			return tf.GetDouble()
-		case "BOOL":
-			return tf.GetBool()
-		case "STRING":
-			return tf.GetString()
-		case "BYTES":
-			return tf.GetBytes()
-		case "DATE":
-			return tf.GetDate()
-		case "DATETIME":
-			return tf.GetDatetime()
-		case "TIME":
-			return tf.GetTime()
-		case "TIMESTAMP":
-			return tf.GetTimestamp()
-		case "NUMERIC":
-			return tf.GetNumeric()
-		case "BIGNUMERIC":
-			return tf.GetBignumeric()
-		case "GEOGRAPHY":
-			return tf.GetGeography()
-		case "INTERVAL":
-			return tf.GetInterval()
-		case "JSON":
-			return tf.GetJson()
-		default:
-			return nil, fmt.Errorf("not implemented: %s", typeName)
-		}
+// analyzeTypeNode resolves a type written in the source with the analyzer
+// itself, so that ARRAY and STRUCT types and lower case names resolve exactly
+// as BigQuery does.
+func (a *Analyzer) analyzeTypeNode(src string, node googlesql.ASTTypeNode, catalog *Catalog) (googlesql.Googlesql_TypeNode, error) {
+	// ANY TYPE (templated) parameters have no type node.
+	if node == nil {
+		return nil, fmt.Errorf("no type node")
 	}
-	return nil, fmt.Errorf("not implemented: %T", node)
+	loc, err := node.GetParseLocationRange()
+	if err != nil {
+		return nil, err
+	}
+	if loc == nil {
+		return nil, fmt.Errorf("failed to get type location")
+	}
+	start, end := parseLocStart(loc), parseLocEnd(loc)
+	if start < 0 || end <= start || end > len(src) {
+		return nil, fmt.Errorf("invalid type location")
+	}
+	opts, err := a.newAnalyzerOptions(catalog.langOpts, catalog.TypeFactory())
+	if err != nil {
+		return nil, err
+	}
+	return googlesql.AnalyzeType(src[start:end], opts, catalog.node(), catalog.TypeFactory())
 }

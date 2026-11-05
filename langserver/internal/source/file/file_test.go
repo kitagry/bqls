@@ -2020,6 +2020,38 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 			bqTableMetadataMap: map[string]*bq.TableMetadata{},
 			expectedErrs:       []file.Error{},
 		},
+		"Parse create tmp js function statement returning array": {
+			file: "CREATE TEMP FUNCTION parse_ranking(s STRING)\n" +
+				"RETURNS ARRAY<INT64>\n" +
+				"LANGUAGE js\n" +
+				"AS \"return JSON.parse(s)\";\n" +
+				"\n" +
+				"SELECT parse_ranking(\"[1]\") AS x",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Parse create tmp js function statement in lower case": {
+			file: "create temporary function parse_ranking(s string)\n" +
+				"returns array<int64>\n" +
+				"language js\n" +
+				"as \"return JSON.parse(s)\";\n" +
+				"\n" +
+				"select parse_ranking(\"[1]\") as x",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Parse create tmp js function statement returning scalar": {
+			file: "CREATE TEMP FUNCTION f(s STRING) RETURNS INT64 LANGUAGE js AS \"return s.length\";\n" +
+				"SELECT f(\"a\") AS x",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Parse create tmp function statement with struct types": {
+			file: "CREATE TEMP FUNCTION f(s STRUCT<a INT64, b ARRAY<STRING>>) RETURNS STRUCT<x INT64, y ARRAY<STRING>> AS (STRUCT(s.a AS x, s.b AS y));\n" +
+				"SELECT f(STRUCT(1 AS a, ['b'] AS b)).y AS x",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
 		"Parse create tmp function statement without returns": {
 			file: "CREATE TEMP FUNCTION target_func(x INT64) AS (x * 10);\n" +
 				"SELECT target_func(10);",
