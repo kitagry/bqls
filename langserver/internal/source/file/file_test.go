@@ -2058,21 +2058,37 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 			file: "CREATE TEMP FUNCTION target_func(x INT64) AS (x * 10);\n" +
 				"SELECT target_func(10);",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Parse create tmp function statement without returns infers struct type": {
+			file: "CREATE TEMP FUNCTION f(x INT64, y STRING) AS (STRUCT(x AS a, CONCAT(y, 'b') AS b));\n" +
+				"SELECT f(1, 'a').b AS x",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Parse create tmp function statement without returns in lower case": {
+			file: "create temp function f(x int64) as (X * 10);\n" +
+				"select f(1) as x",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Parse create tmp function statement without returns calling another one": {
+			file: "CREATE TEMP FUNCTION f(x INT64) AS (x * 10);\n" +
+				"CREATE TEMP FUNCTION g(x INT64) AS (STRUCT(f(x) AS a));\n" +
+				"SELECT g(1).a AS x",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Report inferred return type mismatch of tmp function without returns": {
+			file: "CREATE TEMP FUNCTION f(x INT64) AS (x * 10);\n" +
+				"SELECT f(1).a AS x",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
 			expectedErrs: []file.Error{
 				{
-					Msg: "Currently, bqls does not support function without return type.",
-					Position: lsp.Position{
-						Line:      0,
-						Character: 0,
-					},
-					TermLength: 53,
-					Severity:   lsp.Warning,
-				},
-				{
-					Msg: "Function not found: target_func",
+					Msg: "Cannot access field a on a value with type INT64",
 					Position: lsp.Position{
 						Line:      1,
-						Character: 7,
+						Character: 12,
 					},
 				},
 			},
@@ -2288,19 +2304,17 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 			},
 		},
 		"Report create function error once when a later statement triggers a retry": {
-			file: "CREATE TEMP FUNCTION target_func(x INT64) AS (x * 10);\n" +
+			file: "CREATE TEMP FUNCTION target_func(x INT64) AS (CAST(x AS unknown_type));\n" +
 				"DECLARE y INT64;\n" +
 				"SELECT y;",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{},
 			expectedErrs: []file.Error{
 				{
-					Msg: "Currently, bqls does not support function without return type.",
+					Msg: "Type not found: unknown_type",
 					Position: lsp.Position{
 						Line:      0,
-						Character: 0,
+						Character: 56,
 					},
-					TermLength: 53,
-					Severity:   lsp.Warning,
 				},
 			},
 		},
@@ -3154,7 +3168,7 @@ func TestAnalyzer_ParseFile_StatementResults(t *testing.T) {
 		"CREATE TEMP FUNCTION without RETURNS": {
 			file: "CREATE TEMP FUNCTION f(x INT64) AS (x);\nSELECT 1",
 			expected: []statementResult{
-				{errMsg: "Currently, bqls does not support function without return type."},
+				{hasOutput: true},
 				{hasOutput: true},
 			},
 		},

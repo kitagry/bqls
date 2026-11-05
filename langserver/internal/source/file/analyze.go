@@ -12,7 +12,6 @@ import (
 	"github.com/kitagry/bqls/langserver/internal/bigquery"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
 	"github.com/kitagry/bqls/langserver/internal/source/bqparser"
-	"github.com/kitagry/bqls/langserver/internal/source/helper"
 	"github.com/sirupsen/logrus"
 )
 
@@ -688,14 +687,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 
 			if kind == googlesql.ASTNodeKindAstCreateFunctionStatement {
 				fnNode := s.(*googlesql.ASTCreateFunctionStatement)
-				newFunc, err := a.createFunctionTypes(fnNode, fixedSrc, catalog)
-				if err != nil {
-					srcErr := errorToSrc(src, fixedSrc, edits, *err)
-					passErrs = append(passErrs, statementError{index: i, err: srcErr})
-					statements = append(statements, StatementResult{Stmt: s, Err: &srcErr})
-					continue
-				}
-				if newFunc != nil {
+				if newFunc := a.createFunctionTypes(fnNode, fixedSrc, catalog); newFunc != nil {
 					decl, _ := fnNode.FunctionDeclaration()
 					if decl != nil {
 						pathExpr, _ := decl.Name()
@@ -1022,17 +1014,18 @@ func (a *Analyzer) GetTableMetadataFromPath(ctx context.Context, path string) (*
 	return fetchTableMetadata(ctx, a.bqClient, ref)
 }
 
-func (a *Analyzer) createFunctionTypes(node *googlesql.ASTCreateFunctionStatement, sourceFile string, catalog *Catalog) (*googlesql.Function, *Error) {
+func (a *Analyzer) createFunctionTypes(node *googlesql.ASTCreateFunctionStatement, sourceFile string, catalog *Catalog) *googlesql.Function {
 	decl, err := node.FunctionDeclaration()
 	if err != nil || decl == nil {
-		return nil, nil
+		return nil
 	}
 	params, err := decl.Parameters()
 	if err != nil || params == nil {
-		return nil, nil
+		return nil
 	}
 
 	argTypes := []*googlesql.FunctionArgumentType{}
+	argColumns := []functionArgColumn{}
 	numParams, _ := params.NumChildren()
 	for i := int32(0); i < numParams; i++ {
 		param, err := params.ParameterEntries(i)
@@ -1046,57 +1039,50 @@ func (a *Analyzer) createFunctionTypes(node *googlesql.ASTCreateFunctionStatemen
 		typ, err := a.analyzeTypeNode(sourceFile, typeNode, catalog)
 		if err != nil {
 			a.logger.Debug("failed to get type from parameter ", err)
-			return nil, nil
+			return nil
+		}
+		if ident, _ := param.Name(); ident != nil {
+			name, _ := ident.GetAsString()
+			argColumns = append(argColumns, functionArgColumn{name: name, typ: typ})
 		}
 		opts, err := googlesql.NewFunctionArgumentTypeOptions()
 		if err != nil {
-			return nil, nil
+			return nil
 		}
 		arg, err := googlesql.NewFunctionArgumentType(typ, opts, 1)
 		if err != nil {
-			return nil, nil
+			return nil
 		}
 		argTypes = append(argTypes, arg)
 	}
 
-	returnTypeNode, err := node.ReturnType()
-	if err != nil || returnTypeNode == nil {
-		errResult := Error{
-			Msg:      "Currently, bqls does not support function without return type.",
-			Severity: lsp.Warning,
-		}
-		loc, _ := node.GetParseLocationRange()
-		if loc != nil {
-			start := parseLocStart(loc)
-			end := parseLocEnd(loc)
-			if start >= 0 {
-				errResult.Position = helper.IndexToPosition(sourceFile, start)
-				if end > start {
-					errResult.TermLength = end - start
-				}
-			}
-		}
-		return nil, &errResult
+	var typ googlesql.Googlesql_TypeNode
+	returnTypeNode, _ := node.ReturnType()
+	if returnTypeNode != nil {
+		typ, err = a.analyzeTypeNode(sourceFile, returnTypeNode, catalog)
+	} else {
+		// BigQuery infers the return type from the body when RETURNS is omitted.
+		typ, err = a.inferFunctionReturnType(sourceFile, node, argColumns, catalog)
 	}
-
-	typ, err := a.analyzeTypeNode(sourceFile, returnTypeNode, catalog)
 	if err != nil {
-		a.logger.Debug("failed to get type from return type ", err)
-		return nil, nil
+		// The body itself is analyzed with the CREATE FUNCTION statement,
+		// which reports the cause.
+		a.logger.Debug("failed to get return type ", err)
+		return nil
 	}
 
 	retOpts, err := googlesql.NewFunctionArgumentTypeOptions()
 	if err != nil {
-		return nil, nil
+		return nil
 	}
 	retType, err := googlesql.NewFunctionArgumentType(typ, retOpts, 1)
 	if err != nil {
-		return nil, nil
+		return nil
 	}
 
 	sig, err := googlesql.NewFunctionSignature3(retType, argTypes, 0)
 	if err != nil {
-		return nil, nil
+		return nil
 	}
 
 	pathExpr, _ := decl.Name()
@@ -1108,9 +1094,9 @@ func (a *Analyzer) createFunctionTypes(node *googlesql.ASTCreateFunctionStatemen
 
 	newFunc, err := googlesql.NewFunction2([]string{name}, "", googlesql.FunctionEnums_ModeScalar, []*googlesql.FunctionSignature{sig})
 	if err != nil {
-		return nil, nil
+		return nil
 	}
-	return newFunc, nil
+	return newFunc
 }
 
 // getDummyValueForDeclarationNode returns a typed expression that stands in
@@ -1311,6 +1297,56 @@ func getDummyValueForTypeName(typeName string) string {
 		return compact + "[]"
 	}
 	return "CAST(NULL/**/AS/**/" + compact + ")"
+}
+
+type functionArgColumn struct {
+	name string
+	typ  googlesql.Googlesql_TypeNode
+}
+
+// inferFunctionReturnType analyzes the SQL function body with the parameters
+// bound to their declared types and returns the type of the body.
+func (a *Analyzer) inferFunctionReturnType(src string, node *googlesql.ASTCreateFunctionStatement, args []functionArgColumn, catalog *Catalog) (googlesql.Googlesql_TypeNode, error) {
+	body, err := node.SqlFunctionBody()
+	if err != nil || body == nil {
+		return nil, fmt.Errorf("no sql function body")
+	}
+	expr, err := body.Expression()
+	if err != nil || expr == nil {
+		return nil, fmt.Errorf("no sql function body expression")
+	}
+	loc, err := expr.GetParseLocationRange()
+	if err != nil {
+		return nil, err
+	}
+	if loc == nil {
+		return nil, fmt.Errorf("failed to get body location")
+	}
+	start, end := parseLocStart(loc), parseLocEnd(loc)
+	if start < 0 || end <= start || end > len(src) {
+		return nil, fmt.Errorf("invalid body location")
+	}
+	opts, err := a.newAnalyzerOptions(catalog.langOpts, catalog.TypeFactory())
+	if err != nil {
+		return nil, err
+	}
+	for _, arg := range args {
+		if err := opts.AddExpressionColumn(arg.name, arg.typ); err != nil {
+			return nil, err
+		}
+	}
+	output, err := googlesql.AnalyzeExpression(src[start:end], opts, catalog.node(), catalog.TypeFactory())
+	if err != nil {
+		return nil, err
+	}
+	resolved, err := output.ResolvedExpr()
+	if err != nil {
+		return nil, err
+	}
+	if resolved == nil {
+		return nil, fmt.Errorf("no resolved body expression")
+	}
+	return resolved.Type()
 }
 
 // analyzeTypeNode resolves a type written in the source with the analyzer
