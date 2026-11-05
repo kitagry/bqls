@@ -139,7 +139,9 @@ func (a *Analyzer) procedureParameters(rawText string, proc *googlesql.ASTCreate
 	if err != nil {
 		return nil, nil, err
 	}
-	output, err := googlesql.AnalyzeStatementFromParserAST(proc, opts, rawText, current, catalog.TypeFactory())
+	output, err := analyzeWithTemplatedFunctions(a, catalog, func() (*googlesql.AnalyzerOutput, error) {
+		return googlesql.AnalyzeStatementFromParserAST(proc, opts, rawText, current, catalog.TypeFactory())
+	})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -192,7 +194,9 @@ func (a *Analyzer) loopVariableType(rawText string, loop *googlesql.ASTForInStat
 	if err != nil {
 		return nil, err
 	}
-	output, err := googlesql.AnalyzeStatement(masked, opts, current, catalog.TypeFactory())
+	output, err := analyzeWithTemplatedFunctions(a, catalog, func() (*googlesql.AnalyzerOutput, error) {
+		return googlesql.AnalyzeStatement(masked, opts, current, catalog.TypeFactory())
+	})
 	if err != nil {
 		return nil, err
 	}

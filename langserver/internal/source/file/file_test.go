@@ -2093,6 +2093,100 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 				},
 			},
 		},
+		"Parse templated tmp function statement": {
+			file: "CREATE TEMP FUNCTION add_one(x ANY TYPE) AS (x + 1);\n" +
+				"SELECT add_one(1);",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Resolve templated tmp function per call with its argument types": {
+			file: "CREATE TEMP FUNCTION f(x ANY TYPE) AS (x);\n" +
+				"SELECT f(1) + 1 AS a, CONCAT(f('a'), 'b') AS b, f(STRUCT(1 AS c)).c AS c",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Resolve templated tmp function called in another case": {
+			file: "create temp function add_one(x any type) as (x + 1);\n" +
+				"SELECT ADD_ONE(1) AS a",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Parse templated tmp function statement with returns": {
+			file: "CREATE TEMP FUNCTION f(x ANY TYPE) RETURNS STRING AS (CAST(x AS STRING));\n" +
+				"SELECT f(1).a AS a",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Cannot access field a on a value with type STRING",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 12,
+					},
+				},
+			},
+		},
+		"Report templated tmp function calling itself": {
+			file: "CREATE TEMP FUNCTION f(x ANY TYPE) AS (f(x));\n" +
+				"SELECT f(1) AS a",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Analysis of function f failed: Analysis of function f failed: Function f calls itself",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 7,
+					},
+				},
+			},
+		},
+		"Resolve nested calls of templated tmp function": {
+			file: "CREATE TEMP FUNCTION add_one(x ANY TYPE) AS (x + 1);\n" +
+				"SELECT add_one(add_one(1)) AS a",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Resolve templated tmp function with typed parameters": {
+			file: "CREATE TEMP FUNCTION f(x ANY TYPE, y INT64) AS (x + y);\n" +
+				"SELECT f(1.5, 2).a AS a",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Cannot access field a on a value with type FLOAT64",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 17,
+					},
+				},
+			},
+		},
+		"Do not coerce arguments of templated tmp function to a previous call": {
+			file: "CREATE TEMP FUNCTION f(x ANY TYPE) AS (x);\n" +
+				"SELECT f(1.5) AS a, f(1).b AS b",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Cannot access field b on a value with type INT64",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 25,
+					},
+				},
+			},
+		},
+		"Report templated tmp function whose body fails for the argument types": {
+			file: "CREATE TEMP FUNCTION f(x ANY TYPE) AS (x.a);\n" +
+				"SELECT f(STRUCT(1 AS a)) AS a, f(1) AS b",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Analysis of function f failed: Cannot access field a on a value with type INT64",
+					Position: lsp.Position{
+						Line:      1,
+						Character: 31,
+					},
+				},
+			},
+		},
 		"Parse create tmp function statement after a leading block comment": {
 			file: "/*\n" +
 				"comment it.\n" +
