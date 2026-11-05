@@ -945,6 +945,8 @@ func TestNewLanguageOptions_NonPipeFeatures(t *testing.T) {
 		"GROUP BY array":                    {feature: googlesql.LanguageFeatureFeatureGroupByArray, want: true},
 		"generated columns":                 {feature: googlesql.LanguageFeatureFeatureGeneratedColumns, want: true},
 		"SQL graph":                         {feature: googlesql.LanguageFeatureFeatureSqlGraph, want: true},
+		"LIKE ANY array":                    {feature: googlesql.LanguageFeatureFeatureLikeAnySomeAllArray, want: true},
+		"LIKE ANY subquery":                 {feature: googlesql.LanguageFeatureFeatureLikeAnySomeAllSubquery, want: false},
 		"LATERAL join":                      {feature: googlesql.LanguageFeatureFeatureLateralJoin, want: false},
 		"FOR UPDATE":                        {feature: googlesql.LanguageFeatureFeatureForUpdate, want: false},
 		"WITH RECURSIVE depth modifier":     {feature: googlesql.LanguageFeatureFeatureWithRecursiveDepthModifier, want: false},

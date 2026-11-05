@@ -1346,6 +1346,8 @@ func TestAnalyzer_ParseFileWithLanguageFeatureSupportedByBigQuery(t *testing.T) 
 		"chained function call":     "SELECT ('a').UPPER()",
 		"pipe syntax":               "SELECT 1 AS x |> WHERE x > 0",
 		"GROUPING SETS with ROLLUP": "SELECT x, y FROM (SELECT 1 AS x, 2 AS y) GROUP BY GROUPING SETS (x, ROLLUP (y))",
+		"LIKE ANY UNNEST":           "SELECT 'abc' LIKE ANY UNNEST(['a%', 'x%']) AS x",
+		"NOT LIKE ALL UNNEST":       "SELECT 'abc' NOT LIKE ALL UNNEST(['a%', 'x%']) AS x",
 	}
 	for n, q := range tests {
 		t.Run(n, func(t *testing.T) {

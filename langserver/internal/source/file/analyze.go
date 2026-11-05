@@ -153,6 +153,12 @@ func newLanguageOptions() (*googlesql.LanguageOptions, error) {
 	if err := langOpt.EnableLanguageFeature(googlesql.LanguageFeatureFeatureAnalyticFunctions); err != nil {
 		return nil, err
 	}
+	// GoogleSQL marks this feature as in development, so EnableMaximumLanguageFeatures
+	// leaves it off even though BigQuery supports LIKE ANY|SOME|ALL UNNEST(array).
+	// https://cloud.google.com/bigquery/docs/reference/standard-sql/operators#like_operator_quantified
+	if err := langOpt.EnableLanguageFeature(googlesql.LanguageFeatureFeatureLikeAnySomeAllArray); err != nil {
+		return nil, err
+	}
 	if err := langOpt.SetSupportsAllStatementKinds(); err != nil {
 		return nil, err
 	}
