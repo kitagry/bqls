@@ -457,19 +457,24 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) 
 	growth := 0
 	errs = make([]Error, 0, 1)
 	fixOffsets = make([]FixOffset, 0, 1)
+	// Words are searched in code, which has the same byte layout as src, so
+	// that a word ending with a dot inside a block comment is left alone.
+	codeLines := strings.Split(blankBlockComments(src), "\n")
+	lineNo := 0
 	for line := range strings.SplitSeq(src, "\n") {
-		ind := len(line)
+		code := codeLines[lineNo]
+		lineNo++
+		ind := len(code)
 		// NOTE: to skip comments
-		// TODO: handle multi-line comments
-		if i := strings.Index(line, "--"); i != -1 {
+		if i := strings.Index(code, "--"); i != -1 {
 			ind = i
 		}
-		if i := strings.Index(line, "//"); i != -1 && i < ind {
+		if i := strings.Index(code, "//"); i != -1 && i < ind {
 			ind = i
 		}
 
 		// src is a word that ends with a dot.
-		loc := lastDotRegex.FindIndex([]byte(line[:ind] + " "))
+		loc := lastDotRegex.FindIndex([]byte(code[:ind] + " "))
 		if len(loc) != 2 {
 			fixedBuilder.WriteString(line + "\n")
 			currentOffset += len(line) + 1
@@ -478,10 +483,11 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) 
 
 		for len(loc) == 2 {
 			// sql.Rawtext[loc[1]] is a space, a semicolon, or end of file.
-			loc[0] = hyphenatedTablePathStart(line, loc[0])
+			loc[0] = hyphenatedTablePathStart(code, loc[0])
 			srcStart := currentOffset + loc[0]
 			targetWord := line[loc[0] : loc[1]-1]
 			line = line[:loc[0]] + "true" + line[loc[1]-1:]
+			code = code[:loc[0]] + "true" + code[loc[1]-1:]
 			pos, _ := byteOffsetToPosition(src, srcStart-growth)
 			errs = append(errs, Error{
 				Msg:                  fmt.Sprintf("Unrecognized name: %s", targetWord),
@@ -498,7 +504,7 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) 
 
 			oldLoc := loc
 			ind -= len(targetWord) - len("true")
-			loc = lastDotRegex.FindIndex([]byte(line[:ind] + " "))
+			loc = lastDotRegex.FindIndex([]byte(code[:ind] + " "))
 			if len(loc) == 2 && loc[0] == oldLoc[0] {
 				break
 			}
@@ -511,6 +517,34 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) 
 	// more than src has.
 	fixed := strings.TrimSuffix(fixedBuilder.String(), "\n")
 	return fixed, errs, fixOffsets
+}
+
+// blankBlockComments replaces each byte inside /* */ comments, other than line
+// breaks, with a space, so that the result keeps the byte offsets and lines of
+// src. Quoted text and line comments are skipped, so that "/*" inside them does
+// not open a comment.
+func blankBlockComments(src string) string {
+	b := []byte(src)
+	for i := 0; i < len(src); {
+		switch {
+		case src[i] == '\'' || src[i] == '"' || src[i] == '`':
+			i = skipQuoted(src, i)
+		case strings.HasPrefix(src[i:], "/*"):
+			end := skipComment(src, i)
+			for ; i < end; i++ {
+				if b[i] != '\n' && b[i] != '\r' {
+					b[i] = ' '
+				}
+			}
+		default:
+			if next := skipComment(src, i); next != i {
+				i = next
+			} else {
+				i++
+			}
+		}
+	}
+	return string(b)
 }
 
 // hyphenatedTablePathStart extends the start of a word ending with a dot back over
