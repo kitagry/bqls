@@ -2043,6 +2043,36 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 				},
 			},
 		},
+		"Parse create tmp function statement after a leading block comment": {
+			file: "/*\n" +
+				"comment it.\n" +
+				"*/\n" +
+				"CREATE TEMP FUNCTION f(x INT64) RETURNS INT64 AS (x);\n" +
+				"\n" +
+				"SELECT f(1) AS x",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs:       []file.Error{},
+		},
+		"Report error positions after a leading block comment and a tmp function": {
+			file: "/*\n" +
+				"comment it.\n" +
+				"*/\n" +
+				"CREATE TEMP FUNCTION f(x INT64) RETURNS INT64 AS (x);\n" +
+				"\n" +
+				"SELECT f(1) AS x, unknown_column",
+			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			expectedErrs: []file.Error{
+				{
+					Msg: "Unrecognized name: unknown_column",
+					Position: lsp.Position{
+						Line:      5,
+						Character: 18,
+					},
+					TermLength:           14,
+					IncompleteColumnName: "unknown_column",
+				},
+			},
+		},
 		"Report error once when a later statement triggers a declaration retry": {
 			file: "DECLARE y STRING;\n" +
 				"DECLARE x INT64;\n" +

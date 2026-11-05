@@ -325,6 +325,59 @@ func TestFixDot_WordBeforeSemicolon(t *testing.T) {
 	}
 }
 
+func TestFixDot_SkipsBlockComments(t *testing.T) {
+	tests := map[string]struct {
+		src            string
+		want           string
+		wantIncomplete []string
+	}{
+		"multi-line comment": {
+			src:  "/*\ncomment it.\n*/\nSELECT 1",
+			want: "/*\ncomment it.\n*/\nSELECT 1",
+		},
+		"comment before a word ending with a dot": {
+			src:            "SELECT /* a. */ t. FROM t",
+			want:           "SELECT /* a. */ true FROM t",
+			wantIncomplete: []string{"t."},
+		},
+		"word after a comment closed on a later line": {
+			src:            "/* a.\nb. */ SELECT t. FROM t",
+			want:           "/* a.\nb. */ SELECT true FROM t",
+			wantIncomplete: []string{"t."},
+		},
+		"unclosed comment": {
+			src:  "SELECT 1 /* a.\nb.",
+			want: "SELECT 1 /* a.\nb.",
+		},
+		"comment opener inside a line comment": {
+			src:            "-- /*\nSELECT t. FROM t",
+			want:           "-- /*\nSELECT true FROM t",
+			wantIncomplete: []string{"t."},
+		},
+		"comment opener inside a string": {
+			src:            "SELECT '/*', t. FROM t",
+			want:           "SELECT '/*', true FROM t",
+			wantIncomplete: []string{"t."},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, errs, _ := fixDot(tt.src)
+			if got != tt.want {
+				t.Errorf("fixDot(%q) = %q, want %q", tt.src, got, tt.want)
+			}
+			var gotIncomplete []string
+			for _, e := range errs {
+				gotIncomplete = append(gotIncomplete, e.IncompleteColumnName)
+			}
+			if diff := cmp.Diff(tt.wantIncomplete, gotIncomplete); diff != "" {
+				t.Errorf("fixDot() incomplete names mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestFixDot_HyphenatedTablePath(t *testing.T) {
 	tests := map[string]struct {
 		src            string
