@@ -1365,6 +1365,46 @@ func TestAnalyzer_ParseFileWithLanguageFeatureSupportedByBigQuery(t *testing.T) 
 	}
 }
 
+func TestAnalyzer_ParseFileWithUndeclaredArrayParameter(t *testing.T) {
+	tests := map[string]string{
+		"LIKE ANY UNNEST":             "SELECT 'C10' LIKE ANY UNNEST(@patterns) AS matched",
+		"LIKE SOME UNNEST":            "SELECT 'C10' LIKE SOME UNNEST(@patterns) AS matched",
+		"LIKE ALL UNNEST":             "SELECT 'C10' LIKE ALL UNNEST(@patterns) AS matched",
+		"NOT LIKE ANY UNNEST":         "SELECT 'C10' NOT LIKE ANY UNNEST(@patterns) AS matched",
+		"LIKE ANY UNNEST with BYTES":  "SELECT b'C10' LIKE ANY UNNEST(@patterns) AS matched",
+		"LIKE ANY UNNEST with column": "SELECT code LIKE ANY UNNEST(@patterns) AS matched FROM UNNEST(['C10']) AS code",
+		"IN UNNEST":                   "SELECT 'C10' IN UNNEST(@codes) AS matched",
+		"IN UNNEST with INT64":        "SELECT 10 IN UNNEST(@codes) AS matched",
+	}
+	for n, q := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", q)
+			defer got.Close()
+
+			if len(got.Errors) != 0 {
+				t.Errorf("ParseFile errors = %+v, want none", got.Errors)
+			}
+		})
+	}
+}
+
+func TestAnalyzer_ParseFileWithUndeclaredParameterInLikeAnyUnnestOfNonString(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+	analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+	got := analyzer.ParseFile("uri", "SELECT 10 LIKE ANY UNNEST(@patterns) AS matched")
+	defer got.Close()
+
+	if len(got.Errors) == 0 {
+		t.Errorf("ParseFile errors = none, want an error because LIKE does not accept INT64")
+	}
+}
+
 func TestAnalyzer_ParseFileWithRowAccessPolicyWithoutGrantTo(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	bqClient := mock_bigquery.NewMockClient(ctrl)
