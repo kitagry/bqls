@@ -194,67 +194,143 @@ func (a *Analyzer) newAnalyzerOptions(langOpt *googlesql.LanguageOptions, tf *go
 }
 
 func (a *Analyzer) AnalyzeStatement(rawText string, stmt googlesql.ASTStatementNode, catalog *Catalog) (*googlesql.AnalyzerOutput, error) {
-	langOpt := catalog.langOpts
-	opts, err := a.newAnalyzerOptions(langOpt, catalog.TypeFactory())
+	params, err := collectConstrainedParameters(stmt)
 	if err != nil {
-		return nil, err
-	}
-	// GoogleSQL defaults unconstrained parameters to INT64 and checks the
-	// snapshot expression before inferring its required TIMESTAMP type.
-	// Supply that constraint for bare named parameters, without changing SQL
-	// or suppressing errors for literals and other expressions.
-	parameters := make(map[string]bool)
-	if err := Walk(stmt, func(node googlesql.ASTNode) error {
-		snapshot, ok := node.(*googlesql.ASTForSystemTime)
-		if !ok {
-			return nil
-		}
-		expr, err := snapshot.Expression()
-		if err != nil {
-			return err
-		}
-		parameter, ok := expr.(*googlesql.ASTParameterExpr)
-		if !ok {
-			return nil
-		}
-		identifier, err := parameter.Name()
-		if err != nil || identifier == nil {
-			return err
-		}
-		name, err := identifier.GetAsString()
-		if err != nil {
-			return err
-		}
-		// Match GoogleSQL's ASCII-only parameter name normalization. Quoted
-		// non-ASCII names differing in case remain distinct parameters.
-		name = strings.Map(func(r rune) rune {
-			if r >= 'A' && r <= 'Z' {
-				return r + ('a' - 'A')
-			}
-			return r
-		}, name)
-		if parameters[name] {
-			return nil
-		}
-		timestamp, err := catalog.TypeFactory().GetTimestamp()
-		if err != nil {
-			return err
-		}
-		if err := opts.AddQueryParameter(name, timestamp); err != nil {
-			return err
-		}
-		parameters[name] = true
-		return nil
-	}); err != nil {
 		return nil, err
 	}
 	scope := a.scopeCatalog(rawText, stmt, catalog)
 	if alter, ok := stmt.(*googlesql.ASTAlterRowAccessPolicyStatement); ok {
 		scope = a.withRowAccessPolicyTarget(alter, scope, catalog)
 	}
-	return analyzeWithTemplatedFunctions(a, catalog, func() (*googlesql.AnalyzerOutput, error) {
-		return googlesql.AnalyzeStatementFromParserAST(stmt, opts, rawText, scope, catalog.TypeFactory())
+	analyze := func(likePatternType func() (googlesql.Googlesql_TypeNode, error)) (*googlesql.AnalyzerOutput, error) {
+		opts, err := a.newAnalyzerOptions(catalog.langOpts, catalog.TypeFactory())
+		if err != nil {
+			return nil, err
+		}
+		if err := params.declare(opts, catalog.TypeFactory(), likePatternType); err != nil {
+			return nil, err
+		}
+		return analyzeWithTemplatedFunctions(a, catalog, func() (*googlesql.AnalyzerOutput, error) {
+			return googlesql.AnalyzeStatementFromParserAST(stmt, opts, rawText, scope, catalog.TypeFactory())
+		})
+	}
+	if len(params.likePatterns) == 0 {
+		return analyze(nil)
+	}
+	// LIKE accepts only STRING or BYTES, so one of the two element types is
+	// the left-hand side's type. Report the STRING attempt's error when both
+	// fail, because the left-hand side is then neither or the error is
+	// unrelated to the parameter.
+	out, err := analyze(catalog.TypeFactory().GetString)
+	if err == nil {
+		return out, nil
+	}
+	if bytesOut, bytesErr := analyze(catalog.TypeFactory().GetBytes); bytesErr == nil {
+		return bytesOut, nil
+	}
+	return out, err
+}
+
+// constrainedParameters are named query parameters whose type GoogleSQL
+// cannot infer from where they appear. GoogleSQL defaults unconstrained
+// parameters to INT64 and checks these positions before inferring their
+// required type, so they are declared up front without changing SQL or
+// suppressing errors for literals and other expressions.
+type constrainedParameters struct {
+	// snapshots appear as the FOR SYSTEM_TIME AS OF expression, which must
+	// be a TIMESTAMP.
+	snapshots []string
+	// likePatterns appear as LIKE ANY|SOME|ALL UNNEST(@p), which must be an
+	// array of the left-hand side's type. GoogleSQL infers this for
+	// IN UNNEST(@p) but not for LIKE.
+	likePatterns []string
+}
+
+func collectConstrainedParameters(stmt googlesql.ASTStatementNode) (constrainedParameters, error) {
+	var params constrainedParameters
+	seen := make(map[string]bool)
+	add := func(dst *[]string, expr googlesql.ASTExpressionNode) error {
+		name, ok, err := namedParameter(expr)
+		if err != nil || !ok || seen[name] {
+			return err
+		}
+		seen[name] = true
+		*dst = append(*dst, name)
+		return nil
+	}
+	err := Walk(stmt, func(node googlesql.ASTNode) error {
+		switch n := node.(type) {
+		case *googlesql.ASTForSystemTime:
+			expr, err := n.Expression()
+			if err != nil {
+				return err
+			}
+			return add(&params.snapshots, expr)
+		case *googlesql.ASTLikeExpression:
+			unnest, err := n.UnnestExpr()
+			if err != nil || unnest == nil {
+				return err
+			}
+			expr, err := unnest.Expression()
+			if err != nil {
+				return err
+			}
+			return add(&params.likePatterns, expr)
+		}
+		return nil
 	})
+	return params, err
+}
+
+func (p constrainedParameters) declare(opts *googlesql.AnalyzerOptions, tf *googlesql.TypeFactory, likePatternType func() (googlesql.Googlesql_TypeNode, error)) error {
+	for _, name := range p.snapshots {
+		timestamp, err := tf.GetTimestamp()
+		if err != nil {
+			return err
+		}
+		if err := opts.AddQueryParameter(name, timestamp); err != nil {
+			return err
+		}
+	}
+	for _, name := range p.likePatterns {
+		elem, err := likePatternType()
+		if err != nil {
+			return err
+		}
+		array, err := tf.MakeArrayType2(elem)
+		if err != nil {
+			return err
+		}
+		if err := opts.AddQueryParameter(name, array); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// namedParameter returns the normalized name when expr is a bare named
+// parameter.
+func namedParameter(expr googlesql.ASTExpressionNode) (string, bool, error) {
+	parameter, ok := expr.(*googlesql.ASTParameterExpr)
+	if !ok {
+		return "", false, nil
+	}
+	identifier, err := parameter.Name()
+	if err != nil || identifier == nil {
+		return "", false, err
+	}
+	name, err := identifier.GetAsString()
+	if err != nil {
+		return "", false, err
+	}
+	// Match GoogleSQL's ASCII-only parameter name normalization. Quoted
+	// non-ASCII names differing in case remain distinct parameters.
+	return strings.Map(func(r rune) rune {
+		if r >= 'A' && r <= 'Z' {
+			return r + ('a' - 'A')
+		}
+		return r
+	}, name), true, nil
 }
 
 // withRowAccessPolicyTarget returns scope unchanged when the target cannot be
