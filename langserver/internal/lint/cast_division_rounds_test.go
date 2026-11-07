@@ -14,7 +14,7 @@ func TestCastDivisionRounds(t *testing.T) {
 	type report struct {
 		// text is the exact reported source text.
 		text string
-		// fixed is the text the fix writes in its place.
+		// fixed is the text the fix writes in its place, "" for no fix.
 		fixed string
 	}
 	tests := map[string]struct {
@@ -48,6 +48,24 @@ func TestCastDivisionRounds(t *testing.T) {
 		"SAFE_DIVIDE": {
 			src:  "SELECT CAST(SAFE_DIVIDE(i, 2) AS INT64) FROM d.t",
 			want: []report{{"CAST(SAFE_DIVIDE(i, 2) AS INT64)", "SAFE.DIV(i, 2)"}},
+		},
+		"explicit CAST operand": {
+			src:  "SELECT CAST(i / CAST(f AS INT64) AS INT64) FROM d.t",
+			want: []report{{"CAST(i / CAST(f AS INT64) AS INT64)", "DIV(i, CAST(f AS INT64))"}},
+		},
+		"function call operand": {
+			src:  "SELECT CAST(ARRAY_LENGTH([1, 2]) / 2 AS INT64)",
+			want: []report{{"CAST(ARRAY_LENGTH([1, 2]) / 2 AS INT64)", "DIV(ARRAY_LENGTH([1, 2]), 2)"}},
+		},
+		"scalar subquery operand": {
+			src:  "SELECT CAST((SELECT MAX(i) FROM d.t) / 2 AS INT64)",
+			want: []report{{"CAST((SELECT MAX(i) FROM d.t) / 2 AS INT64)", "DIV((SELECT MAX(i) FROM d.t), 2)"}},
+		},
+		// The SELECT list expression is resolved as a reference to the GROUP
+		// BY one, so rewriting only the GROUP BY one would break the query.
+		"in GROUP BY": {
+			src:  "SELECT CAST(i / 2 AS INT64) FROM d.t GROUP BY CAST(i / 2 AS INT64)",
+			want: []report{{"CAST(i / 2 AS INT64)", ""}},
 		},
 		"in a CTE on a later line": {
 			src:  "WITH c AS (\n  SELECT CAST(i / 2 AS INT64) AS h FROM d.t\n)\nSELECT h FROM c",
@@ -104,6 +122,12 @@ func TestCastDivisionRounds(t *testing.T) {
 				if diff := cmp.Diff(wantDiag, d, cmpopts.IgnoreFields(lint.Diagnostic{}, "Range", "SuggestedFixes")); diff != "" {
 					t.Errorf("diagnostic diff (-want +got):\n%s", diff)
 				}
+				if w.fixed == "" {
+					if len(d.SuggestedFixes) != 0 {
+						t.Errorf("got fixes %+v, want none", d.SuggestedFixes)
+					}
+					continue
+				}
 				if len(d.SuggestedFixes) != 1 {
 					t.Fatalf("got %d fixes, want 1", len(d.SuggestedFixes))
 				}
@@ -121,6 +145,9 @@ func TestCastDivisionRounds(t *testing.T) {
 				}
 			}
 			for _, d := range got {
+				if len(d.SuggestedFixes) == 0 {
+					continue
+				}
 				fixed := applyFixes(t, tt.src, []lint.Diagnostic{d})
 				if after := lint.Run(t.Context(), parseTyped(t, fixed), lint.Config{}, lint.Env{}, lint.CastDivisionRounds); len(after) != 0 {
 					t.Errorf("diagnostics after fix %q: %+v", fixed, after)
