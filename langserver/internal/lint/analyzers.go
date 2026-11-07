@@ -34,4 +34,5 @@ var Analyzers = []*Analyzer{
 	RegexpLiteral,
 	ArrayNullElement,
 	CastDivisionRounds,
+	InsertWithoutColumnList,
 }

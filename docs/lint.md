@@ -24,6 +24,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`insert-column-order`](#insert-column-order) | on | warning | yes | | `INSERT ... SELECT` queries whose columns are the target columns in a different order |
 | [`insert-null-into-required`](#insert-null-into-required) | off | warning | | | `INSERT` / `UPDATE` / `MERGE` values that may be NULL written to a `REQUIRED` column, which BigQuery rejects only at run time |
 | [`insert-missing-required`](#insert-missing-required) | on | warning | | | `INSERT` / `MERGE ... INSERT` column lists that leave out a `REQUIRED` column without a default value, which BigQuery rejects only at run time |
+| [`insert-without-column-list`](#insert-without-column-list) | on | warning | yes | | `INSERT` statements without a column list, whose values are matched to the table's columns by position |
 | [`left-join-as-inner`](#left-join-as-inner) | on | warning | yes | | `LEFT` / `RIGHT JOIN`s whose `WHERE` clause rejects the NULL rows of the optional side |
 | [`variable-column-shadow`](#variable-column-shadow) | on | warning | yes | | A column compared with itself because its bare name was meant as a same-named `DECLARE` variable |
 | [`join-key-implicit-cast`](#join-key-implicit-cast) | on | warning | | | `ON` / `USING` join keys of different types, so one side is implicitly cast (e.g. `INT64` to `FLOAT64`) |
@@ -127,6 +128,14 @@ INSERT INTO my_dataset.t (v) VALUES (1);  -- leaves out `id`
 Not reported: `INSERT` and `MERGE ... INSERT VALUES (...)` without a column list and `INSERT ROW`, which write every column, `REQUIRED` columns with a default value, views and other non-table targets. Only top-level columns are checked: a `STRUCT` value always has every field, and an omitted `NULLABLE` `RECORD` column is NULL as a whole. An `INSERT ... SELECT` whose query returns no rows succeeds at run time, but is reported too.
 
 This rule depends on the table schema, so it needs table metadata. Unlike [`insert-null-into-required`](#insert-null-into-required), it is on by default: a missing column fails every row the statement writes, so a report is a false positive only when the statement writes no rows. There is no quick fix, since bqls cannot know the value to add.
+
+#### `insert-without-column-list`
+
+An `INSERT` statement without a column list (`INSERT INTO t VALUES (...)`, `INSERT INTO t SELECT ...`). Its values are written to the table's columns by position, so once a column is added to the table, or its columns are reordered, the statement fails or, when the types agree, silently writes values to the wrong columns. Reported on the target table.
+
+The quick fix adds a column list with every column of the table in schema order (`INSERT INTO t (a, b) SELECT ...`), which is what the statement writes today, quoting names that need it. It is not offered when the query's column names are the table's columns in a different order, which `insert-column-order` reports: a list in schema order would state the swap as intended.
+
+Not reported: `MERGE ... INSERT ROW` / `INSERT VALUES`, and `CREATE TABLE ... AS SELECT`. `INSERT INTO t SELECT * FROM s` is reported like any other query, since the list protects against a change in `t`.
 
 #### `left-join-as-inner`
 
