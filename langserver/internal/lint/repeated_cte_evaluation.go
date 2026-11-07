@@ -90,28 +90,35 @@ func newRepeatedCTEGraph(output *googlesql.AnalyzerOutput) (repeatedCTEGraph, bo
 	return repeatedCTEGraph{ctes: g.ctes, evals: g.evaluations(), bodies: bodies}, true
 }
 
-func (b *cteBody) add(n googlesql.ResolvedNode) {
+// add records what n does and reports whether it reads data from a table or
+// a CTE. A join, aggregation or window function only counts over such data, so
+// `(SELECT COUNT(*) FROM UNNEST(arr))` in a projection is per-row array work.
+func (b *cteBody) add(n googlesql.ResolvedNode) bool {
+	reads := false
 	switch n := n.(type) {
 	case *googlesql.ResolvedWithEntry:
-		return
+		return false
 	case *googlesql.ResolvedTableScan:
 		b.readsTable = true
-	case *googlesql.ResolvedJoinScan, *googlesql.ResolvedAggregateScan, *googlesql.ResolvedAnalyticScan:
-		b.heavy = true
+		reads = true
 	case *googlesql.ResolvedWithRefScan:
 		if name, err := n.WithQueryName(); err == nil {
 			b.refs = append(b.refs, name)
 		}
+		reads = true
 	}
-	children, err := n.GetChildNodes()
-	if err != nil {
-		return
-	}
-	for _, c := range children {
-		if !isNilNode(c) {
-			b.add(c)
+	if children, err := n.GetChildNodes(); err == nil {
+		for _, c := range children {
+			if !isNilNode(c) && b.add(c) {
+				reads = true
+			}
 		}
 	}
+	switch n.(type) {
+	case *googlesql.ResolvedJoinScan, *googlesql.ResolvedAggregateScan, *googlesql.ResolvedAnalyticScan:
+		b.heavy = b.heavy || reads
+	}
+	return reads
 }
 
 // readsTable reports whether the CTE reads a table, directly or through the

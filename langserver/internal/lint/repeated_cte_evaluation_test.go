@@ -59,6 +59,14 @@ func TestRepeatedCTEEvaluation(t *testing.T) {
 		"no join, aggregate or window": {
 			src: "WITH f AS (SELECT id, v FROM p.d.t WHERE v > 0) SELECT * FROM f AS a JOIN f AS b USING (id)",
 		},
+		// The aggregate runs per row over an array, not over the table.
+		"aggregate over an array in a projection": {
+			src: "WITH f AS (SELECT id, (SELECT COUNT(*) FROM UNNEST([v, v]) AS x) AS c FROM p.d.t)\nSELECT * FROM f AS a JOIN f AS b USING (id)",
+		},
+		"correlated aggregate over a table in a projection": {
+			src:  "WITH f AS (SELECT id, (SELECT MAX(u.v) FROM p.d.t AS u WHERE u.id = o.id) AS m FROM p.d.t AS o)\nSELECT * FROM f AS a JOIN f AS b USING (id)",
+			want: []report{{"f", 2}},
+		},
 		"no table": {
 			src: "WITH n AS (SELECT x, COUNT(*) AS c FROM UNNEST([1, 2, 2]) AS x GROUP BY x) SELECT * FROM n AS a JOIN n AS b USING (x)",
 		},
