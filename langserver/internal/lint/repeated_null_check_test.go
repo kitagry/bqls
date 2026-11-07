@@ -55,19 +55,22 @@ func parseRepeated(t *testing.T, src string) file.ParsedFile {
 	return parsed
 }
 
-func repeatedNullCheckMessage(column, table string, negated bool) string {
+func repeatedNullCheckMessage(column, table, expr string, negated bool) string {
 	if negated {
-		return fmt.Sprintf("`%s` is a REPEATED column of `%s`, which BigQuery stores as an empty array, never NULL, so IS NOT NULL is always TRUE; to check for a non-empty array, use ARRAY_LENGTH(%s) > 0", column, table, column)
+		return fmt.Sprintf("`%s` is a REPEATED column of `%s`, which BigQuery stores as an empty array, never NULL, so IS NOT NULL is always TRUE; to check for a non-empty array, use ARRAY_LENGTH(%s) > 0", column, table, expr)
 	}
-	return fmt.Sprintf("`%s` is a REPEATED column of `%s`, which BigQuery stores as an empty array, never NULL, so IS NULL is always FALSE; to check for an empty array, use ARRAY_LENGTH(%s) = 0", column, table, column)
+	return fmt.Sprintf("`%s` is a REPEATED column of `%s`, which BigQuery stores as an empty array, never NULL, so IS NULL is always FALSE; to check for an empty array, use ARRAY_LENGTH(%s) = 0", column, table, expr)
 }
 
 func TestRepeatedNullCheck(t *testing.T) {
 	type report struct {
 		// text is the exact reported source text.
-		text    string
-		column  string
-		table   string
+		text   string
+		column string
+		table  string
+		// expr is the checked expression as written, which the message
+		// suggests passing to ARRAY_LENGTH.
+		expr    string
 		negated bool
 		fixed   string
 	}
@@ -77,31 +80,31 @@ func TestRepeatedNullCheck(t *testing.T) {
 	}{
 		"IS NULL": {
 			src:  "SELECT id FROM p.d.t WHERE tags IS NULL",
-			want: []report{{"tags IS NULL", "tags", "p.d.t", false, "ARRAY_LENGTH(tags) = 0"}},
+			want: []report{{"tags IS NULL", "tags", "p.d.t", "tags", false, "ARRAY_LENGTH(tags) = 0"}},
 		},
 		"IS NOT NULL": {
 			src:  "SELECT id FROM p.d.t WHERE tags IS NOT NULL",
-			want: []report{{"tags IS NOT NULL", "tags", "p.d.t", true, "ARRAY_LENGTH(tags) > 0"}},
+			want: []report{{"tags IS NOT NULL", "tags", "p.d.t", "tags", true, "ARRAY_LENGTH(tags) > 0"}},
 		},
 		"qualified": {
 			src:  "SELECT a.id FROM p.d.t AS a WHERE a.tags IS NULL",
-			want: []report{{"a.tags IS NULL", "tags", "p.d.t", false, "ARRAY_LENGTH(a.tags) = 0"}},
+			want: []report{{"a.tags IS NULL", "tags", "p.d.t", "a.tags", false, "ARRAY_LENGTH(a.tags) = 0"}},
 		},
 		"in the SELECT list": {
 			src:  "SELECT tags IS NULL AS no_tags FROM p.d.t",
-			want: []report{{"tags IS NULL", "tags", "p.d.t", false, "ARRAY_LENGTH(tags) = 0"}},
+			want: []report{{"tags IS NULL", "tags", "p.d.t", "tags", false, "ARRAY_LENGTH(tags) = 0"}},
 		},
 		"through a CTE and an alias": {
 			src:  "WITH c AS (SELECT id, tags AS tt FROM p.d.t)\nSELECT id FROM c WHERE tt IS NULL",
-			want: []report{{"tt IS NULL", "tags", "p.d.t", false, "ARRAY_LENGTH(tt) = 0"}},
+			want: []report{{"tt IS NULL", "tags", "p.d.t", "tt", false, "ARRAY_LENGTH(tt) = 0"}},
 		},
 		"inner join": {
 			src:  "SELECT t.id FROM p.d.t AS t JOIN p.d.u AS u USING (id) WHERE u.labels IS NULL",
-			want: []report{{"u.labels IS NULL", "labels", "p.d.u", false, "ARRAY_LENGTH(u.labels) = 0"}},
+			want: []report{{"u.labels IS NULL", "labels", "p.d.u", "u.labels", false, "ARRAY_LENGTH(u.labels) = 0"}},
 		},
 		"preserved side of a LEFT JOIN": {
 			src:  "SELECT t.id FROM p.d.t AS t LEFT JOIN p.d.u AS u USING (id) WHERE t.tags IS NOT NULL",
-			want: []report{{"t.tags IS NOT NULL", "tags", "p.d.t", true, "ARRAY_LENGTH(t.tags) > 0"}},
+			want: []report{{"t.tags IS NOT NULL", "tags", "p.d.t", "t.tags", true, "ARRAY_LENGTH(t.tags) > 0"}},
 		},
 		// An unmatched row has NULL there.
 		"optional side of a LEFT JOIN": {
@@ -143,7 +146,7 @@ func TestRepeatedNullCheck(t *testing.T) {
 				if text := textInRange(tt.src, d); text != w.text {
 					t.Errorf("reported text = %q, want %q", text, w.text)
 				}
-				if want := repeatedNullCheckMessage(w.column, w.table, w.negated); d.Rule != "repeated-null-check" || d.Severity != lint.SeverityWarning || d.Message != want {
+				if want := repeatedNullCheckMessage(w.column, w.table, w.expr, w.negated); d.Rule != "repeated-null-check" || d.Severity != lint.SeverityWarning || d.Message != want {
 					t.Errorf("diagnostic = %+v, want warning %q", d, want)
 				}
 				if len(d.SuggestedFixes) != 1 {

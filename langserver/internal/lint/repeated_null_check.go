@@ -17,11 +17,11 @@ var RepeatedNullCheck = &Analyzer{
 	Run:            runRepeatedNullCheck,
 }
 
-func repeatedNullCheckMessage(column, table string, negated bool) string {
+func repeatedNullCheckMessage(column, table, expr string, negated bool) string {
 	if negated {
-		return fmt.Sprintf("`%s` is a REPEATED column of `%s`, which BigQuery stores as an empty array, never NULL, so IS NOT NULL is always TRUE; to check for a non-empty array, use ARRAY_LENGTH(%s) > 0", column, table, column)
+		return fmt.Sprintf("`%s` is a REPEATED column of `%s`, which BigQuery stores as an empty array, never NULL, so IS NOT NULL is always TRUE; to check for a non-empty array, use ARRAY_LENGTH(%s) > 0", column, table, expr)
 	}
-	return fmt.Sprintf("`%s` is a REPEATED column of `%s`, which BigQuery stores as an empty array, never NULL, so IS NULL is always FALSE; to check for an empty array, use ARRAY_LENGTH(%s) = 0", column, table, column)
+	return fmt.Sprintf("`%s` is a REPEATED column of `%s`, which BigQuery stores as an empty array, never NULL, so IS NULL is always FALSE; to check for an empty array, use ARRAY_LENGTH(%s) = 0", column, table, expr)
 }
 
 // BigQuery writes a NULL array to a REPEATED column as an empty array, so a
@@ -30,76 +30,83 @@ func repeatedNullCheckMessage(column, table string, negated bool) string {
 // which is a field access rather than a column reference.
 func runRepeatedNullCheck(pass *Pass) {
 	for _, output := range pass.File.RNode {
+		var checks []repeatedNullCheckCandidate
+		for _, call := range file.ListResolvedAstNode[*googlesql.ResolvedFunctionCall](output) {
+			if c, ok := nullCheck(call); ok {
+				checks = append(checks, c)
+			}
+		}
+		if len(checks) == 0 {
+			continue
+		}
 		stmt, err := output.ResolvedStatement()
 		if err != nil || stmt == nil {
 			continue
 		}
 		lineage := traceColumnLineage(stmt)
 		nullExtended := outerJoinNullableColumns(output)
-		for _, call := range file.ListResolvedAstNode[*googlesql.ResolvedFunctionCall](output) {
-			check, negated, ok := nullCheck(call)
-			if !ok {
-				continue
-			}
-			checkRepeatedNullCheck(pass, lineage, nullExtended, check, negated)
+		for _, c := range checks {
+			checkRepeatedNullCheck(pass, lineage, nullExtended, c)
 		}
 	}
 }
 
-// nullCheck returns the $is_null call of `x IS NULL`, or of `x IS NOT NULL`,
-// which is located at the enclosing $not.
-func nullCheck(call *googlesql.ResolvedFunctionCall) (located *googlesql.ResolvedFunctionCall, negated, ok bool) {
+type repeatedNullCheckCandidate struct {
+	// call is where the check is located: the $is_null call, or the $not
+	// around it for IS NOT NULL.
+	call    *googlesql.ResolvedFunctionCall
+	ref     *googlesql.ResolvedColumnRef
+	negated bool
+}
+
+// nullCheck matches `x IS NULL`, or `x IS NOT NULL`, which is located at the
+// enclosing $not, where x is a column reference.
+func nullCheck(call *googlesql.ResolvedFunctionCall) (repeatedNullCheckCandidate, bool) {
 	name, ok := functionName(call)
 	if !ok {
-		return nil, false, false
+		return repeatedNullCheckCandidate{}, false
 	}
+	isNull, negated := call, false
 	switch name {
 	case "$is_null":
-		return call, false, true
 	case "$not":
-		args, err := call.ArgumentList()
-		if err != nil || len(args) != 1 {
-			return nil, false, false
-		}
-		inner, ok := args[0].(*googlesql.ResolvedFunctionCall)
+		inner, ok := singleArgument(call).(*googlesql.ResolvedFunctionCall)
 		if !ok {
-			return nil, false, false
+			return repeatedNullCheckCandidate{}, false
 		}
 		if n, ok := functionName(inner); !ok || n != "$is_null" {
-			return nil, false, false
+			return repeatedNullCheckCandidate{}, false
 		}
 		// `NOT (x IS NULL)` keeps its own location on the inner call and
 		// is reported there.
 		if loc := resolvedOffsets(inner); loc.start >= 0 {
-			return nil, false, false
+			return repeatedNullCheckCandidate{}, false
 		}
-		return call, true, true
+		isNull, negated = inner, true
+	default:
+		return repeatedNullCheckCandidate{}, false
 	}
-	return nil, false, false
+	ref, ok := singleArgument(isNull).(*googlesql.ResolvedColumnRef)
+	if !ok {
+		return repeatedNullCheckCandidate{}, false
+	}
+	return repeatedNullCheckCandidate{call: call, ref: ref, negated: negated}, true
 }
 
-func checkRepeatedNullCheck(pass *Pass, lineage *columnLineage, nullExtended map[int32]bool, call *googlesql.ResolvedFunctionCall, negated bool) {
-	loc := resolvedOffsets(call)
+func singleArgument(call *googlesql.ResolvedFunctionCall) googlesql.ResolvedExprNode {
+	args, err := call.ArgumentList()
+	if err != nil || len(args) != 1 {
+		return nil
+	}
+	return args[0]
+}
+
+func checkRepeatedNullCheck(pass *Pass, lineage *columnLineage, nullExtended map[int32]bool, c repeatedNullCheckCandidate) {
+	loc := resolvedOffsets(c.call)
 	if loc.start < 0 {
 		return
 	}
-	isNull := call
-	if negated {
-		args, err := call.ArgumentList()
-		if err != nil || len(args) != 1 {
-			return
-		}
-		isNull = args[0].(*googlesql.ResolvedFunctionCall)
-	}
-	args, err := isNull.ArgumentList()
-	if err != nil || len(args) != 1 {
-		return
-	}
-	ref, ok := args[0].(*googlesql.ResolvedColumnRef)
-	if !ok {
-		return
-	}
-	col, err := ref.Column()
+	col, err := c.ref.Column()
 	if err != nil || col == nil {
 		return
 	}
@@ -107,7 +114,9 @@ func checkRepeatedNullCheck(pass *Pass, lineage *columnLineage, nullExtended map
 	if err != nil {
 		return
 	}
-	src, ok := lineage.unchangedSource(id, nullExtended)
+	// Unlike lineage.source, conditions do not matter: a condition cannot
+	// make an array NULL, but an outer join can.
+	src, ok := lineage.follow(id, func(id int32) bool { return nullExtended[id] })
 	if !ok {
 		return
 	}
@@ -124,7 +133,7 @@ func checkRepeatedNullCheck(pass *Pass, lineage *columnLineage, nullExtended map
 	if err != nil || meta == nil || meta.Type != bq.RegularTable || !repeatedField(meta.Schema, src.name) {
 		return
 	}
-	at := resolvedOffsets(ref)
+	at := resolvedOffsets(c.ref)
 	if !inBounds(pass.File.FixedSrc, at) {
 		return
 	}
@@ -132,13 +141,14 @@ func checkRepeatedNullCheck(pass *Pass, lineage *columnLineage, nullExtended map
 	if !ok {
 		return
 	}
-	replacement := "ARRAY_LENGTH(" + pass.File.FixedSrc[at.start:at.end] + ") = 0"
-	if negated {
-		replacement = "ARRAY_LENGTH(" + pass.File.FixedSrc[at.start:at.end] + ") > 0"
+	expr := pass.File.FixedSrc[at.start:at.end]
+	replacement := "ARRAY_LENGTH(" + expr + ") = 0"
+	if c.negated {
+		replacement = "ARRAY_LENGTH(" + expr + ") > 0"
 	}
 	pass.Report(Diagnostic{
 		Range:    r,
-		Message:  repeatedNullCheckMessage(src.name, tableName, negated),
+		Message:  repeatedNullCheckMessage(src.name, tableName, expr, c.negated),
 		Severity: SeverityWarning,
 		SuggestedFixes: []SuggestedFix{{
 			Title:         "Replace with " + replacement,
@@ -146,29 +156,6 @@ func checkRepeatedNullCheck(pass *Pass, lineage *columnLineage, nullExtended map
 			ChangesResult: true,
 		}},
 	})
-}
-
-// unchangedSource follows id through unchanged copies to a table column,
-// failing when the value is computed on the way or may be NULL-extended by
-// an outer join. Unlike source, conditions do not matter: a condition
-// cannot make an array NULL.
-func (l *columnLineage) unchangedSource(id int32, nullExtended map[int32]bool) (tableColumn, bool) {
-	seen := make(map[int32]bool)
-	for !seen[id] {
-		seen[id] = true
-		if nullExtended[id] {
-			return tableColumn{}, false
-		}
-		if t, ok := l.tables[id]; ok {
-			return t, true
-		}
-		next, ok := l.copied[id]
-		if !ok {
-			return tableColumn{}, false
-		}
-		id = next
-	}
-	return tableColumn{}, false
 }
 
 // outerJoinNullableColumns returns the columns of the sides of outer joins
