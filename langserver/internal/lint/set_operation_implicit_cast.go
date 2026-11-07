@@ -1,6 +1,9 @@
 package lint
 
 import (
+	"errors"
+	"slices"
+
 	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
@@ -31,43 +34,85 @@ func runSetOperationImplicitCast(pass *Pass) {
 	astSetOps := file.ListAstNode[*googlesql.ASTSetOperation](pass.File.Node)
 	for _, output := range pass.File.RNode {
 		for _, scan := range file.ListResolvedAstNode[*googlesql.ResolvedSetOperationScan](output) {
-			astSetOp, ok := outermostSetOperation(astSetOps, resolvedOffsets(scan))
-			if !ok {
-				continue
-			}
 			items, err := scan.InputItemList()
 			if err != nil {
 				continue
 			}
-			inputs := setOperationInputs(astSetOp)
-			if len(inputs) != len(items) {
+			inputs, ok := astSetOperationInputs(astSetOps, items)
+			if !ok {
 				continue
 			}
+			reported := make(map[setOperationReport]bool)
 			for i, item := range items {
-				checkSetOperationItem(pass, item, inputs[i])
+				checkSetOperationItem(pass, item, inputs[i], reported)
 			}
 		}
 	}
 }
 
-// outermostSetOperation returns the set operation that at spans. A resolved
-// set operation in parentheses, such as a CTE body, also spans them.
-func outermostSetOperation(setOps []*googlesql.ASTSetOperation, at offsets) (*googlesql.ASTSetOperation, bool) {
-	var found *googlesql.ASTSetOperation
+type setOperationReport struct {
+	at   offsets
+	from string
+}
+
+// astSetOperationInputs returns the inputs of the set operation that items
+// were resolved from. A set operation scan has no location under ORDER BY,
+// LIMIT or a WITH clause, so it is matched through a located node of each
+// input instead: the innermost set operation whose inputs hold them in order.
+func astSetOperationInputs(setOps []*googlesql.ASTSetOperation, items []*googlesql.ResolvedSetOperationItem) ([]googlesql.ASTQueryExpressionNode, bool) {
+	locs := make([]int, len(items))
+	for i, item := range items {
+		scan, err := item.Scan()
+		if err != nil {
+			return nil, false
+		}
+		loc, ok := firstLocation(scan)
+		if !ok {
+			return nil, false
+		}
+		locs[i] = loc
+	}
+	var found []googlesql.ASTQueryExpressionNode
 	var span offsets
 	for _, s := range setOps {
-		o := astOffsets(s)
-		if o.start < at.start || o.end > at.end {
+		inputs := setOperationInputs(s)
+		if len(inputs) != len(items) {
 			continue
 		}
-		if found == nil || o.end-o.start > span.end-span.start {
-			found, span = s, o
+		matches := true
+		for i, in := range inputs {
+			if o := astOffsets(in); locs[i] < o.start || locs[i] >= o.end {
+				matches = false
+				break
+			}
+		}
+		if !matches {
+			continue
+		}
+		if o := astOffsets(s); found == nil || o.end-o.start < span.end-span.start {
+			found, span = inputs, o
 		}
 	}
 	return found, found != nil
 }
 
-func checkSetOperationItem(pass *Pass, item *googlesql.ResolvedSetOperationItem, input googlesql.ASTQueryExpressionNode) {
+// firstLocation returns the start of the first node under scan that has a
+// location.
+func firstLocation(scan googlesql.ResolvedNode) (int, bool) {
+	start := -1
+	file.WalkResolved(scan, func(n googlesql.ResolvedNode) error { //nolint
+		if o := resolvedOffsets(n); o.start >= 0 {
+			start = o.start
+			return errStopWalk
+		}
+		return nil
+	})
+	return start, start >= 0
+}
+
+var errStopWalk = errors.New("stop walk")
+
+func checkSetOperationItem(pass *Pass, item *googlesql.ResolvedSetOperationItem, input googlesql.ASTQueryExpressionNode, reported map[setOperationReport]bool) {
 	itemScan, err := item.Scan()
 	if err != nil {
 		return
@@ -76,11 +121,23 @@ func checkSetOperationItem(pass *Pass, item *googlesql.ResolvedSetOperationItem,
 	if !ok {
 		return
 	}
+	// CORRESPONDING and BY NAME put a ProjectScan that reorders the columns
+	// to the output order over the one that casts them.
+	if src, err := project.NodeSource(); err == nil && src == "resolver_set_operation_corresponding" {
+		in, err := project.InputScan()
+		if err != nil {
+			return
+		}
+		if project, ok = in.(*googlesql.ResolvedProjectScan); !ok {
+			return
+		}
+	}
 	exprs, err := project.ExprList()
 	if err != nil {
 		return
 	}
-	outCols, err := item.OutputColumnList()
+	// The casting ProjectScan lists its columns in select list order.
+	cols, err := project.ColumnList()
 	if err != nil {
 		return
 	}
@@ -107,16 +164,17 @@ func checkSetOperationItem(pass *Pass, item *googlesql.ResolvedSetOperationItem,
 		if !ok {
 			continue
 		}
-		pos := -1
-		for j, c := range outCols {
-			if cid, err := c.ColumnId(); err == nil && cid == id {
-				pos = j
-			}
-		}
+		pos := slices.Index(columnIDs(cols), id)
 		at, ok := selectColumnOffsets(input, pos)
 		if !ok {
 			at = astOffsets(input)
 		}
+		// Columns not written out, as in SELECT *, all fall back to the input.
+		key := setOperationReport{at, from}
+		if reported[key] {
+			continue
+		}
+		reported[key] = true
 		r, ok := pass.File.OffsetsToLspRange(at.start, at.end)
 		if !ok {
 			continue
@@ -126,9 +184,25 @@ func checkSetOperationItem(pass *Pass, item *googlesql.ResolvedSetOperationItem,
 }
 
 // selectColumnOffsets returns the location of the i-th select list column of
-// input, when the parse tree shows it.
+// input, when input is a SELECT whose parse tree shows it. The columns of a
+// nested set operation come from all of its inputs, so none of their select
+// lists stands for them.
 func selectColumnOffsets(input googlesql.ASTQueryExpressionNode, i int) (offsets, bool) {
-	cols, ok := outputColumns(input)
+	if q, ok := input.(*googlesql.ASTQuery); ok {
+		if hasPipeOperator(q) {
+			return offsets{}, false
+		}
+		expr, err := q.QueryExpr()
+		if err != nil || isNilNode(expr) {
+			return offsets{}, false
+		}
+		input = expr
+	}
+	sel, ok := input.(*googlesql.ASTSelect)
+	if !ok {
+		return offsets{}, false
+	}
+	cols, ok := selectListColumns(sel)
 	if !ok || i < 0 || i >= len(cols.names) {
 		return offsets{}, false
 	}

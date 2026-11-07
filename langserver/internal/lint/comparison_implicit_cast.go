@@ -30,40 +30,35 @@ var columnComparisons = map[string]bool{
 	"$greater":              true,
 	"$greater_or_equal":     true,
 	"$between":              true,
-	"$not_between":          true,
 	"$in":                   true,
-	"$not_in":               true,
 	"$is_distinct_from":     true,
 	"$is_not_distinct_from": true,
 }
 
 // As in join-key-implicit-cast, only columns count: a literal, parameter or
 // computed value may be cast on purpose. A DATE compared with a DATETIME is
-// left to date-bound-on-datetime, and JOIN ... ON to join-key-implicit-cast.
+// left to date-bound-on-datetime, and the join keys that join-key-implicit-cast
+// reports are left to it.
 func runComparisonImplicitCast(pass *Pass) {
 	for _, output := range pass.File.RNode {
-		joinConds := make(map[offsets]bool)
-		for _, join := range file.ListResolvedAstNode[*googlesql.ResolvedJoinScan](output) {
-			cond, err := join.JoinExpr()
-			if err != nil || isNilNode(cond) {
+		joinKeys := make(map[offsets]bool)
+		forEachJoinKeyCast(output, func(_ *googlesql.ResolvedJoinScan, call *googlesql.ResolvedFunctionCall, _, _ string) {
+			joinKeys[resolvedOffsets(call)] = true
+		})
+		for _, call := range file.ListResolvedAstNode[*googlesql.ResolvedFunctionCall](output) {
+			o := resolvedOffsets(call)
+			if o.start < 0 || joinKeys[o] {
 				continue
 			}
-			walkLive(cond, func(n googlesql.ResolvedNode) {
-				if call, ok := n.(*googlesql.ResolvedFunctionCall); ok {
-					joinConds[resolvedOffsets(call)] = true
-				}
-			})
-		}
-		for _, call := range file.ListResolvedAstNode[*googlesql.ResolvedFunctionCall](output) {
-			name, ok := functionName(call)
+			cmp, ok := negatedComparison(call)
+			if !ok {
+				cmp = call
+			}
+			name, ok := functionName(cmp)
 			if !ok || !columnComparisons[name] {
 				continue
 			}
-			o := resolvedOffsets(call)
-			if o.start < 0 || joinConds[o] {
-				continue
-			}
-			from, to, ok := castBetweenColumns(call)
+			from, to, ok := castBetweenColumns(cmp)
 			if !ok || from == "DATE" && to == "DATETIME" {
 				continue
 			}
@@ -74,6 +69,24 @@ func runComparisonImplicitCast(pass *Pass) {
 			pass.Report(Diagnostic{Range: r, Message: comparisonImplicitCastMessage(from, to), Severity: SeverityWarning})
 		}
 	}
+}
+
+// negatedComparison returns the operand of a $not that the analyzer built
+// from NOT IN or NOT BETWEEN. The operand carries no location of its own, so
+// the $not stands in for it.
+func negatedComparison(call *googlesql.ResolvedFunctionCall) (*googlesql.ResolvedFunctionCall, bool) {
+	if name, ok := functionName(call); !ok || name != "$not" {
+		return nil, false
+	}
+	args, err := call.ArgumentList()
+	if err != nil || len(args) != 1 {
+		return nil, false
+	}
+	inner, ok := args[0].(*googlesql.ResolvedFunctionCall)
+	if !ok || resolvedOffsets(inner).start >= 0 {
+		return nil, false
+	}
+	return inner, true
 }
 
 // castBetweenColumns returns the types of the first implicit cast among the

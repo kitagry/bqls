@@ -169,9 +169,9 @@ Only a top-level `AND` term of `=` or `IS NOT DISTINCT FROM` between a column of
 
 #### `comparison-implicit-cast`
 
-A comparison (`=`, `!=`, `<`, `<=`, `>`, `>=`, `[NOT] BETWEEN`, `[NOT] IN (...)`, `IS [NOT] DISTINCT FROM`) in `WHERE`, `HAVING`, `QUALIFY`, the `SELECT` list or anywhere else outside `JOIN ... ON` / `USING`, between columns of different types, so the analyzer casts one of them, e.g. `int_col = float_col` casts the `INT64` column to `FLOAT64`. As with `join-key-implicit-cast`, which covers join keys, a cast to `FLOAT64` can make different values compare equal, and other mismatches usually point to a schema design mistake. Reported on the comparison.
+A comparison (`=`, `!=`, `<`, `<=`, `>`, `>=`, `[NOT] BETWEEN`, `[NOT] IN (...)`, `IS [NOT] DISTINCT FROM`) in `WHERE`, `QUALIFY`, the `SELECT` list, `JOIN ... ON` or anywhere else, other than the join keys `join-key-implicit-cast` reports, between columns of different types, so the analyzer casts one of them, e.g. `int_col = float_col` casts the `INT64` column to `FLOAT64`. As with `join-key-implicit-cast`, which covers join keys, a cast to `FLOAT64` can make different values compare equal, and other mismatches usually point to a schema design mistake. Reported on the comparison.
 
-Every operand must be a column of a table, CTE or subquery; the types named are those of the first implicitly cast one. Not reported: a literal, query parameter, variable or computed value (`i + 1`, aggregates) among the operands, which is often cast on purpose; an explicit `CAST`; `JOIN ... ON` / `USING`, which `join-key-implicit-cast` reports; and `DATE` compared with `DATETIME`.
+Every operand must be a column read from a table, also through CTEs; the types named are those of the first implicitly cast one. Not reported: a literal, query parameter, variable or computed value (`i + 1`, aggregates, `GROUP BY` keys compared in `HAVING`, computed columns of a derived table, `UNNEST` elements) among the operands, which is often cast on purpose; an explicit `CAST`; the join keys in `ON` / `USING` that `join-key-implicit-cast` reports (other comparisons in `ON`, such as `<` or terms under `OR`, are reported here); and `DATE` compared with `DATETIME`.
 
 #### `set-operation-implicit-cast`
 

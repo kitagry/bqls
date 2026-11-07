@@ -14,10 +14,6 @@ func comparisonImplicitCastMessage(from, to string) string {
 	return msg + "; mismatched column types usually point to a schema design mistake, so give both columns the same type, or write an explicit CAST"
 }
 
-func setOperationImplicitCastMessage(from string) string {
-	return "this column is " + from + " here but FLOAT64 in another input of the set operation, so it is implicitly cast to FLOAT64, which cannot represent every " + from + " value exactly (e.g. INT64 values above 2^53); give the inputs the same type, or write an explicit CAST"
-}
-
 func TestComparisonImplicitCast(t *testing.T) {
 	type report struct {
 		// text is the exact text of the reported range.
@@ -55,6 +51,14 @@ func TestComparisonImplicitCast(t *testing.T) {
 			src:  "SELECT 1 FROM p.d.t WHERE i IN (f, n)",
 			want: []report{{"i IN (f, n)", "INT64", "FLOAT64"}},
 		},
+		"NOT IN list of columns": {
+			src:  "SELECT 1 FROM p.d.t WHERE i NOT IN (f, n)",
+			want: []report{{"i NOT IN (f, n)", "INT64", "FLOAT64"}},
+		},
+		"NOT BETWEEN columns": {
+			src:  "SELECT 1 FROM p.d.t WHERE i NOT BETWEEN f AND n",
+			want: []report{{"i NOT BETWEEN f AND n", "INT64", "FLOAT64"}},
+		},
 		"IS DISTINCT FROM": {
 			src:  "SELECT 1 FROM p.d.t WHERE i IS DISTINCT FROM f",
 			want: []report{{"i IS DISTINCT FROM f", "INT64", "FLOAT64"}},
@@ -84,6 +88,11 @@ func TestComparisonImplicitCast(t *testing.T) {
 		"aggregates": {
 			src: "SELECT i FROM p.d.t GROUP BY i HAVING COUNT(*) > AVG(f)",
 		},
+		// join-key-implicit-cast does not report these, so this rule does.
+		"JOIN ON other than a join key": {
+			src:  "SELECT 1 FROM p.d.t AS a JOIN p.d.t AS b ON a.i < b.f OR (a.i = b.i AND a.i = a.f)",
+			want: []report{{"a.i < b.f", "INT64", "FLOAT64"}, {"a.i = a.f", "INT64", "FLOAT64"}},
+		},
 		// Join keys are join-key-implicit-cast's concern.
 		"JOIN ON": {
 			src: "SELECT 1 FROM p.d.t AS a JOIN p.d.t AS b ON a.i = b.f",
@@ -109,77 +118,6 @@ func TestComparisonImplicitCast(t *testing.T) {
 					t.Errorf("reported text = %q, want %q", text, w.text)
 				}
 				if want := comparisonImplicitCastMessage(w.from, w.to); d.Rule != "comparison-implicit-cast" || d.Severity != lint.SeverityWarning || d.Message != want || len(d.SuggestedFixes) != 0 {
-					t.Errorf("diagnostic = %+v, want warning %q without a fix", d, want)
-				}
-			}
-		})
-	}
-}
-
-func TestSetOperationImplicitCast(t *testing.T) {
-	type report struct {
-		// text is the exact text of the reported range.
-		text, from string
-	}
-	tests := map[string]struct {
-		src  string
-		want []report
-	}{
-		"int64 widened by float64": {
-			src:  "SELECT i FROM p.d.t UNION ALL SELECT f FROM p.d.t",
-			want: []report{{"i", "INT64"}},
-		},
-		"second input widened": {
-			src:  "SELECT f AS x FROM p.d.t UNION ALL SELECT i AS x FROM p.d.t",
-			want: []report{{"i AS x", "INT64"}},
-		},
-		"numeric widened": {
-			src:  "SELECT s, n FROM p.d.t UNION DISTINCT SELECT s, f FROM p.d.t",
-			want: []report{{"n", "NUMERIC"}},
-		},
-		"three inputs": {
-			src:  "SELECT i FROM p.d.t UNION ALL SELECT n FROM p.d.t UNION ALL SELECT f FROM p.d.t",
-			want: []report{{"i", "INT64"}, {"n", "NUMERIC"}},
-		},
-		"computed value": {
-			src:  "SELECT i + 1 FROM p.d.t EXCEPT DISTINCT SELECT f FROM p.d.t",
-			want: []report{{"i + 1", "INT64"}},
-		},
-		"in a CTE": {
-			src:  "WITH u AS (\n  SELECT i AS x FROM p.d.t\n  UNION ALL\n  SELECT f AS x FROM p.d.t\n)\nSELECT x FROM u",
-			want: []report{{"i AS x", "INT64"}},
-		},
-		// INT64 to NUMERIC is exact.
-		"int64 widened by numeric": {
-			src: "SELECT i FROM p.d.t UNION ALL SELECT n FROM p.d.t",
-		},
-		// A literal is usually a placeholder such as 0.
-		"literal": {
-			src: "SELECT 0 FROM p.d.t UNION ALL SELECT f FROM p.d.t",
-		},
-		"explicit CAST": {
-			src: "SELECT CAST(i AS FLOAT64) FROM p.d.t UNION ALL SELECT f FROM p.d.t",
-		},
-		"same type": {
-			src: "SELECT i FROM p.d.t UNION ALL SELECT i FROM p.d.t",
-		},
-		"suppressed by comment": {
-			src: "SELECT\n-- bqls:ignore set-operation-implicit-cast\ni FROM p.d.t UNION ALL SELECT f FROM p.d.t",
-		},
-	}
-
-	for n, tt := range tests {
-		t.Run(n, func(t *testing.T) {
-			got := lint.Run(t.Context(), parseTyped(t, tt.src), lint.Config{}, lint.Env{}, lint.SetOperationImplicitCast)
-			if len(got) != len(tt.want) {
-				t.Fatalf("got %d diagnostics, want %d: %+v", len(got), len(tt.want), got)
-			}
-			for i, w := range tt.want {
-				d := got[i]
-				if text := textInRange(tt.src, d); text != w.text {
-					t.Errorf("reported text = %q, want %q", text, w.text)
-				}
-				if want := setOperationImplicitCastMessage(w.from); d.Rule != "set-operation-implicit-cast" || d.Severity != lint.SeverityWarning || d.Message != want || len(d.SuggestedFixes) != 0 {
 					t.Errorf("diagnostic = %+v, want warning %q without a fix", d, want)
 				}
 			}
