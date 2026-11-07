@@ -19,6 +19,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`null-comparison`](#null-comparison) | on | warning | yes | | `= NULL` / `!= NULL` comparisons, which always yield NULL |
 | [`in-null`](#in-null) | on | warning | yes | | `IN (NULL)` / `NOT IN (NULL)` lists of only NULLs, which always yield NULL, and `NOT IN` lists with a NULL, which never yield TRUE |
 | [`not-in-nullable`](#not-in-nullable) | on | warning | yes | | `x NOT IN (subquery)` over a `NULLABLE` table column, which yields no rows once that column holds a NULL |
+| [`repeated-null-check`](#repeated-null-check) | on | warning | yes | | `IS [NOT] NULL` on a `REPEATED` table column, which BigQuery never stores as NULL |
 | [`cross-join`](#cross-join) | on | warning | yes | | Joins without a join condition, which return the Cartesian product of both sides |
 | [`union-column-order`](#union-column-order) | on | warning | yes | | Set operation inputs whose columns are the first input's columns in a different order |
 | [`insert-column-order`](#insert-column-order) | on | warning | yes | | `INSERT ... SELECT` queries whose columns are the target columns in a different order |
@@ -81,6 +82,14 @@ The quick fix adds `col IS NOT NULL` to the subquery's `WHERE` (with `AND`, pare
 Unlike `in-null`, which reports a literal list of only NULLs, this rule depends on the table schema, so it needs table metadata. To avoid false positives, the column is followed only while it is passed through unchanged (column references, aliases, joins, `GROUP BY` keys, CTEs and derived tables).
 
 Not reported: a computed value (`IFNULL`, `COALESCE`, aggregates, arithmetic, struct fields), `UNION` and other set operations, `UNNEST`, `REQUIRED` columns, views and other non-table sources, and a column that any `WHERE` / `HAVING` / `QUALIFY` / `JOIN ... ON` condition in the statement mentions (e.g. `IS NOT NULL`, `=`, `>`).
+
+#### `repeated-null-check`
+
+`x IS NULL` / `x IS NOT NULL` where `x` is a `REPEATED` column of a table. BigQuery [writes a NULL array to a `REPEATED` column as an empty array](https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#array_nulls), so the column read from the table is never NULL: `IS NULL` is always FALSE and `IS NOT NULL` always TRUE. An empty array was probably meant. Reported on the check.
+
+The quick fix rewrites it to `ARRAY_LENGTH(x) = 0` (`> 0` for `IS NOT NULL`). That changes the result, so `bqls lint --fix` does not apply it.
+
+This rule depends on the table schema, so it needs table metadata. The column is followed while it is passed through unchanged (aliases, CTEs, derived tables, inner joins). Not reported: the optional side of a `LEFT` / `RIGHT` / `FULL JOIN`, which is NULL for unmatched rows; a field of a `RECORD` (`s.items`), which is NULL when the record is; computed arrays (`ARRAY_CONCAT`, `IF`, `ARRAY(...)`); views and other non-table sources.
 
 #### `cross-join`
 

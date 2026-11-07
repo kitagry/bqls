@@ -39,4 +39,5 @@ var Analyzers = []*Analyzer{
 	RepeatedCTEEvaluation,
 	ComparisonImplicitCast,
 	SetOperationImplicitCast,
+	RepeatedNullCheck,
 }
