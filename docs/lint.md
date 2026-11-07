@@ -11,7 +11,7 @@ bqls reports lint findings for queries that analyze without errors. The language
 
 ## Rules
 
-Findings are reported as warnings, except those marked *information* below. A quick fix is offered as an LSP code action and applied by `bqls lint --fix`.
+Findings are reported as warnings, except those marked *information* below. A quick fix is offered as an LSP code action and applied by `bqls lint --fix`, except a fix that changes what the query computes (noted for each rule), which is only offered in the editor.
 
 | Rule | Default | Severity | Quick fix | Options | Reports |
 | --- | --- | --- | --- | --- | --- |
@@ -34,6 +34,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`window-default-frame`](#window-default-frame) | on | warning | yes | | `LAST_VALUE` / `NTH_VALUE` whose window has `ORDER BY` but no frame, so the default frame ends at the current row |
 | [`regexp-literal`](#regexp-literal) | on | warning | yes | | Constant regular expressions BigQuery rejects: invalid RE2, more than one capturing group in `REGEXP_EXTRACT` and friends, or `REGEXP_REPLACE` references to missing groups |
 | [`array-null-element`](#array-null-element) | off | warning | yes | | Arrays that may hold a NULL element and reach the result, `CREATE TABLE ... AS SELECT` or `INSERT`, which BigQuery fails to write |
+| [`cast-division-rounds`](#cast-division-rounds) | on | warning | yes | | `CAST(a / b AS INT64)` of two integers, which rounds the `FLOAT64` quotient instead of truncating it |
 | **Cost** | | | | | |
 | [`partition-filter`](#partition-filter) | on | warning | | | Partitioned tables read without a filter on the partition column |
 | [`partition-filter-not-prunable`](#partition-filter-not-prunable) | off | warning | | | Partition column filters written in a form BigQuery documents as unable to prune partitions |
@@ -224,6 +225,14 @@ The quick fix adds `IGNORE NULLS` to an `ARRAY_AGG` (`ARRAY_AGG(x IGNORE NULLS O
 The rule is off by default because a column is `NULLABLE` unless declared otherwise, so many columns that never hold a NULL would be reported, while a NULL that does turn up fails the query instead of returning a wrong result. It needs table metadata, and like `not-in-nullable` it follows the element only while it is passed through unchanged.
 
 Not reported: arrays nested in a `STRUCT`, `CREATE VIEW` (the query does not run), `DECLARE` / `SET`, set operations, a computed element (`IFNULL`, `STRUCT(...)`, functions), `REQUIRED` columns, views and other non-table sources, and an element or array that any `WHERE` / `HAVING` / `QUALIFY` / `JOIN ... ON` condition in the statement mentions (e.g. `x IS NOT NULL`, or `NOT EXISTS (SELECT 1 FROM UNNEST(arr) AS e WHERE e IS NULL)`).
+
+#### `cast-division-rounds`
+
+`CAST(a / b AS INT64)` (also `SAFE_CAST`, and `SAFE_DIVIDE(a, b)` in place of `/`) where `a` and `b` are `INT64`. [`/` returns `FLOAT64`](https://cloud.google.com/bigquery/docs/reference/standard-sql/operators#arithmetic_operators), and [casting it to `INT64`](https://cloud.google.com/bigquery/docs/reference/standard-sql/conversion_functions#cast_as_int64) rounds to the nearest integer with halfway cases away from zero, so `CAST(7 / 2 AS INT64)` is 4 and `CAST(-7 / 2 AS INT64)` is -4, where integer division gives 3 and -3. Reported on the `CAST`.
+
+The quick fix rewrites it to [`DIV(a, b)`](https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#div) (`SAFE.DIV(a, b)` for `SAFE_DIVIDE`), which truncates toward zero. That changes the result for every quotient whose fraction is .5 or more, so `bqls lint --fix` does not apply it; write `ROUND`, `FLOOR` or `CEIL` inside the `CAST` instead if rounding is meant. No fix is offered for a `CAST` in `GROUP BY`, because an equal expression in the `SELECT` list refers to it and would be left ungrouped.
+
+An operand counts as `INT64` when it is an `INT64` expression or an integer literal. Not reported: `FLOAT64` operands or literals (`2.0`, `1e2`), `NUMERIC` / `BIGNUMERIC` operands, a rounding function between the `CAST` and the division (`CAST(FLOOR(a / b) AS INT64)`), casts to other types, and `IEEE_DIVIDE`.
 
 ### Cost
 

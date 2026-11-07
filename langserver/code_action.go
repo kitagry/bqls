@@ -78,7 +78,7 @@ func fixCodeActions(uri lsp.DocumentURI, diag lsp.Diagnostic, fixes []lint.Sugge
 			Title:       fix.Title,
 			Kind:        lsp.CAKQuickFix,
 			Diagnostics: []lsp.Diagnostic{diag},
-			IsPreferred: i == 0,
+			IsPreferred: i == 0 && !fix.ChangesResult,
 			Edit:        &lsp.WorkspaceEdit{Changes: map[string][]lsp.TextEdit{string(uri): fix.Edits}},
 		})
 	}

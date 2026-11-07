@@ -375,7 +375,7 @@ func suggestedFixes(diags source.Diagnostics) ([]lint.SuggestedFix, []string) {
 		}
 	}
 	for _, d := range diags.Lint {
-		if len(d.SuggestedFixes) > 0 {
+		if len(d.SuggestedFixes) > 0 && !d.SuggestedFixes[0].ChangesResult {
 			fixes = append(fixes, located{d.Range.Start, d.Rule, d.SuggestedFixes[0]})
 		}
 	}

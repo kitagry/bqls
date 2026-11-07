@@ -578,3 +578,22 @@ func TestHandler_lintCodeActions_ConvertsPositionsWithAnalyzedText(t *testing.T)
 		t.Errorf("lintCodeActions() diff (-want +got):\n%s", diff)
 	}
 }
+
+func TestFixCodeActions_ChangesResultIsNeverPreferred(t *testing.T) {
+	const uri lsp.DocumentURI = "file:///a.sql"
+	r := lsp.Range{Start: lsp.Position{Line: 0, Character: 7}, End: lsp.Position{Line: 0, Character: 27}}
+	diag := lsp.Diagnostic{Range: r, Code: "cast-division-rounds"}
+	edits := []lsp.TextEdit{{Range: r, NewText: "DIV(i, 2)"}}
+
+	got := fixCodeActions(uri, diag, []lint.SuggestedFix{{Title: "Replace with DIV(i, 2)", Edits: edits, ChangesResult: true}}, r)
+
+	want := []any{lsp.CodeAction{
+		Title:       "Replace with DIV(i, 2)",
+		Kind:        lsp.CAKQuickFix,
+		Diagnostics: []lsp.Diagnostic{diag},
+		Edit:        &lsp.WorkspaceEdit{Changes: map[string][]lsp.TextEdit{string(uri): edits}},
+	}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("fixCodeActions() diff (-want +got):\n%s", diff)
+	}
+}
