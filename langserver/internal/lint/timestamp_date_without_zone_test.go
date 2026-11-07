@@ -2,6 +2,7 @@ package lint_test
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/kitagry/bqls/langserver/internal/lint"
@@ -156,5 +157,44 @@ func TestTimestampDateWithoutZone_InvalidTimeZone(t *testing.T) {
 func TestTimestampDateWithoutZone_OffByDefault(t *testing.T) {
 	if got := lint.Run(t.Context(), parseEvents(t, "SELECT DATE(ts) FROM p.d.t"), lint.Config{}, lint.Env{}, lint.TimestampDateWithoutZone); len(got) != 0 {
 		t.Errorf("got %+v, want nothing while the rule is off by default", got)
+	}
+}
+
+// A SELECT list or ORDER BY expression equal to a GROUP BY expression is
+// resolved as a reference to it, so only the GROUP BY one is reported, and
+// fixing it alone would break the query.
+func TestTimestampDateWithoutZone_GroupBy(t *testing.T) {
+	cfg := lint.Config{Rules: map[string]bool{"timestamp-date-without-zone": true}}
+	for _, src := range []string{
+		"SELECT DATE(ts), COUNT(*) FROM p.d.t GROUP BY DATE(ts)",
+		"SELECT COUNT(*) FROM p.d.t GROUP BY DATE(ts) ORDER BY DATE(ts)",
+	} {
+		got := lint.Run(t.Context(), parseEvents(t, src), cfg, lint.Env{}, lint.TimestampDateWithoutZone)
+		if len(got) != 1 {
+			t.Fatalf("%s: got %d diagnostics, want 1: %+v", src, len(got), got)
+		}
+		if len(got[0].SuggestedFixes) != 0 {
+			t.Errorf("%s: fixes = %+v, want none", src, got[0].SuggestedFixes)
+		}
+	}
+}
+
+// A time zone at a fractional offset disagrees with UTC on the hour boundaries
+// and minutes.
+func TestTimestampDateWithoutZone_FractionalTimeZone(t *testing.T) {
+	src := "SELECT EXTRACT(MINUTE FROM ts), TIMESTAMP_TRUNC(ts, HOUR), EXTRACT(SECOND FROM ts), TIMESTAMP_TRUNC(ts, MINUTE) FROM p.d.t"
+	for _, tz := range []string{"Asia/Kolkata", "+05:30"} {
+		cfg := lint.Config{
+			Rules:   map[string]bool{"timestamp-date-without-zone": true},
+			Options: map[string]json.RawMessage{"timestamp-date-without-zone": json.RawMessage(`{"time_zone": "` + tz + `"}`)},
+		}
+		got := lint.Run(t.Context(), parseEvents(t, src), cfg, lint.Env{}, lint.TimestampDateWithoutZone)
+		var texts []string
+		for _, d := range got {
+			texts = append(texts, textInRange(src, d))
+		}
+		if want := []string{"EXTRACT(MINUTE FROM ts)", "TIMESTAMP_TRUNC(ts, HOUR)"}; !slices.Equal(texts, want) {
+			t.Errorf("%s: reported %q, want %q", tz, texts, want)
+		}
 	}
 }

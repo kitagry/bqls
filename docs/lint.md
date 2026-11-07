@@ -235,9 +235,9 @@ Off by default: such comparisons are common and often do mean UTC.
 
 A `TIMESTAMP` turned into a date or a date part without a time zone: `DATE(ts)`, `DATETIME(ts)`, `TIME(ts)`, `EXTRACT(part FROM ts)` (including `DATE`, `DATETIME` and `TIME`), `TIMESTAMP_TRUNC(ts, part)` and `FORMAT_TIMESTAMP(format, ts)`. These [use the default time zone, UTC](https://cloud.google.com/bigquery/docs/reference/standard-sql/timestamp_functions), so `DATE(created_at)` is the UTC date and `EXTRACT(HOUR FROM created_at)` the UTC hour, which is easy to mistake for local time. Pass the zone (`DATE(ts, 'Asia/Tokyo')`, `EXTRACT(HOUR FROM ts AT TIME ZONE 'Asia/Tokyo')`), or `'UTC'` to make UTC explicit. Reported on the call.
 
-Not reported: calls with a time zone (also `'UTC'`), `EXTRACT` of `MINUTE` and finer parts, `TIMESTAMP_TRUNC` to `HOUR` and finer parts, on which the time zones in common use agree with UTC, `DATE` / `DATETIME` arguments, and files that `SET @@time_zone`, since it changes the zone these functions use.
+Not reported: calls with a time zone (also `'UTC'`), `EXTRACT` of `MINUTE` and finer parts, `TIMESTAMP_TRUNC` to `HOUR` and finer parts, on which every time zone at a whole-hour offset agrees with UTC (when `time_zone` is at another offset, e.g. `Asia/Kolkata`, only `EXTRACT` of `SECOND` and finer and `TIMESTAMP_TRUNC` to `MINUTE` and finer), `DATE` / `DATETIME` arguments, and files that `SET @@time_zone`, since it changes the zone these functions use.
 
-The quick fix adds `'UTC'`, which keeps the result and states the zone. When `time_zone` is set, a second quick fix uses that zone instead. It changes the result, so it is never the preferred fix and `bqls lint --fix` does not apply it.
+The quick fix adds `'UTC'`, which keeps the result and states the zone. A call in `GROUP BY` gets no quick fix, since the same expression in the `SELECT` list or `ORDER BY` refers to it and would no longer be grouped. When `time_zone` is set, a second quick fix uses that zone instead. It changes the result, so it is never the preferred fix and `bqls lint --fix` does not apply it.
 
 Off by default: many datasets are meant to be read in UTC.
 
