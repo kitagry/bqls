@@ -195,9 +195,9 @@ Not reported: widening to `NUMERIC` or `BIGNUMERIC`, which is exact; a literal (
 
 An unqualified column name in a subquery (`IN`, `EXISTS`, scalar, `ARRAY`) that refers to a column of the outer query. A bare name resolves to the subquery's own tables first, so it only reaches the outer query when none of them has the column, which is often a typo or a column of the wrong table: in `WHERE id IN (SELECT id FROM orders)`, if `orders` has no `id`, the subquery returns the outer row's own `id` and the condition is TRUE for every row whose `id` is not NULL. Reported on the name.
 
-The quick fix qualifies the name with the outer table's alias, or the last part of its name when it has none (`WHERE id IN (SELECT users.id FROM orders)`), which keeps the meaning and shows the outer reference is intended. It is not offered when the outer column does not come from a table (e.g. a CTE or a derived table), or when the subquery has a table or CTE of that name, which the qualifier would refer to instead.
+The quick fix qualifies the name with the outer table's alias, or the last part of its name when it has none (`WHERE id IN (SELECT users.id FROM orders)`), which keeps the meaning and shows the outer reference is intended. It is not offered when the outer column does not come from a table visible to the subquery (e.g. a CTE, or a table read inside a derived table), or when the subquery has a table, alias or column of that name, which the qualifier would refer to instead.
 
-Not reported: qualified names (`u.id`), and names that the subquery's own tables have.
+Not reported: qualified names (`u.id`), names that the subquery's own tables have, and subqueries that read no table, such as `ARRAY(SELECT x * 2 FROM UNNEST(xs) AS x)` or `(SELECT AS STRUCT a, b)`, where referring to the outer row is the point.
 
 #### `self-comparison`
 

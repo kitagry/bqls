@@ -50,6 +50,39 @@ func TestImplicitOuterReference(t *testing.T) {
 			src:  "WITH c AS (SELECT id FROM p.d.users) SELECT * FROM c WHERE EXISTS (SELECT 1 FROM p.d.t WHERE a = id)",
 			want: []report{{"id", ""}},
 		},
+		"outer table inside a derived table": {
+			src:  "SELECT * FROM (SELECT id FROM p.d.users) WHERE EXISTS (SELECT 1 FROM p.d.t WHERE a = id)",
+			want: []report{{"id", ""}},
+		},
+		// u.id would refer to the subquery's own u.
+		"outer alias taken by a derived table inside": {
+			src:  "SELECT * FROM p.d.users AS u WHERE EXISTS (SELECT 1 FROM (SELECT a FROM p.d.t) AS u WHERE a = id)",
+			want: []report{{"id", ""}},
+		},
+		"outer alias taken by a CTE alias inside": {
+			src:  "WITH c AS (SELECT a FROM p.d.t) SELECT * FROM p.d.users AS u WHERE EXISTS (SELECT 1 FROM c AS u WHERE a = id)",
+			want: []report{{"id", ""}},
+		},
+		// a.id would refer to the column t.a.
+		"outer alias taken by a column inside": {
+			src:  "SELECT * FROM p.d.users AS a WHERE EXISTS (SELECT 1 FROM p.d.t WHERE b = id)",
+			want: []report{{"id", ""}},
+		},
+		"quoted alias": {
+			src:  "SELECT * FROM p.d.users AS `my u` WHERE EXISTS (SELECT 1 FROM p.d.t WHERE a = id)",
+			want: []report{{"id", "SELECT * FROM p.d.users AS `my u` WHERE EXISTS (SELECT 1 FROM p.d.t WHERE a = `my u`.id)"}},
+		},
+		// The middle subquery's s sees the name before users does.
+		"column of an enclosing subquery": {
+			src:  "SELECT * FROM p.d.users AS u WHERE EXISTS (SELECT 1 FROM p.d.staging_users AS s WHERE s.id IN (SELECT a FROM p.d.t WHERE b = id))",
+			want: []report{{"id", "SELECT * FROM p.d.users AS u WHERE EXISTS (SELECT 1 FROM p.d.staging_users AS s WHERE s.id IN (SELECT a FROM p.d.t WHERE b = s.id))"}},
+		},
+		"subquery over UNNEST of outer values": {
+			src: "SELECT * FROM p.d.users WHERE EXISTS (SELECT 1 FROM UNNEST([id, 1]) AS x WHERE x > id)",
+		},
+		"subquery without FROM": {
+			src: "SELECT (SELECT AS STRUCT id, first_name) FROM p.d.users",
+		},
 		"qualified": {
 			src: "SELECT * FROM p.d.users AS u WHERE EXISTS (SELECT 1 FROM p.d.t WHERE t.a = u.id)",
 		},
