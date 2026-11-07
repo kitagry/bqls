@@ -429,6 +429,16 @@ func closure(ids []int32, edges map[int32][]int32) map[int32]bool {
 // partitionedTable returns the table a scan reads when it is a partitioned
 // table whose filters both partition rules judge, i.e. not a DML target.
 func partitionedTable(pass *Pass, flow *columnFlow, scan *googlesql.ResolvedTableScan) (string, *bq.TableMetadata, bool) {
+	name, meta, ok := filteredRegularTable(pass, flow, scan)
+	if !ok || len(partitionColumnNames(meta)) == 0 {
+		return "", nil, false
+	}
+	return name, meta, true
+}
+
+// filteredRegularTable returns the regular table a scan reads, unless the
+// scan is a DML target or a wildcard table, whose filters work differently.
+func filteredRegularTable(pass *Pass, flow *columnFlow, scan *googlesql.ResolvedTableScan) (string, *bq.TableMetadata, bool) {
 	at := resolvedOffsets(scan)
 	if at.start < 0 || flow.dmlTargets[at] {
 		return "", nil, false
@@ -442,7 +452,7 @@ func partitionedTable(pass *Pass, flow *columnFlow, scan *googlesql.ResolvedTabl
 		return "", nil, false
 	}
 	meta, err := pass.LookupTable(pass.Context, name)
-	if err != nil || meta == nil || meta.Type != bq.RegularTable || len(partitionColumnNames(meta)) == 0 {
+	if err != nil || meta == nil || meta.Type != bq.RegularTable {
 		return "", nil, false
 	}
 	return name, meta, true

@@ -43,4 +43,6 @@ var Analyzers = []*Analyzer{
 	TimestampDateWithoutZone,
 	DateBoundOnDatetime,
 	ImplicitOuterReference,
+	ClusterFilter,
+	ClusterFilterNotPrunable,
 }

@@ -46,6 +46,8 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | **Cost** | | | | | |
 | [`partition-filter`](#partition-filter) | on | warning | | | Partitioned tables read without a filter on the partition column |
 | [`partition-filter-not-prunable`](#partition-filter-not-prunable) | off | warning | | | Partition column filters written in a form BigQuery documents as unable to prune partitions |
+| [`cluster-filter`](#cluster-filter) | off | warning | | | Clustered tables read without a filter on the first clustering column, or with a clustering column skipped |
+| [`cluster-filter-not-prunable`](#cluster-filter-not-prunable) | off | warning | | | Clustering column filters written in a form BigQuery documents as unable to reduce the data read |
 | [`wildcard-table-suffix`](#wildcard-table-suffix) | on | warning | | | Wildcard table queries that never filter on `_TABLE_SUFFIX` |
 | [`wildcard-table-suffix-not-constant`](#wildcard-table-suffix-not-constant) | off | warning | | | `_TABLE_SUFFIX` filters that BigQuery documents as unable to limit the tables scanned |
 | [`order-by-in-subquery`](#order-by-in-subquery) | on | warning | yes | | `ORDER BY` in a subquery, CTE or derived table whose order cannot reach the result |
@@ -342,6 +344,20 @@ Reported only when no other term on the partition column (joined by `AND`) might
 Not reported: forms the documentation says do prune (e.g. `DATE(ts)`, `TIMESTAMP_TRUNC`, `DATE_ADD`, `CURRENT_TIMESTAMP()`, query parameters), forms it does not mention (e.g. `CAST(dt AS STRING)`, `dt IN (SELECT ...)`, join conditions against another table), filters on values computed from the column in a CTE or subquery (plain aliases are followed), and whatever `partition-filter` skips (including the case with no filter at all).
 
 Off by default because the documentation, not the optimizer, is the source of these patterns, and bqls cannot confirm pruning per table.
+
+#### `cluster-filter`
+
+A clustered table read without a filter on its first clustering column, or with a filter on a later clustering column but not on one before it (e.g. `WHERE customer_id = 1 AND status = 'done'` on a table clustered by `customer_id, region, status`). BigQuery [uses the clustering columns in their order, starting with the first](https://cloud.google.com/bigquery/docs/querying-clustered-tables#filter_clustered_columns_by_sort_order), so such a query cannot benefit from the clustering and reads the whole table (or partition). Reported on the table path. Filters are followed through CTEs and subqueries as in `partition-filter`.
+
+Not reported: queries that read no column of the table (`COUNT(*)`), views and other non-regular tables, wildcard tables, and DML targets. This rule needs table metadata.
+
+Off by default: clustering only lowers the cost of on-demand queries, a dry run does not show the saving, and reading a clustered table in full is often intended.
+
+#### `cluster-filter-not-prunable`
+
+A filter on a clustering column written in a form BigQuery [documents as unable to use the clustering](https://cloud.google.com/bigquery/docs/querying-clustered-tables#do_not_use_clustered_columns_in_complex_filter_expressions): the column wrapped in a function, `CAST` or arithmetic (`CAST(customer_id AS STRING) = '10000'`, `LOWER(region) = 'jp'`), compared with another column of the table (`customer_id = other_id`), compared with a subquery, or in an `OR` with a branch that does not filter on it. Reported on the filter term.
+
+As in `partition-filter-not-prunable`, a term is reported only when no other `AND` term on the clustering columns might reduce the data read. Off by default for the same reasons as `cluster-filter`; it needs table metadata.
 
 #### `wildcard-table-suffix`
 
