@@ -40,7 +40,7 @@ Completion, hover, lint, and query execution for BigQuery SQL, right in your edi
 | 🎯 | **Go to definition** | Jump to CTEs and aliases, or open a table's details as a virtual document |
 | 🩺 | **Diagnostics** | Analysis errors from the GoogleSQL analyzer as you type, checked against your table schemas |
 | 💰 | **Dry-run cost estimate** | "This query will process 1.25 GiB when run." on save, before you spend anything |
-| 🧹 | **Lint** | 38 rules for correctness, cost, and unused code, with quick fixes, `bqls:ignore` comments, a shared `.bqls.yaml`, and the [`bqls lint`](./docs/lint.md#cli) CLI for CI ([docs](./docs/lint.md)) |
+| 🧹 | **Lint** | 39 rules for correctness, cost, and unused code, with quick fixes, `bqls:ignore` comments, a shared `.bqls.yaml`, and the [`bqls lint`](./docs/lint.md#cli) CLI for CI ([docs](./docs/lint.md)) |
 | 🎨 | **Formatting** | Format BigQuery SQL with the GoogleSQL formatter |
 | ▶️ | **Query execution** | Run or cancel queries and view the results in the editor ([`bqls.executeQuery`](./docs/api_reference.md#bqlsexecutequery)) |
 | 🗂️ | **Explore** | Browse datasets, tables, and job histories ([`bqls.listDatasets`](./docs/api_reference.md#bqlslistdatasets), [`bqls.listTables`](./docs/api_reference.md#bqlslisttables), [`bqls.listJobHistories`](./docs/api_reference.md#bqlslistjobhistories)) |

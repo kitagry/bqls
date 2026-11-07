@@ -35,6 +35,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`missing-order-by`](#missing-order-by) | off | warning | | | `ROW_NUMBER()` filters, `ARRAY_AGG` / `STRING_AGG` with `LIMIT`, and indexed `ARRAY_AGG` results without `ORDER BY`, which pick arbitrary rows |
 | [`limit-without-order-by`](#limit-without-order-by) | off | warning | | | `LIMIT` without `ORDER BY` in a subquery, CTE, DML or `CREATE TABLE AS SELECT`, and `LIMIT ... OFFSET` without `ORDER BY`, which keep arbitrary rows |
 | [`timestamp-string-literal`](#timestamp-string-literal) | off | warning | yes | `time_zone` | String literals without a time zone compared with a `TIMESTAMP`, which are read as UTC |
+| [`timestamp-date-without-zone`](#timestamp-date-without-zone) | off | warning | yes | `time_zone` | `DATE` / `EXTRACT` / `TIMESTAMP_TRUNC` / `FORMAT_TIMESTAMP` and friends of a `TIMESTAMP` without a time zone, which work in UTC |
 | [`nondeterministic-cte`](#nondeterministic-cte) | on | warning | | | `RAND()` / `GENERATE_UUID()` in a CTE that is evaluated more than once, so each reference sees different values |
 | [`window-default-frame`](#window-default-frame) | on | warning | yes | | `LAST_VALUE` / `NTH_VALUE` whose window has `ORDER BY` but no frame, so the default frame ends at the current row |
 | [`regexp-literal`](#regexp-literal) | on | warning | yes | | Constant regular expressions BigQuery rejects: invalid RE2, more than one capturing group in `REGEXP_EXTRACT` and friends, or `REGEXP_REPLACE` references to missing groups |
@@ -229,6 +230,20 @@ Off by default: such comparisons are common and often do mean UTC.
 | Option | Default | Description |
 | --- | --- | --- |
 | `time_zone` | none | The time zone the literals are usually meant in, offered as a second quick fix. A [time zone name](https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#time_zones) (e.g. `Asia/Tokyo`) or an offset (e.g. `+09:00`). |
+
+#### `timestamp-date-without-zone`
+
+A `TIMESTAMP` turned into a date or a date part without a time zone: `DATE(ts)`, `DATETIME(ts)`, `TIME(ts)`, `EXTRACT(part FROM ts)` (including `DATE`, `DATETIME` and `TIME`), `TIMESTAMP_TRUNC(ts, part)` and `FORMAT_TIMESTAMP(format, ts)`. These [use the default time zone, UTC](https://cloud.google.com/bigquery/docs/reference/standard-sql/timestamp_functions), so `DATE(created_at)` is the UTC date and `EXTRACT(HOUR FROM created_at)` the UTC hour, which is easy to mistake for local time. Pass the zone (`DATE(ts, 'Asia/Tokyo')`, `EXTRACT(HOUR FROM ts AT TIME ZONE 'Asia/Tokyo')`), or `'UTC'` to make UTC explicit. Reported on the call.
+
+Not reported: calls with a time zone (also `'UTC'`), `EXTRACT` of `MINUTE` and finer parts, `TIMESTAMP_TRUNC` to `HOUR` and finer parts, on which the time zones in common use agree with UTC, `DATE` / `DATETIME` arguments, and files that `SET @@time_zone`, since it changes the zone these functions use.
+
+The quick fix adds `'UTC'`, which keeps the result and states the zone. When `time_zone` is set, a second quick fix uses that zone instead. It changes the result, so it is never the preferred fix and `bqls lint --fix` does not apply it.
+
+Off by default: many datasets are meant to be read in UTC.
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `time_zone` | none | The time zone the dates are usually meant in, offered as a second quick fix, as for [`timestamp-string-literal`](#timestamp-string-literal). |
 
 #### `nondeterministic-cte`
 
