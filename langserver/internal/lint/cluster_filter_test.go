@@ -138,7 +138,7 @@ func TestClusterFilterNotPrunable(t *testing.T) {
 	msg := func(col, reason string) string {
 		return "Filter on clustering column `" + col + "` of `p.d.orders` cannot reduce the data read because " + reason
 	}
-	const wrapped = "it is wrapped in a function or CAST"
+	const wrapped = "it is wrapped in a function, operator or CAST"
 	type report struct {
 		// text is the exact reported source text.
 		text, message string
@@ -162,6 +162,17 @@ func TestClusterFilterNotPrunable(t *testing.T) {
 		"another column": {
 			src:  "SELECT amount FROM p.d.orders WHERE customer_id = other_id",
 			want: []report{{"customer_id = other_id", msg("customer_id", "it is compared with another column of the table")}},
+		},
+		"another clustering column": {
+			src: "SELECT amount FROM p.d.orders WHERE LOWER(region) = 'jp' AND region = status",
+			want: []report{
+				{"LOWER(region) = 'jp'", msg("region", wrapped)},
+				{"region = status", msg("region", "it is compared with another column of the table")},
+			},
+		},
+		"OR across clustering columns": {
+			src:  "SELECT amount FROM p.d.orders WHERE customer_id = 1 OR region = 'jp'",
+			want: []report{{"customer_id = 1 OR region = 'jp'", msg("customer_id", "a branch of OR does not filter on it")}},
 		},
 		"plain comparison": {
 			src: "SELECT amount FROM p.d.orders WHERE customer_id = 1 AND region IN ('jp', 'us') AND status LIKE 'done%'",

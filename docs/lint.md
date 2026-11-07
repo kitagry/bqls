@@ -355,7 +355,7 @@ Off by default: clustering only lowers the cost of on-demand queries, a dry run 
 
 #### `cluster-filter-not-prunable`
 
-A filter on a clustering column written in a form BigQuery [documents as unable to use the clustering](https://cloud.google.com/bigquery/docs/querying-clustered-tables#do_not_use_clustered_columns_in_complex_filter_expressions): the column wrapped in a function, `CAST` or arithmetic (`CAST(customer_id AS STRING) = '10000'`, `LOWER(region) = 'jp'`), compared with another column of the table (`customer_id = other_id`), compared with a subquery, or in an `OR` with a branch that does not filter on it. Reported on the filter term.
+A filter on a clustering column written in a form BigQuery [documents as unable to use the clustering](https://cloud.google.com/bigquery/docs/querying-clustered-tables#do_not_use_clustered_columns_in_complex_filter_expressions): the column wrapped in a function, `CAST` or arithmetic (`CAST(customer_id AS STRING) = '10000'`, `LOWER(region) = 'jp'`), compared with another column of the table, including another clustering column (`customer_id = other_id`, `region = status`), compared with a subquery, or in an `OR` with a branch that does not filter on it, including one that filters on another clustering column (`customer_id = 1 OR region = 'jp'`). Reported on the filter term.
 
 As in `partition-filter-not-prunable`, a term is reported only when no other `AND` term on the clustering columns might reduce the data read. Off by default for the same reasons as `cluster-filter`; it needs table metadata.
 

@@ -70,16 +70,19 @@ func checkClusterFilter(pass *Pass, flow *columnFlow, scan *googlesql.ResolvedTa
 	if !slices.ContainsFunc(columnIDs(cols), func(id int32) bool { return flow.reaches(id, flow.used) }) {
 		return
 	}
-	filtered := func(field string) bool {
-		for _, c := range cols {
-			colName, err := c.Name()
-			id, err2 := c.ColumnId()
-			if err == nil && err2 == nil && strings.EqualFold(colName, field) && flow.reaches(id, flow.filtered) {
-				return true
-			}
+	// An unreadable column could hide a filter, so it reports nothing.
+	filteredNames := make(map[string]bool)
+	for _, c := range cols {
+		colName, err := c.Name()
+		id, err2 := c.ColumnId()
+		if err != nil || err2 != nil {
+			return
 		}
-		return false
+		if flow.reaches(id, flow.filtered) {
+			filteredNames[strings.ToLower(colName)] = true
+		}
 	}
+	filtered := func(field string) bool { return filteredNames[strings.ToLower(field)] }
 	fields := meta.Clustering.Fields
 	var msg string
 	if !filtered(fields[0]) {
@@ -128,7 +131,10 @@ func runClusterFilterNotPrunable(pass *Pass) {
 }
 
 // As in partition-filter-not-prunable, a term is reported only when no other
-// term on the clustering columns might reduce the data read.
+// term on the clustering columns might reduce the data read. Each clustering
+// column is judged on its own, unlike the partition columns, because BigQuery
+// uses each one separately: a comparison between two of them, or an OR whose
+// branches filter on different ones, cannot use the clustering.
 func checkClusterFilterPrunable(pass *Pass, flow *columnFlow, scan *googlesql.ResolvedTableScan, reported map[offsets]bool) {
 	name, meta, ok := clusteredTable(pass, flow, scan)
 	if !ok {
@@ -138,17 +144,18 @@ func checkClusterFilterPrunable(pass *Pass, flow *columnFlow, scan *googlesql.Re
 	if err != nil {
 		return
 	}
-	fields := meta.Clustering.Fields
-	j, ok := newPrunableJudge(flow, cols, func(name string) bool {
-		return slices.ContainsFunc(fields, func(f string) bool { return strings.EqualFold(f, name) })
-	})
-	if !ok {
-		return
-	}
-	j.anyExpression = true
-	findings, ok := j.findings(flow)
-	if !ok {
-		return
+	var findings []unprunableTerm
+	for _, field := range meta.Clustering.Fields {
+		j, ok := newPrunableJudge(flow, cols, func(name string) bool { return strings.EqualFold(field, name) })
+		if !ok {
+			continue
+		}
+		j.anyExpression = true
+		fs, ok := j.findings(flow)
+		if !ok {
+			return
+		}
+		findings = append(findings, fs...)
 	}
 	for _, f := range findings {
 		reportOnce(pass, f.expr, reported,

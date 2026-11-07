@@ -228,7 +228,7 @@ func (j prunableJudge) unprunable(expr googlesql.ResolvedExprNode, ids []int32) 
 // unprunableSide judges the comparison operand that holds the judged column.
 func (j prunableJudge) unprunableSide(side googlesql.ResolvedExprNode, column string) (string, string, bool) {
 	if j.anyExpression && wrapsColumn(side) {
-		return column, "it is wrapped in a function or CAST", true
+		return column, "it is wrapped in a function, operator or CAST", true
 	}
 	call, ok := side.(*googlesql.ResolvedFunctionCall)
 	if !ok {
