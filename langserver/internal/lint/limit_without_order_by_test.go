@@ -57,6 +57,10 @@ func TestLimitWithoutOrderBy(t *testing.T) {
 			src:  "SELECT * FROM (FROM p.d.t |> LIMIT 3)",
 			want: []report{{"LIMIT 3", limitWithoutOrderByMessage}},
 		},
+		"CAST parameter": {
+			src:  "SELECT * FROM (SELECT id FROM p.d.t LIMIT CAST(@n AS INT64))",
+			want: []report{{"LIMIT CAST(@n AS INT64)", limitWithoutOrderByMessage}},
+		},
 		"UNION ALL operand": {
 			src:  "SELECT * FROM ((SELECT id FROM p.d.t LIMIT 1) UNION ALL (SELECT id FROM p.d.t ORDER BY ts LIMIT 1))",
 			want: []report{{"LIMIT 1", limitWithoutOrderByMessage}},

@@ -24,13 +24,13 @@ const (
 func runLimitWithoutOrderBy(pass *Pass) {
 	// A resolved limit expression carries the location of the expression
 	// only, so the clause comes from the parse tree.
-	clauses := make(map[offsets]*googlesql.ASTLimitOffset)
+	var clauses []limitClause
 	for _, lo := range file.ListAstNode[*googlesql.ASTLimitOffset](pass.File.Node) {
 		limit, err := lo.LimitExpression()
 		if err != nil || isNilNode(limit) {
 			continue
 		}
-		clauses[astOffsets(limit)] = lo
+		clauses = append(clauses, limitClause{limit: astOffsets(limit), clause: lo})
 	}
 
 	for _, output := range pass.File.RNode {
@@ -81,6 +81,26 @@ func runLimitWithoutOrderBy(pass *Pass) {
 	}
 }
 
+type limitClause struct {
+	limit  offsets
+	clause *googlesql.ASTLimitOffset
+}
+
+// findLimitClause matches by containment rather than equality because the
+// resolved expression can be located on only part of the written one, as for
+// LIMIT CAST(@n AS INT64).
+func findLimitClause(clauses []limitClause, at offsets) (*googlesql.ASTLimitOffset, bool) {
+	if at.start < 0 {
+		return nil, false
+	}
+	for _, c := range clauses {
+		if c.limit.start <= at.start && at.end <= c.limit.end {
+			return c.clause, true
+		}
+	}
+	return nil, false
+}
+
 // queryRoot skips the WITH clause of a query.
 func queryRoot(scan googlesql.ResolvedScanNode) googlesql.ResolvedScanNode {
 	for {
@@ -96,16 +116,19 @@ func queryRoot(scan googlesql.ResolvedScanNode) googlesql.ResolvedScanNode {
 	}
 }
 
-func checkLimitWithoutOrderBy(pass *Pass, clauses map[offsets]*googlesql.ASTLimitOffset, withSubqueries map[string]googlesql.ResolvedScanNode, scan *googlesql.ResolvedLimitOffsetScan) {
+func checkLimitWithoutOrderBy(pass *Pass, clauses []limitClause, withSubqueries map[string]googlesql.ResolvedScanNode, scan *googlesql.ResolvedLimitOffsetScan) {
 	limit, err := scan.Limit()
-	if err != nil || isNilNode(limit) || isZeroLiteral(limit) {
+	if err != nil || isNilNode(limit) {
+		return
+	}
+	if n, ok := int64Literal(limit); ok && n == 0 {
 		return
 	}
 	input, err := scan.InputScan()
 	if err != nil || isNilNode(input) || orderedInput(input) || atMostOneRow(input, withSubqueries) {
 		return
 	}
-	clause, ok := clauses[resolvedOffsets(limit)]
+	clause, ok := findLimitClause(clauses, resolvedOffsets(limit))
 	if !ok {
 		return
 	}
@@ -146,17 +169,4 @@ func orderedInput(scan googlesql.ResolvedScanNode) bool {
 		}
 		scan = input
 	}
-}
-
-func isZeroLiteral(expr googlesql.ResolvedExprNode) bool {
-	lit, ok := expr.(*googlesql.ResolvedLiteral)
-	if !ok {
-		return false
-	}
-	v, err := lit.Value()
-	if err != nil || v == nil {
-		return false
-	}
-	n, err := v.ToInt64()
-	return err == nil && n == 0
 }
