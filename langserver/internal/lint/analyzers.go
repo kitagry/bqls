@@ -36,4 +36,5 @@ var Analyzers = []*Analyzer{
 	CastDivisionRounds,
 	InsertWithoutColumnList,
 	LimitWithoutOrderBy,
+	RepeatedCTEEvaluation,
 }

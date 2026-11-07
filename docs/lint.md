@@ -43,6 +43,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`wildcard-table-suffix`](#wildcard-table-suffix) | on | warning | | | Wildcard table queries that never filter on `_TABLE_SUFFIX` |
 | [`wildcard-table-suffix-not-constant`](#wildcard-table-suffix-not-constant) | off | warning | | | `_TABLE_SUFFIX` filters that BigQuery documents as unable to limit the tables scanned |
 | [`order-by-in-subquery`](#order-by-in-subquery) | on | warning | yes | | `ORDER BY` in a subquery, CTE or derived table whose order cannot reach the result |
+| [`repeated-cte-evaluation`](#repeated-cte-evaluation) | off | warning | | | CTEs that join, aggregate or use window functions over tables and are evaluated more than once |
 | [`select-star`](#select-star) | off | warning | yes | `min_columns` | `SELECT *` that reads at least `min_columns` columns of a table |
 | [`bytes-processed-threshold`](#bytes-processed-threshold) | off | warning | | `max_bytes` | Files whose dry-run estimate exceeds `max_bytes` |
 | **Unused code** | | | | | |
@@ -301,6 +302,16 @@ Off by default for the same reason as `partition-filter-not-prunable`.
 An `ORDER BY` without `LIMIT` in a subquery, CTE or derived table whose order cannot reach the result (BigQuery does not preserve row order), so it only costs a sort. The quick fix removes the clause.
 
 Not reported when the order may matter: `LIMIT`, `ARRAY(SELECT ...)`, scalar subqueries, set operations, or a consumer that is limited, aggregated (e.g. `ARRAY_AGG`) or windowed. DML, `CREATE TABLE AS SELECT` and pipe `ORDER BY` are skipped.
+
+#### `repeated-cte-evaluation`
+
+A CTE that two or more evaluations run, and whose own body joins, aggregates (`GROUP BY`, `COUNT(*)`, ...) or computes window functions over data read from a table (directly or through other CTEs). BigQuery [does not materialize non-recursive CTEs](https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#with_clause) and runs one once per reference, so `WITH agg AS (SELECT ... GROUP BY ...) SELECT ... FROM agg JOIN agg ...` reads the tables and aggregates twice. If the CTE is expensive, [store its result in a temporary table](https://cloud.google.com/bigquery/docs/best-practices-performance-compute#use_temporary_tables) first. Reported on the CTE name, with the number of evaluations.
+
+Evaluations are counted as in `nondeterministic-cte`: a CTE referenced once from another CTE that is itself referenced twice also runs twice. Only the CTE that does the work is reported, not a CTE that merely filters or projects it.
+
+Not reported: CTEs evaluated once, unreferenced CTEs, recursive CTEs (materialized), CTEs that only filter or project (reading a table twice is the usual price of a readable query), and CTEs that read no table (e.g. `UNNEST` of a literal).
+
+Off by default: referring to a CTE twice is a normal way to keep a query readable, and is cheap for small tables.
 
 #### `select-star`
 
