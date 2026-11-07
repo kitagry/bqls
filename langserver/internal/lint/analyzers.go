@@ -37,4 +37,6 @@ var Analyzers = []*Analyzer{
 	InsertWithoutColumnList,
 	LimitWithoutOrderBy,
 	RepeatedCTEEvaluation,
+	ComparisonImplicitCast,
+	SetOperationImplicitCast,
 }

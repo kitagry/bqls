@@ -28,6 +28,8 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`left-join-as-inner`](#left-join-as-inner) | on | warning | yes | | `LEFT` / `RIGHT JOIN`s whose `WHERE` clause rejects the NULL rows of the optional side |
 | [`variable-column-shadow`](#variable-column-shadow) | on | warning | yes | | A column compared with itself because its bare name was meant as a same-named `DECLARE` variable |
 | [`join-key-implicit-cast`](#join-key-implicit-cast) | on | warning | | | `ON` / `USING` join keys of different types, so one side is implicitly cast (e.g. `INT64` to `FLOAT64`) |
+| [`comparison-implicit-cast`](#comparison-implicit-cast) | on | warning | | | Comparisons outside join keys between columns of different types, so one side is implicitly cast (e.g. `INT64` to `FLOAT64`) |
+| [`set-operation-implicit-cast`](#set-operation-implicit-cast) | on | warning | | | Set operation columns implicitly cast to `FLOAT64` because another input has a `FLOAT64` there |
 | [`self-comparison`](#self-comparison) | on | warning | | | Comparisons whose two sides are the same column, e.g. `a.id = a.id` meant as `a.id = b.id` |
 | [`missing-order-by`](#missing-order-by) | off | warning | | | `ROW_NUMBER()` filters, `ARRAY_AGG` / `STRING_AGG` with `LIMIT`, and indexed `ARRAY_AGG` results without `ORDER BY`, which pick arbitrary rows |
 | [`limit-without-order-by`](#limit-without-order-by) | off | warning | | | `LIMIT` without `ORDER BY` in a subquery, CTE, DML or `CREATE TABLE AS SELECT`, and `LIMIT ... OFFSET` without `ORDER BY`, which keep arbitrary rows |
@@ -164,6 +166,18 @@ Other uses of a name shared by a variable and a column (e.g. `GROUP BY user_id`)
 A join key comparison in `ON` or `USING` between columns of different types, so BigQuery implicitly casts one side, e.g. `INT64` with `FLOAT64` or `NUMERIC`, `NUMERIC` with `FLOAT64`, or `DATE` with `DATETIME` (`a.order_id = b.order_id` where one is `INT64` and the other `FLOAT64`). Mismatched key types usually point to a schema design mistake, and a cast to `FLOAT64` is lossy: it cannot represent every `INT64` or `NUMERIC` value exactly, so different keys may compare equal. Give both columns the same type, or write an explicit `CAST` to state the intent. Reported on the comparison (on the `JOIN` keyword for `USING`).
 
 Only a top-level `AND` term of `=` or `IS NOT DISTINCT FROM` between a column of each join input counts, where the analyzer inserted the cast. Not reported: comparisons with literals, query parameters or computed values (`a.id = 1.5`, `a.id = b.id + 0`), explicit `CAST` / `SAFE_CAST` on either side, terms under `OR`, other comparisons (`<`, `!=`, ...), comma joins filtered in `WHERE`, and `MERGE ... ON`.
+
+#### `comparison-implicit-cast`
+
+A comparison (`=`, `!=`, `<`, `<=`, `>`, `>=`, `[NOT] BETWEEN`, `[NOT] IN (...)`, `IS [NOT] DISTINCT FROM`) in `WHERE`, `HAVING`, `QUALIFY`, the `SELECT` list or anywhere else outside `JOIN ... ON` / `USING`, between columns of different types, so the analyzer casts one of them, e.g. `int_col = float_col` casts the `INT64` column to `FLOAT64`. As with `join-key-implicit-cast`, which covers join keys, a cast to `FLOAT64` can make different values compare equal, and other mismatches usually point to a schema design mistake. Reported on the comparison.
+
+Every operand must be a column of a table, CTE or subquery; the types named are those of the first implicitly cast one. Not reported: a literal, query parameter, variable or computed value (`i + 1`, aggregates) among the operands, which is often cast on purpose; an explicit `CAST`; `JOIN ... ON` / `USING`, which `join-key-implicit-cast` reports; and `DATE` compared with `DATETIME`.
+
+#### `set-operation-implicit-cast`
+
+A column of a set operation input (`UNION`, `INTERSECT`, `EXCEPT`) that is `INT64`, `NUMERIC` or `BIGNUMERIC` while another input has a `FLOAT64` in the same position. The result column becomes `FLOAT64`, so the values are [implicitly cast](https://cloud.google.com/bigquery/docs/reference/standard-sql/conversion_rules#supertypes) and may lose precision, e.g. an `INT64` ID above 2^53 changes. Reported on the select list column of the input that is cast, or on the whole input when its columns are not written out (e.g. `SELECT *`).
+
+Not reported: widening to `NUMERIC` or `BIGNUMERIC`, which is exact; a literal (`SELECT 0 ... UNION ALL SELECT f ...`), usually a placeholder; and an explicit `CAST`.
 
 #### `self-comparison`
 
