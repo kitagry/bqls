@@ -126,6 +126,9 @@ type prunableJudge struct {
 	// other is every other column of the same scan and its plain copies.
 	other          map[int32]bool
 	rangePartition bool
+	// anyExpression judges every function or CAST around the column as
+	// unable to limit the scan, as BigQuery documents for clustering.
+	anyExpression bool
 }
 
 // newPrunableJudge judges the scan columns cols for which judged is true,
@@ -224,6 +227,9 @@ func (j prunableJudge) unprunable(expr googlesql.ResolvedExprNode, ids []int32) 
 
 // unprunableSide judges the comparison operand that holds the judged column.
 func (j prunableJudge) unprunableSide(side googlesql.ResolvedExprNode, column string) (string, string, bool) {
+	if j.anyExpression && wrapsColumn(side) {
+		return column, "it is wrapped in a function, operator or CAST", true
+	}
 	call, ok := side.(*googlesql.ResolvedFunctionCall)
 	if !ok {
 		return "", "", false
@@ -311,4 +317,17 @@ func literalString(e googlesql.ResolvedExprNode) (string, bool) {
 	}
 	s, err := v.ShortDebugString()
 	return s, err == nil
+}
+
+// wrapsColumn reports whether side computes a value from a column rather
+// than being the column itself. An implicit cast keeps the column.
+func wrapsColumn(side googlesql.ResolvedExprNode) bool {
+	if inner, ok := implicitCastOperand(side); ok {
+		side = inner
+	}
+	switch side.(type) {
+	case *googlesql.ResolvedFunctionCall, *googlesql.ResolvedCast:
+		return true
+	}
+	return false
 }

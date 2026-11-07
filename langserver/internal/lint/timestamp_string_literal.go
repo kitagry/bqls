@@ -65,10 +65,7 @@ func runTimestampStringLiteral(pass *Pass) {
 	if setsTimeZone(pass) {
 		return
 	}
-	zones := []string{"UTC"}
-	if tz := pass.Options.(*TimestampStringLiteralOptions).TimeZone; tz != "" && !strings.EqualFold(tz, "UTC") {
-		zones = append(zones, tz)
-	}
+	zones := fixZones(pass.Options.(*TimestampStringLiteralOptions).TimeZone)
 	for _, output := range pass.File.RNode {
 		for _, call := range file.ListResolvedAstNode[*googlesql.ResolvedFunctionCall](output) {
 			name, ok := functionName(call)
@@ -84,6 +81,16 @@ func runTimestampStringLiteral(pass *Pass) {
 			}
 		}
 	}
+}
+
+// fixZones lists the time zones offered as fixes: UTC, which keeps the
+// result, then the configured zone, if any.
+func fixZones(tz string) []string {
+	zones := []string{"UTC"}
+	if tz != "" && !strings.EqualFold(tz, "UTC") {
+		zones = append(zones, tz)
+	}
+	return zones
 }
 
 // setsTimeZone reports whether the script sets @@time_zone, which BigQuery

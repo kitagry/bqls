@@ -3,13 +3,11 @@ package lint
 import (
 	"fmt"
 	"regexp"
-	"slices"
 	"strings"
 	"sync"
 
 	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
-	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
 
 var InsertColumnOrder = &Analyzer{
@@ -24,15 +22,7 @@ var InsertColumnOrder = &Analyzer{
 // select list renames it. The resolved insert_column_list holds the target
 // columns in order whether or not the statement lists them.
 func runInsertColumnOrder(pass *Pass) {
-	inserts := make(map[offsets]*googlesql.ASTInsertStatement)
-	for _, s := range file.ListAstNode[*googlesql.ASTInsertStatement](pass.File.Node) {
-		path, err := s.GetTargetPathForNonNested()
-		if err != nil || path == nil {
-			continue
-		}
-		inserts[astOffsets(path)] = s
-	}
-
+	inserts := insertStatementsByTarget(pass)
 	for _, output := range pass.File.RNode {
 		stmt, err := output.ResolvedStatement()
 		if err != nil || stmt == nil {
@@ -85,7 +75,7 @@ func checkInsert(pass *Pass, ins *googlesql.ResolvedInsertStmt, target *googlesq
 	}
 	// Reading the target table in another order is how a relation is made
 	// symmetric, as in `INSERT INTO edges SELECT dst, src FROM edges`.
-	if q, err := ins.Query(); err == nil && slices.Contains(scannedSources(q), "table:"+table) {
+	if readsTable(ins, table) {
 		return
 	}
 	columnList, err := astIns.ColumnList()

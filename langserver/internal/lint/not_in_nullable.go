@@ -182,10 +182,16 @@ func traceColumnLineage(stmt googlesql.ResolvedStatementNode) *columnLineage {
 // when the value is computed somewhere on the way, or when a condition
 // mentions any column on the way.
 func (l *columnLineage) source(id int32) (tableColumn, bool) {
+	return l.follow(id, func(id int32) bool { return l.conditioned[id] })
+}
+
+// follow follows id through unchanged copies to a table column, failing when
+// the value is computed on the way or stop holds for a column on the way.
+func (l *columnLineage) follow(id int32, stop func(int32) bool) (tableColumn, bool) {
 	seen := make(map[int32]bool)
 	for !seen[id] {
 		seen[id] = true
-		if l.conditioned[id] {
+		if stop(id) {
 			return tableColumn{}, false
 		}
 		if t, ok := l.tables[id]; ok {

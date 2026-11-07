@@ -178,16 +178,21 @@ func atMostOneRow(scan googlesql.ResolvedScanNode, withSubqueries map[string]goo
 }
 
 func isLimitAtMostOne(expr googlesql.ResolvedExprNode) bool {
+	n, ok := int64Literal(expr)
+	return ok && n <= 1
+}
+
+func int64Literal(expr googlesql.ResolvedExprNode) (int64, bool) {
 	lit, ok := expr.(*googlesql.ResolvedLiteral)
 	if !ok {
-		return false
+		return 0, false
 	}
 	v, err := lit.Value()
 	if err != nil || v == nil {
-		return false
+		return 0, false
 	}
 	n, err := v.ToInt64()
-	return err == nil && n <= 1
+	return n, err == nil
 }
 
 func reportCrossJoin(pass *Pass, j *googlesql.ASTJoin) {

@@ -30,45 +30,73 @@ var joinKeyComparisons = map[string]bool{
 // purpose, and an explicit CAST states the intent.
 func runJoinKeyImplicitCast(pass *Pass) {
 	for _, output := range pass.File.RNode {
-		for _, join := range file.ListResolvedAstNode[*googlesql.ResolvedJoinScan](output) {
-			cond, err := join.JoinExpr()
-			if err != nil || cond == nil {
-				continue
+		forEachJoinKeyCast(output, func(join *googlesql.ResolvedJoinScan, call *googlesql.ResolvedFunctionCall, from, to string) {
+			// USING keys have no location of their own, so the JOIN keyword stands in.
+			loc, err := call.GetParseLocationRangeOrNULL()
+			if err != nil || loc == nil {
+				loc, err = join.GetParseLocationRangeOrNULL()
+				if err != nil || loc == nil {
+					return
+				}
 			}
-			leftScan, err := join.LeftScan()
-			if err != nil {
-				continue
-			}
-			rightScan, err := join.RightScan()
-			if err != nil {
-				continue
-			}
-			left, ok := scanColumnIDs(leftScan)
+			r, ok := pass.File.OffsetsToLspRange(file.ParseLocStart(loc), file.ParseLocEnd(loc))
 			if !ok {
-				continue
+				return
 			}
-			right, ok := scanColumnIDs(rightScan)
-			if !ok {
-				continue
-			}
-			for _, term := range splitOperands(cond, "$and") {
-				reportJoinKeyImplicitCast(pass, join, term, left, right)
+			pass.Report(Diagnostic{
+				Range:    r,
+				Message:  joinKeyImplicitCastMessage(from, to),
+				Severity: SeverityWarning,
+			})
+		})
+	}
+}
+
+// forEachJoinKeyCast calls fn for each implicitly cast join key in output.
+// comparison-implicit-cast leaves exactly these comparisons to this rule.
+func forEachJoinKeyCast(output *googlesql.AnalyzerOutput, fn func(join *googlesql.ResolvedJoinScan, call *googlesql.ResolvedFunctionCall, from, to string)) {
+	for _, join := range file.ListResolvedAstNode[*googlesql.ResolvedJoinScan](output) {
+		cond, err := join.JoinExpr()
+		if err != nil || isNilNode(cond) {
+			continue
+		}
+		leftScan, err := join.LeftScan()
+		if err != nil {
+			continue
+		}
+		rightScan, err := join.RightScan()
+		if err != nil {
+			continue
+		}
+		left, ok := scanColumnIDs(leftScan)
+		if !ok {
+			continue
+		}
+		right, ok := scanColumnIDs(rightScan)
+		if !ok {
+			continue
+		}
+		for _, term := range splitOperands(cond, "$and") {
+			if call, from, to, ok := joinKeyCast(term, left, right); ok {
+				fn(join, call, from, to)
 			}
 		}
 	}
 }
 
-func reportJoinKeyImplicitCast(pass *Pass, join *googlesql.ResolvedJoinScan, term googlesql.ResolvedExprNode, left, right map[int32]bool) {
+// joinKeyCast returns term with the types of its implicit cast when term is a
+// join key comparison between a column of each join input.
+func joinKeyCast(term googlesql.ResolvedExprNode, left, right map[int32]bool) (*googlesql.ResolvedFunctionCall, string, string, bool) {
 	call, ok := term.(*googlesql.ResolvedFunctionCall)
 	if !ok {
-		return
+		return nil, "", "", false
 	}
 	if name, ok := functionName(call); !ok || !joinKeyComparisons[name] {
-		return
+		return nil, "", "", false
 	}
 	args, err := call.ArgumentList()
 	if err != nil || len(args) != 2 {
-		return
+		return nil, "", "", false
 	}
 	cast, other := args[0], args[1]
 	if _, ok := implicitCastOperand(cast); !ok {
@@ -76,45 +104,28 @@ func reportJoinKeyImplicitCast(pass *Pass, join *googlesql.ResolvedJoinScan, ter
 	}
 	casted, ok := implicitCastOperand(cast)
 	if !ok {
-		return
+		return nil, "", "", false
 	}
 	castedID, ok := columnRefID(casted)
 	if !ok {
-		return
+		return nil, "", "", false
 	}
 	otherID, ok := columnRefID(other)
 	if !ok {
-		return
+		return nil, "", "", false
 	}
 	if !(left[castedID] && right[otherID]) && !(right[castedID] && left[otherID]) {
-		return
+		return nil, "", "", false
 	}
 	from, ok := exprTypeName(casted)
 	if !ok {
-		return
+		return nil, "", "", false
 	}
 	to, ok := exprTypeName(cast)
 	if !ok {
-		return
+		return nil, "", "", false
 	}
-
-	// USING keys have no location of their own, so the JOIN keyword stands in.
-	loc, err := call.GetParseLocationRangeOrNULL()
-	if err != nil || loc == nil {
-		loc, err = join.GetParseLocationRangeOrNULL()
-		if err != nil || loc == nil {
-			return
-		}
-	}
-	r, ok := pass.File.OffsetsToLspRange(file.ParseLocStart(loc), file.ParseLocEnd(loc))
-	if !ok {
-		return
-	}
-	pass.Report(Diagnostic{
-		Range:    r,
-		Message:  joinKeyImplicitCastMessage(from, to),
-		Severity: SeverityWarning,
-	})
+	return call, from, to, true
 }
 
 // implicitCastOperand returns the operand of a cast the analyzer inserted.

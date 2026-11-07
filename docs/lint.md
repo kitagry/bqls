@@ -19,17 +19,25 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`null-comparison`](#null-comparison) | on | warning | yes | | `= NULL` / `!= NULL` comparisons, which always yield NULL |
 | [`in-null`](#in-null) | on | warning | yes | | `IN (NULL)` / `NOT IN (NULL)` lists of only NULLs, which always yield NULL, and `NOT IN` lists with a NULL, which never yield TRUE |
 | [`not-in-nullable`](#not-in-nullable) | on | warning | yes | | `x NOT IN (subquery)` over a `NULLABLE` table column, which yields no rows once that column holds a NULL |
+| [`repeated-null-check`](#repeated-null-check) | on | warning | yes | | `IS [NOT] NULL` on a `REPEATED` table column, which BigQuery never stores as NULL |
 | [`cross-join`](#cross-join) | on | warning | yes | | Joins without a join condition, which return the Cartesian product of both sides |
 | [`union-column-order`](#union-column-order) | on | warning | yes | | Set operation inputs whose columns are the first input's columns in a different order |
 | [`insert-column-order`](#insert-column-order) | on | warning | yes | | `INSERT ... SELECT` queries whose columns are the target columns in a different order |
 | [`insert-null-into-required`](#insert-null-into-required) | off | warning | | | `INSERT` / `UPDATE` / `MERGE` values that may be NULL written to a `REQUIRED` column, which BigQuery rejects only at run time |
 | [`insert-missing-required`](#insert-missing-required) | on | warning | | | `INSERT` / `MERGE ... INSERT` column lists that leave out a `REQUIRED` column without a default value, which BigQuery rejects only at run time |
+| [`insert-without-column-list`](#insert-without-column-list) | on | warning | yes | | `INSERT` statements without a column list, whose values are matched to the table's columns by position |
 | [`left-join-as-inner`](#left-join-as-inner) | on | warning | yes | | `LEFT` / `RIGHT JOIN`s whose `WHERE` clause rejects the NULL rows of the optional side |
 | [`variable-column-shadow`](#variable-column-shadow) | on | warning | yes | | A column compared with itself because its bare name was meant as a same-named `DECLARE` variable |
 | [`join-key-implicit-cast`](#join-key-implicit-cast) | on | warning | | | `ON` / `USING` join keys of different types, so one side is implicitly cast (e.g. `INT64` to `FLOAT64`) |
+| [`comparison-implicit-cast`](#comparison-implicit-cast) | on | warning | | | Comparisons outside join keys between columns of different types, so one side is implicitly cast (e.g. `INT64` to `FLOAT64`) |
+| [`set-operation-implicit-cast`](#set-operation-implicit-cast) | on | warning | | | Set operation columns implicitly cast to `FLOAT64` because another input has a `FLOAT64` there |
+| [`implicit-outer-reference`](#implicit-outer-reference) | on | warning | yes | | Unqualified column names in a subquery that refer to a column of the outer query |
 | [`self-comparison`](#self-comparison) | on | warning | | | Comparisons whose two sides are the same column, e.g. `a.id = a.id` meant as `a.id = b.id` |
 | [`missing-order-by`](#missing-order-by) | off | warning | | | `ROW_NUMBER()` filters, `ARRAY_AGG` / `STRING_AGG` with `LIMIT`, and indexed `ARRAY_AGG` results without `ORDER BY`, which pick arbitrary rows |
+| [`limit-without-order-by`](#limit-without-order-by) | off | warning | | | `LIMIT` without `ORDER BY` in a subquery, CTE, DML or `CREATE TABLE AS SELECT`, and `LIMIT ... OFFSET` without `ORDER BY`, which keep arbitrary rows |
+| [`date-bound-on-datetime`](#date-bound-on-datetime) | on | warning | yes | | `DATETIME` / `TIMESTAMP` upper bounds and equalities written as a date, which stands for midnight and misses the rest of the day |
 | [`timestamp-string-literal`](#timestamp-string-literal) | off | warning | yes | `time_zone` | String literals without a time zone compared with a `TIMESTAMP`, which are read as UTC |
+| [`timestamp-date-without-zone`](#timestamp-date-without-zone) | off | warning | yes | `time_zone` | `DATE` / `EXTRACT` / `TIMESTAMP_TRUNC` / `FORMAT_TIMESTAMP` and friends of a `TIMESTAMP` without a time zone, which work in UTC |
 | [`nondeterministic-cte`](#nondeterministic-cte) | on | warning | | | `RAND()` / `GENERATE_UUID()` in a CTE that is evaluated more than once, so each reference sees different values |
 | [`window-default-frame`](#window-default-frame) | on | warning | yes | | `LAST_VALUE` / `NTH_VALUE` whose window has `ORDER BY` but no frame, so the default frame ends at the current row |
 | [`regexp-literal`](#regexp-literal) | on | warning | yes | | Constant regular expressions BigQuery rejects: invalid RE2, more than one capturing group in `REGEXP_EXTRACT` and friends, or `REGEXP_REPLACE` references to missing groups |
@@ -38,9 +46,12 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | **Cost** | | | | | |
 | [`partition-filter`](#partition-filter) | on | warning | | | Partitioned tables read without a filter on the partition column |
 | [`partition-filter-not-prunable`](#partition-filter-not-prunable) | off | warning | | | Partition column filters written in a form BigQuery documents as unable to prune partitions |
+| [`cluster-filter`](#cluster-filter) | off | warning | | | Clustered tables read without a filter on the first clustering column, or with a clustering column skipped |
+| [`cluster-filter-not-prunable`](#cluster-filter-not-prunable) | off | warning | | | Clustering column filters written in a form BigQuery documents as unable to reduce the data read |
 | [`wildcard-table-suffix`](#wildcard-table-suffix) | on | warning | | | Wildcard table queries that never filter on `_TABLE_SUFFIX` |
 | [`wildcard-table-suffix-not-constant`](#wildcard-table-suffix-not-constant) | off | warning | | | `_TABLE_SUFFIX` filters that BigQuery documents as unable to limit the tables scanned |
 | [`order-by-in-subquery`](#order-by-in-subquery) | on | warning | yes | | `ORDER BY` in a subquery, CTE or derived table whose order cannot reach the result |
+| [`repeated-cte-evaluation`](#repeated-cte-evaluation) | off | warning | | | CTEs that join, aggregate or use window functions over tables and are evaluated more than once |
 | [`select-star`](#select-star) | off | warning | yes | `min_columns` | `SELECT *` that reads at least `min_columns` columns of a table |
 | [`bytes-processed-threshold`](#bytes-processed-threshold) | off | warning | | `max_bytes` | Files whose dry-run estimate exceeds `max_bytes` |
 | **Unused code** | | | | | |
@@ -76,6 +87,14 @@ The quick fix adds `col IS NOT NULL` to the subquery's `WHERE` (with `AND`, pare
 Unlike `in-null`, which reports a literal list of only NULLs, this rule depends on the table schema, so it needs table metadata. To avoid false positives, the column is followed only while it is passed through unchanged (column references, aliases, joins, `GROUP BY` keys, CTEs and derived tables).
 
 Not reported: a computed value (`IFNULL`, `COALESCE`, aggregates, arithmetic, struct fields), `UNION` and other set operations, `UNNEST`, `REQUIRED` columns, views and other non-table sources, and a column that any `WHERE` / `HAVING` / `QUALIFY` / `JOIN ... ON` condition in the statement mentions (e.g. `IS NOT NULL`, `=`, `>`).
+
+#### `repeated-null-check`
+
+`x IS NULL` / `x IS NOT NULL` where `x` is a `REPEATED` column of a table. BigQuery [writes a NULL array to a `REPEATED` column as an empty array](https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#array_nulls), so the column read from the table is never NULL: `IS NULL` is always FALSE and `IS NOT NULL` always TRUE. An empty array was probably meant. Reported on the check.
+
+The quick fix rewrites it to `ARRAY_LENGTH(x) = 0` (`> 0` for `IS NOT NULL`). That changes the result, so `bqls lint --fix` does not apply it.
+
+This rule depends on the table schema, so it needs table metadata. The column is followed while it is passed through unchanged (aliases, CTEs, derived tables, inner joins). Not reported: the optional side of a `LEFT` / `RIGHT` / `FULL JOIN`, which is NULL for unmatched rows; a field of a `RECORD` (`s.items`), which is NULL when the record is; computed arrays (`ARRAY_CONCAT`, `IF`, `ARRAY(...)`); views and other non-table sources.
 
 #### `cross-join`
 
@@ -128,6 +147,16 @@ Not reported: `INSERT` and `MERGE ... INSERT VALUES (...)` without a column list
 
 This rule depends on the table schema, so it needs table metadata. Unlike [`insert-null-into-required`](#insert-null-into-required), it is on by default: a missing column fails every row the statement writes, so a report is a false positive only when the statement writes no rows. There is no quick fix, since bqls cannot know the value to add.
 
+#### `insert-without-column-list`
+
+An `INSERT` statement without a column list (`INSERT INTO t VALUES (...)`, `INSERT INTO t SELECT ...`). Its values are written to the table's columns by position, so once a column is added to the table, or its columns are reordered, the statement fails or, when the types agree, silently writes values to the wrong columns. Reported on the target table.
+
+The quick fix adds a column list with every column of the table in schema order (`INSERT INTO t (a, b) SELECT ...`), which is what the statement writes today, quoting names that need it. It is not offered when the query's column names are the table's columns in a different order, which `insert-column-order` reports: a list in schema order would state the swap as intended. A query reading the target table itself (`INSERT INTO edges SELECT dst, src FROM edges`) still gets the fix, since `insert-column-order` treats that swap as intended.
+
+Not reported: `MERGE ... INSERT ROW` / `INSERT VALUES`, and `CREATE TABLE ... AS SELECT`. `INSERT INTO t SELECT * FROM s` is reported like any other query, since the list protects against a change in `t`.
+
+The statement must be analyzed to know the table's columns, so this rule needs table metadata.
+
 #### `left-join-as-inner`
 
 A `LEFT JOIN` (or `RIGHT JOIN`) whose `WHERE` clause filters the optional side with a condition that rejects NULL, so the unmatched rows the outer join adds are dropped again and it behaves as an `INNER JOIN` (e.g. `a LEFT JOIN b ON a.id = b.id WHERE b.status = 'active'`). Move the condition into the `ON` clause to keep the unmatched rows, or write `INNER JOIN`. Reported on the `JOIN` keyword.
@@ -152,6 +181,26 @@ A join key comparison in `ON` or `USING` between columns of different types, so 
 
 Only a top-level `AND` term of `=` or `IS NOT DISTINCT FROM` between a column of each join input counts, where the analyzer inserted the cast. Not reported: comparisons with literals, query parameters or computed values (`a.id = 1.5`, `a.id = b.id + 0`), explicit `CAST` / `SAFE_CAST` on either side, terms under `OR`, other comparisons (`<`, `!=`, ...), comma joins filtered in `WHERE`, and `MERGE ... ON`.
 
+#### `comparison-implicit-cast`
+
+A comparison (`=`, `!=`, `<`, `<=`, `>`, `>=`, `[NOT] BETWEEN`, `[NOT] IN (...)`, `IS [NOT] DISTINCT FROM`) in `WHERE`, `QUALIFY`, the `SELECT` list, `JOIN ... ON` or anywhere else, other than the join keys `join-key-implicit-cast` reports, between columns of different types, so the analyzer casts one of them, e.g. `int_col = float_col` casts the `INT64` column to `FLOAT64`. As with `join-key-implicit-cast`, which covers join keys, a cast to `FLOAT64` can make different values compare equal, and other mismatches usually point to a schema design mistake. Reported on the comparison.
+
+Every operand must be a column read from a table, also through CTEs; the types named are those of the first implicitly cast one. Not reported: a literal, query parameter, variable or computed value (`i + 1`, aggregates, `GROUP BY` keys compared in `HAVING`, computed columns of a derived table, `UNNEST` elements) among the operands, which is often cast on purpose; an explicit `CAST`; the join keys in `ON` / `USING` that `join-key-implicit-cast` reports (other comparisons in `ON`, such as `<` or terms under `OR`, are reported here); and `DATE` compared with `DATETIME`.
+
+#### `set-operation-implicit-cast`
+
+A column of a set operation input (`UNION`, `INTERSECT`, `EXCEPT`) that is `INT64`, `NUMERIC` or `BIGNUMERIC` while another input has a `FLOAT64` in the same position. The result column becomes `FLOAT64`, so the values are [implicitly cast](https://cloud.google.com/bigquery/docs/reference/standard-sql/conversion_rules#supertypes) and may lose precision, e.g. an `INT64` ID above 2^53 changes. Reported on the select list column of the input that is cast, or on the whole input when its columns are not written out (e.g. `SELECT *`).
+
+Not reported: widening to `NUMERIC` or `BIGNUMERIC`, which is exact; a literal (`SELECT 0 ... UNION ALL SELECT f ...`), usually a placeholder; and an explicit `CAST`.
+
+#### `implicit-outer-reference`
+
+An unqualified column name in a subquery (`IN`, `EXISTS`, scalar, `ARRAY`) that refers to a column of the outer query. A bare name resolves to the subquery's own tables first, so it only reaches the outer query when none of them has the column, which is often a typo or a column of the wrong table: in `WHERE id IN (SELECT id FROM orders)`, if `orders` has no `id`, the subquery returns the outer row's own `id` and the condition is TRUE for every row whose `id` is not NULL. Reported on the name.
+
+The quick fix qualifies the name with the outer table's alias, or the last part of its name when it has none (`WHERE id IN (SELECT users.id FROM orders)`), which keeps the meaning and shows the outer reference is intended. It is not offered when the outer column does not come from a table visible to the subquery (e.g. a CTE, or a table read inside a derived table), or when the subquery has a table, alias or column of that name, which the qualifier would refer to instead.
+
+Not reported: qualified names (`u.id`), names that the subquery's own tables have, and subqueries that read no table, such as `ARRAY(SELECT x * 2 FROM UNNEST(xs) AS x)` or `(SELECT AS STRUCT a, b)`, where referring to the outer row is the point.
+
 #### `self-comparison`
 
 A comparison (`=`, `!=` / `<>`, `<`, `<=`, `>`, `>=`, `IS [NOT] DISTINCT FROM`) whose two sides are references to the same column, e.g. `a JOIN b ON a.id = a.id` or `WHERE x = x`. The result does not depend on the column's value, only on whether it is NULL, so one side is almost always a typo for another column (`b.id`). Both sides must resolve to the same column, so a self join `t AS a JOIN t AS b ON a.id = b.id` is fine. For `=` the message also suggests `x IS NOT NULL`, in case a NULL check was meant; there is no quick fix, since the typo is far more likely.
@@ -172,6 +221,28 @@ Not reported: `ROW_NUMBER()` that no condition reads (e.g. a surrogate id), orde
 
 Off by default: whether the result actually changes depends on whether rows sharing a key differ, which bqls cannot see, and deduplicating rows known to be identical by key alone (e.g. after at-least-once ingestion) is a common, intentional idiom. No quick fix, since the column to order by cannot be guessed.
 
+#### `limit-without-order-by`
+
+`LIMIT` without `ORDER BY` where the kept rows matter: in a subquery (scalar, `IN`, `ARRAY`, derived table), a CTE, a set operation input, the query of `INSERT`, `CREATE TABLE ... AS SELECT` and other statements, and anywhere with `OFFSET`. BigQuery [does not guarantee row order](https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#limit_and_offset_clause) without `ORDER BY`, so which rows are kept can differ from run to run, and pages read with `OFFSET` can overlap or miss rows. Reported on the `LIMIT` clause. Pipe `|> LIMIT` is checked the same way.
+
+Not reported: `LIMIT` without `OFFSET` at the top of a query, which is how a result is previewed; `LIMIT` whose input is sorted, also through pipe operators after `|> ORDER BY`; `LIMIT 0`; the top of an `EXISTS` subquery, whose result depends only on whether a row exists; input of at most one row (e.g. an aggregate without `GROUP BY`); unreferenced CTEs. `ARRAY_AGG(... LIMIT n)` is `missing-order-by`'s concern.
+
+Off by default: taking any few rows (a sample for a test table, one row as an example) is common and often intended.
+
+#### `date-bound-on-datetime`
+
+A `DATETIME` or `TIMESTAMP` compared with a date where that misses the rest of the day. A date compared with a `DATETIME` is implicitly converted to midnight at the start of the day, so:
+
+- `dt <= DATE '2024-01-31'`, `dt BETWEEN ... AND '2024-01-31'` (upper bounds) leave out everything after 00:00:00 on January 31;
+- `dt > DATE '2024-01-31'` keeps it;
+- `dt = DATE '2024-01-31'`, `dt IN (DATE '2024-01-31')`, `dt IS NOT DISTINCT FROM DATE '2024-01-31'` match midnight only, and `!=`, `NOT IN`, `IS DISTINCT FROM` leave out midnight only.
+
+The date can be a `DATE` value (a column, `CURRENT_DATE()`, a parameter), a `DATE '...'` literal, or a string literal holding only a date (`'2024-01-31'`), which is also how a date is compared with a `TIMESTAMP`. The bound may be on either side (`DATE '2024-01-31' >= dt`). Reported on the comparison.
+
+The quick fix moves a literal bound to the next day and adjusts the operator: `dt <= DATE '2024-01-31'` becomes `dt < DATE '2024-02-01'`, and `dt > '2024-01-31'` becomes `dt >= '2024-02-01'`. That changes the result, so `bqls lint --fix` does not apply it. There is no fix for `BETWEEN`, equality, a bound that is not a literal, or `9999-12-31`, the last day there is.
+
+Not reported: lower bounds (`>=`, `<` with the date on the right, the lower end of `BETWEEN`), which mean midnight correctly; literals with a time of day; `DATETIME '...'` and `TIMESTAMP '...'` literals, which state midnight explicitly; `DATE` compared with `DATE`; and values that are always midnight: `DATETIME(date)`, `TIMESTAMP(date)`, and `DATETIME_TRUNC` / `TIMESTAMP_TRUNC` (without a time zone) to `DAY` or longer, and the `_PARTITIONTIME` pseudo column, which is midnight on daily partitioned tables (an hourly partitioned table is not told apart). A string literal compared with a `TIMESTAMP` may also be reported by [`timestamp-string-literal`](#timestamp-string-literal), which is about its time zone.
+
 #### `timestamp-string-literal`
 
 A string literal without a time zone compared with a `TIMESTAMP` (`=`, `!=`, `<`, `<=`, `>`, `>=`, `[NOT] BETWEEN`, `[NOT] IN (...)`, `IS [NOT] DISTINCT FROM`), e.g. `created_at >= '2024-01-01'`. The literal is implicitly converted to `TIMESTAMP` in the default time zone, UTC, so a local date or time shifts the boundary by the UTC offset. Add an offset or a time zone name (`'2024-01-01 00:00:00+09'`, `'2024-01-01 00:00:00 Asia/Tokyo'`, `TIMESTAMP('2024-01-01', 'Asia/Tokyo')`), or write `TIMESTAMP '2024-01-01'` to make UTC explicit. Reported on the literal.
@@ -185,6 +256,20 @@ Off by default: such comparisons are common and often do mean UTC.
 | Option | Default | Description |
 | --- | --- | --- |
 | `time_zone` | none | The time zone the literals are usually meant in, offered as a second quick fix. A [time zone name](https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#time_zones) (e.g. `Asia/Tokyo`) or an offset (e.g. `+09:00`). |
+
+#### `timestamp-date-without-zone`
+
+A `TIMESTAMP` turned into a date or a date part without a time zone: `DATE(ts)`, `DATETIME(ts)`, `TIME(ts)`, `EXTRACT(part FROM ts)` (including `DATE`, `DATETIME` and `TIME`), `TIMESTAMP_TRUNC(ts, part)` and `FORMAT_TIMESTAMP(format, ts)`. These [use the default time zone, UTC](https://cloud.google.com/bigquery/docs/reference/standard-sql/timestamp_functions), so `DATE(created_at)` is the UTC date and `EXTRACT(HOUR FROM created_at)` the UTC hour, which is easy to mistake for local time. Pass the zone (`DATE(ts, 'Asia/Tokyo')`, `EXTRACT(HOUR FROM ts AT TIME ZONE 'Asia/Tokyo')`), or `'UTC'` to make UTC explicit. Reported on the call.
+
+Not reported: calls with a time zone (also `'UTC'`), `EXTRACT` of `MINUTE` and finer parts, `TIMESTAMP_TRUNC` to `HOUR` and finer parts, on which every time zone at a whole-hour offset agrees with UTC (when `time_zone` is at another offset, e.g. `Asia/Kolkata`, only `EXTRACT` of `SECOND` and finer and `TIMESTAMP_TRUNC` to `MINUTE` and finer), `DATE` / `DATETIME` arguments, and files that `SET @@time_zone`, since it changes the zone these functions use.
+
+The quick fix adds `'UTC'`, which keeps the result and states the zone. A call in `GROUP BY` gets no quick fix, since the same expression in the `SELECT` list or `ORDER BY` refers to it and would no longer be grouped. When `time_zone` is set, a second quick fix uses that zone instead. It changes the result, so it is never the preferred fix and `bqls lint --fix` does not apply it.
+
+Off by default: many datasets are meant to be read in UTC.
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `time_zone` | none | The time zone the dates are usually meant in, offered as a second quick fix, as for [`timestamp-string-literal`](#timestamp-string-literal). |
 
 #### `nondeterministic-cte`
 
@@ -260,6 +345,20 @@ Not reported: forms the documentation says do prune (e.g. `DATE(ts)`, `TIMESTAMP
 
 Off by default because the documentation, not the optimizer, is the source of these patterns, and bqls cannot confirm pruning per table.
 
+#### `cluster-filter`
+
+A clustered table read without a filter on its first clustering column, or with a filter on a later clustering column but not on one before it (e.g. `WHERE customer_id = 1 AND status = 'done'` on a table clustered by `customer_id, region, status`). BigQuery [uses the clustering columns in their order, starting with the first](https://cloud.google.com/bigquery/docs/querying-clustered-tables#filter_clustered_columns_by_sort_order), so such a query cannot benefit from the clustering and reads the whole table (or partition). Reported on the table path. Filters are followed through CTEs and subqueries as in `partition-filter`.
+
+Not reported: queries that read no column of the table (`COUNT(*)`), views and other non-regular tables, wildcard tables, and DML targets. This rule needs table metadata.
+
+Off by default: clustering only lowers the cost of on-demand queries, a dry run does not show the saving, and reading a clustered table in full is often intended.
+
+#### `cluster-filter-not-prunable`
+
+A filter on a clustering column written in a form BigQuery [documents as unable to use the clustering](https://cloud.google.com/bigquery/docs/querying-clustered-tables#do_not_use_clustered_columns_in_complex_filter_expressions): the column wrapped in a function, `CAST` or arithmetic (`CAST(customer_id AS STRING) = '10000'`, `LOWER(region) = 'jp'`), compared with another column of the table, including another clustering column (`customer_id = other_id`, `region = status`), compared with a subquery, or in an `OR` with a branch that does not filter on it, including one that filters on another clustering column (`customer_id = 1 OR region = 'jp'`). Reported on the filter term.
+
+As in `partition-filter-not-prunable`, a term is reported only when no other `AND` term on the clustering columns might reduce the data read. Off by default for the same reasons as `cluster-filter`; it needs table metadata.
+
 #### `wildcard-table-suffix`
 
 A wildcard table (`` `p.d.events_*` ``) that is queried without any filter on `_TABLE_SUFFIX`, so it scans every matching table. Filters are judged as in `partition-filter`: a `WHERE` / `JOIN ... ON` condition that mentions `_TABLE_SUFFIX` or a value derived from it (through CTEs, subqueries, and `UNION`) counts, even on one side of an `OR`. Unlike `partition-filter`, `SELECT COUNT(*)` is still reported.
@@ -281,6 +380,16 @@ Off by default for the same reason as `partition-filter-not-prunable`.
 An `ORDER BY` without `LIMIT` in a subquery, CTE or derived table whose order cannot reach the result (BigQuery does not preserve row order), so it only costs a sort. The quick fix removes the clause.
 
 Not reported when the order may matter: `LIMIT`, `ARRAY(SELECT ...)`, scalar subqueries, set operations, or a consumer that is limited, aggregated (e.g. `ARRAY_AGG`) or windowed. DML, `CREATE TABLE AS SELECT` and pipe `ORDER BY` are skipped.
+
+#### `repeated-cte-evaluation`
+
+A CTE that two or more evaluations run, and whose own body joins, aggregates (`GROUP BY`, `COUNT(*)`, ...) or computes window functions over data read from a table (directly or through other CTEs). BigQuery [does not materialize non-recursive CTEs](https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#with_clause) and runs one once per reference, so `WITH agg AS (SELECT ... GROUP BY ...) SELECT ... FROM agg JOIN agg ...` reads the tables and aggregates twice. If the CTE is expensive, [store its result in a temporary table](https://cloud.google.com/bigquery/docs/best-practices-performance-compute#use_temporary_tables) first. Reported on the CTE name, with the number of evaluations.
+
+Evaluations are counted as in `nondeterministic-cte`: a CTE referenced once from another CTE that is itself referenced twice also runs twice. Only the CTE that does the work is reported, not a CTE that merely filters or projects it.
+
+Not reported: CTEs evaluated once, unreferenced CTEs, recursive CTEs (materialized), CTEs that only filter or project (reading a table twice is the usual price of a readable query), and CTEs that read no table (e.g. `UNNEST` of a literal).
+
+Off by default: referring to a CTE twice is a normal way to keep a query readable, and is cheap for small tables.
 
 #### `select-star`
 
