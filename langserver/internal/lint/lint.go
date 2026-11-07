@@ -82,6 +82,10 @@ type Diagnostic struct {
 type SuggestedFix struct {
 	Title string
 	Edits []lsp.TextEdit
+	// ChangesResult marks a fix that changes what the query computes, such
+	// as one that rewrites it to what was probably meant. It is never the
+	// preferred fix, so `bqls lint --fix` leaves it to the user.
+	ChangesResult bool
 }
 
 // Run executes the enabled analyzers over f and returns unsuppressed diagnostics.

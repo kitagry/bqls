@@ -77,6 +77,15 @@ func TestRun_Fix(t *testing.T) {
 				"a.sql": "SELECT ts FROM UNNEST([CURRENT_TIMESTAMP()]) AS ts WHERE ts >= TIMESTAMP('2024-01-01', 'UTC')\n",
 			},
 		},
+		// DIV truncates where the CAST rounds, so the fix is offered in the
+		// editor but not applied.
+		"fixes that change the result are not applied": {
+			files:      map[string]string{"a.sql": "SELECT CAST(x / 2 AS INT64) FROM UNNEST([7]) AS x\n"},
+			args:       []string{"--fix", "a.sql"},
+			wantCode:   1,
+			wantStdout: "a.sql:1:8: warning: CAST to INT64 rounds the FLOAT64 result of an integer division to the nearest integer, halfway cases away from zero (CAST(7 / 2 AS INT64) is 4); use DIV for integer division that truncates toward zero, or ROUND / FLOOR / CEIL to state the rounding (cast-division-rounds)\n",
+			wantFiles:  map[string]string{"a.sql": "SELECT CAST(x / 2 AS INT64) FROM UNNEST([7]) AS x\n"},
+		},
 		"extraction pattern keeps its first capturing group": {
 			files:      map[string]string{"a.sql": "SELECT REGEXP_EXTRACT('ab', '(a)(b)')\n"},
 			args:       []string{"--fix", "a.sql"},

@@ -33,4 +33,5 @@ var Analyzers = []*Analyzer{
 	WindowDefaultFrame,
 	RegexpLiteral,
 	ArrayNullElement,
+	CastDivisionRounds,
 }
