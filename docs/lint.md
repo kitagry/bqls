@@ -224,13 +224,13 @@ A `DATETIME` or `TIMESTAMP` compared with a date where that misses the rest of t
 
 - `dt <= DATE '2024-01-31'`, `dt BETWEEN ... AND '2024-01-31'` (upper bounds) leave out everything after 00:00:00 on January 31;
 - `dt > DATE '2024-01-31'` keeps it;
-- `dt = DATE '2024-01-31'` matches midnight only.
+- `dt = DATE '2024-01-31'`, `dt IN (DATE '2024-01-31')`, `dt IS NOT DISTINCT FROM DATE '2024-01-31'` match midnight only, and `!=`, `NOT IN`, `IS DISTINCT FROM` leave out midnight only.
 
 The date can be a `DATE` value (a column, `CURRENT_DATE()`, a parameter), a `DATE '...'` literal, or a string literal holding only a date (`'2024-01-31'`), which is also how a date is compared with a `TIMESTAMP`. The bound may be on either side (`DATE '2024-01-31' >= dt`). Reported on the comparison.
 
-The quick fix moves a literal bound to the next day and adjusts the operator: `dt <= DATE '2024-01-31'` becomes `dt < DATE '2024-02-01'`, and `dt > '2024-01-31'` becomes `dt >= '2024-02-01'`. That changes the result, so `bqls lint --fix` does not apply it. There is no fix for `BETWEEN`, equality, or a bound that is not a literal.
+The quick fix moves a literal bound to the next day and adjusts the operator: `dt <= DATE '2024-01-31'` becomes `dt < DATE '2024-02-01'`, and `dt > '2024-01-31'` becomes `dt >= '2024-02-01'`. That changes the result, so `bqls lint --fix` does not apply it. There is no fix for `BETWEEN`, equality, a bound that is not a literal, or `9999-12-31`, the last day there is.
 
-Not reported: lower bounds (`>=`, `<` with the date on the right, the lower end of `BETWEEN`), which mean midnight correctly; literals with a time of day; `DATETIME '...'` and `TIMESTAMP '...'` literals, which state midnight explicitly; and `DATE` compared with `DATE`. A string literal compared with a `TIMESTAMP` may also be reported by [`timestamp-string-literal`](#timestamp-string-literal), which is about its time zone.
+Not reported: lower bounds (`>=`, `<` with the date on the right, the lower end of `BETWEEN`), which mean midnight correctly; literals with a time of day; `DATETIME '...'` and `TIMESTAMP '...'` literals, which state midnight explicitly; `DATE` compared with `DATE`; and values that are always midnight: `DATETIME(date)`, `TIMESTAMP(date)`, and `DATETIME_TRUNC` / `TIMESTAMP_TRUNC` (without a time zone) to `DAY` or longer, and the `_PARTITIONTIME` pseudo column, which is midnight on daily partitioned tables (an hourly partitioned table is not told apart). A string literal compared with a `TIMESTAMP` may also be reported by [`timestamp-string-literal`](#timestamp-string-literal), which is about its time zone.
 
 #### `timestamp-string-literal`
 

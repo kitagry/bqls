@@ -2,6 +2,7 @@ package lint
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,6 +29,8 @@ const (
 	boundAfter
 	// boundEqual matches midnight only.
 	boundEqual
+	// boundNotEqual leaves out midnight only.
+	boundNotEqual
 )
 
 func dateBoundOnDatetimeMessage(typ string, kind dateBoundKind) string {
@@ -37,6 +40,8 @@ func dateBoundOnDatetimeMessage(typ string, kind dateBoundKind) string {
 		return msg + "the rest of that day is left out; compare with < the next day instead"
 	case boundAfter:
 		return msg + "the rest of that day is kept; compare with >= the next day instead"
+	case boundNotEqual:
+		return msg + "only midnight is left out; compare the date part instead, e.g. DATE(x) != ..."
 	}
 	return msg + "only midnight matches; compare the date part instead, e.g. DATE(x) = ..."
 }
@@ -45,12 +50,14 @@ func dateBoundOnDatetimeMessage(typ string, kind dateBoundKind) string {
 // and its first argument would be. The first argument of `date >= x` is an
 // upper bound of x, for example. A zero entry is a correct bound.
 var dateBoundComparisons = map[string][2]*dateBoundKind{
-	"$less_or_equal":    {ptr(boundUpper), nil},
-	"$greater_or_equal": {nil, ptr(boundUpper)},
-	"$greater":          {ptr(boundAfter), nil},
-	"$less":             {nil, ptr(boundAfter)},
-	"$equal":            {ptr(boundEqual), ptr(boundEqual)},
-	"$not_equal":        {ptr(boundEqual), ptr(boundEqual)},
+	"$less_or_equal":        {ptr(boundUpper), nil},
+	"$greater_or_equal":     {nil, ptr(boundUpper)},
+	"$greater":              {ptr(boundAfter), nil},
+	"$less":                 {nil, ptr(boundAfter)},
+	"$equal":                {ptr(boundEqual), ptr(boundEqual)},
+	"$is_not_distinct_from": {ptr(boundEqual), ptr(boundEqual)},
+	"$not_equal":            {ptr(boundNotEqual), ptr(boundNotEqual)},
+	"$is_distinct_from":     {ptr(boundNotEqual), ptr(boundNotEqual)},
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -63,8 +70,8 @@ var fixedOperators = map[dateBoundKind][2]string{
 }
 
 var (
-	dateLiteral       = regexp.MustCompile(`(?i)^DATE\s*(['"])(\d{4}-\d{1,2}-\d{1,2})(['"])$`)
-	dateStringLiteral = regexp.MustCompile(`^(['"])(\d{4}-\d{1,2}-\d{1,2})(['"])$`)
+	dateKeyword = regexp.MustCompile(`(?i)^DATE\s*`)
+	dateOnly    = regexp.MustCompile(`^\d{4}-\d{1,2}-\d{1,2}$`)
 )
 
 func runDateBoundOnDatetime(pass *Pass) {
@@ -91,6 +98,31 @@ func runDateBoundOnDatetime(pass *Pass) {
 					if _, ok := dateBound(pass, args[2]); ok {
 						reportDateBound(pass, loc, typ, boundUpper, nil)
 					}
+				}
+				continue
+			}
+			listKind := boundEqual
+			if name == "$not" && len(args) == 1 {
+				// `x NOT IN (...)` resolves to $not of an $in that has no
+				// location of its own; `NOT (x IN (...))` is reported on the $in.
+				in, ok := args[0].(*googlesql.ResolvedFunctionCall)
+				if !ok || resolvedOffsets(in).start >= 0 {
+					continue
+				}
+				if n, ok := functionName(in); !ok || n != "$in" {
+					continue
+				}
+				if args, err = in.ArgumentList(); err != nil {
+					continue
+				}
+				name, listKind = "$in", boundNotEqual
+			}
+			if name == "$in" && len(args) >= 2 {
+				if typ, ok := dateBounded(args[0]); ok && slices.ContainsFunc(args[1:], func(e googlesql.ResolvedExprNode) bool {
+					_, ok := dateBound(pass, e)
+					return ok
+				}) {
+					reportDateBound(pass, loc, typ, listKind, nil)
 				}
 				continue
 			}
@@ -123,13 +155,65 @@ func runDateBoundOnDatetime(pass *Pass) {
 }
 
 // dateBounded returns the type of a DATETIME or TIMESTAMP value that is
-// not a literal.
+// not a literal and can fall after midnight.
 func dateBounded(expr googlesql.ResolvedExprNode) (string, bool) {
 	if _, ok := expr.(*googlesql.ResolvedLiteral); ok {
 		return "", false
 	}
 	typ, ok := exprTypeName(expr)
-	return typ, ok && (typ == "DATETIME" || typ == "TIMESTAMP")
+	return typ, ok && (typ == "DATETIME" || typ == "TIMESTAMP") && !dayAligned(expr) && !isPartitionTime(expr)
+}
+
+// isPartitionTime reports whether expr is the _PARTITIONTIME pseudo column,
+// which is midnight on the usual daily partitioned tables, so comparing it
+// with a date is the documented way to filter it. bqls does not tell the
+// rarer hourly partitioning apart.
+func isPartitionTime(expr googlesql.ResolvedExprNode) bool {
+	ref, ok := expr.(*googlesql.ResolvedColumnRef)
+	if !ok {
+		return false
+	}
+	col, err := ref.Column()
+	if err != nil || col == nil {
+		return false
+	}
+	name, err := col.Name()
+	return err == nil && strings.EqualFold(name, "_PARTITIONTIME")
+}
+
+// dayAligned reports whether expr is always midnight, a DATE converted to
+// DATETIME or TIMESTAMP or a value truncated to a day or longer, which a date
+// bounds exactly.
+func dayAligned(expr googlesql.ResolvedExprNode) bool {
+	call, ok := expr.(*googlesql.ResolvedFunctionCall)
+	if !ok {
+		return false
+	}
+	name, ok := functionName(call)
+	if !ok {
+		return false
+	}
+	args, err := call.ArgumentList()
+	if err != nil {
+		return false
+	}
+	switch name {
+	case "datetime", "timestamp":
+		// With a time zone, TIMESTAMP(date, zone) is midnight there, which a
+		// date read in the default time zone does not match.
+		if len(args) != 1 {
+			return false
+		}
+		typ, ok := exprTypeName(args[0])
+		return ok && typ == "DATE"
+	case "datetime_trunc", "timestamp_trunc":
+		if len(args) != 2 {
+			return false
+		}
+		part, ok := literalString(args[1])
+		return ok && !subDayParts[part]
+	}
+	return false
 }
 
 // dateBoundLiteral is a date written as a literal, which a fix can move to
@@ -162,16 +246,20 @@ func dateBound(pass *Pass, expr googlesql.ResolvedExprNode) (*dateBoundLiteral, 
 	}
 	// A DATE literal folded into a DATETIME keeps its explicit type, while
 	// a string literal converted to one does not.
-	re := dateStringLiteral
+	quoted := text
 	if explicit {
-		re = dateLiteral
+		m := dateKeyword.FindString(text)
+		if m == "" {
+			return nil, false
+		}
+		quoted = text[len(m):]
 	}
-	m := re.FindStringSubmatch(text)
-	if m == nil || m[1] != m[3] {
+	date, ok := stringLiteralContent(quoted)
+	if !ok || !dateOnly.MatchString(date) {
 		return nil, false
 	}
-	i := strings.LastIndex(text, m[2])
-	return &dateBoundLiteral{at: at, prefix: text[:i], date: m[2], suffix: m[3]}, true
+	i := len(text) - len(quoted) + strings.Index(quoted, date)
+	return &dateBoundLiteral{at: at, prefix: text[:i], date: date, suffix: text[i+len(date):]}, true
 }
 
 // nextDayFix moves the bound to the next day and makes the comparison
@@ -186,16 +274,30 @@ func nextDayFix(pass *Pass, b *googlesql.ASTBinaryExpression, kind dateBoundKind
 	if err != nil {
 		return nil
 	}
+	next := d.AddDate(0, 0, 1)
+	// 9999-12-31 is the last day a DATE, DATETIME or TIMESTAMP can hold.
+	if next.Year() > 9999 {
+		return nil
+	}
 	lhs, err := b.Lhs()
 	rhs, err2 := b.Rhs()
 	if err != nil || err2 != nil || isNilNode(lhs) || isNilNode(rhs) {
 		return nil
 	}
+	src := pass.File.FixedSrc
 	between := offsets{astOffsets(lhs).end, astOffsets(rhs).start}
-	if between.start < 0 || between.end < between.start || containsComment(pass.File.FixedSrc[between.start:between.end]) {
+	if !inBounds(src, between) || containsComment(src[between.start:between.end]) {
 		return nil
 	}
-	opRange, ok := pass.File.OffsetsToLspRange(between.start, between.end)
+	// The operands' locations leave out their parentheses, so only the
+	// operator itself is replaced.
+	text := src[between.start:between.end]
+	opStart := strings.IndexAny(text, "<>")
+	if opStart < 0 {
+		return nil
+	}
+	opEnd := opStart + len(text[opStart:]) - len(strings.TrimLeft(text[opStart:], "<>="))
+	opRange, ok := pass.File.OffsetsToLspRange(between.start+opStart, between.start+opEnd)
 	if !ok {
 		return nil
 	}
@@ -203,13 +305,13 @@ func nextDayFix(pass *Pass, b *googlesql.ASTBinaryExpression, kind dateBoundKind
 	if !ok {
 		return nil
 	}
-	next := lit.prefix + d.AddDate(0, 0, 1).Format("2006-01-02") + lit.suffix
+	nextLit := lit.prefix + next.Format("2006-01-02") + lit.suffix
 	op := ops[side]
 	return &SuggestedFix{
-		Title: "Compare with " + op + " " + next,
+		Title: "Compare with " + op + " " + nextLit,
 		Edits: []lsp.TextEdit{
-			{Range: opRange, NewText: " " + op + " "},
-			{Range: litRange, NewText: next},
+			{Range: opRange, NewText: op},
+			{Range: litRange, NewText: nextLit},
 		},
 		ChangesResult: true,
 	}

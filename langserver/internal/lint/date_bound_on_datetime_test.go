@@ -13,6 +13,8 @@ func dateBoundOnDatetimeMessage(typ, kind string) string {
 		return msg + "the rest of that day is left out; compare with < the next day instead"
 	case "after":
 		return msg + "the rest of that day is kept; compare with >= the next day instead"
+	case "not equal":
+		return msg + "only midnight is left out; compare the date part instead, e.g. DATE(x) != ..."
 	}
 	return msg + "only midnight matches; compare the date part instead, e.g. DATE(x) = ..."
 }
@@ -61,6 +63,42 @@ func TestDateBoundOnDatetime(t *testing.T) {
 			src:  "SELECT 1 FROM p.d.t WHERE dt = DATE '2024-01-31'",
 			want: []report{{"dt = DATE '2024-01-31'", "DATETIME", "equal", ""}},
 		},
+		"not equal": {
+			src:  "SELECT 1 FROM p.d.t WHERE dt != DATE '2024-01-31'",
+			want: []report{{"dt != DATE '2024-01-31'", "DATETIME", "not equal", ""}},
+		},
+		"IS NOT DISTINCT FROM": {
+			src:  "SELECT 1 FROM p.d.t WHERE dt IS NOT DISTINCT FROM DATE '2024-01-31'",
+			want: []report{{"dt IS NOT DISTINCT FROM DATE '2024-01-31'", "DATETIME", "equal", ""}},
+		},
+		"IN": {
+			src:  "SELECT 1 FROM p.d.t WHERE dt IN (DATE '2024-01-31', DATE '2024-02-01')",
+			want: []report{{"dt IN (DATE '2024-01-31', DATE '2024-02-01')", "DATETIME", "equal", ""}},
+		},
+		"NOT IN": {
+			src:  "SELECT 1 FROM p.d.t WHERE dt NOT IN (DATE '2024-01-31')",
+			want: []report{{"dt NOT IN (DATE '2024-01-31')", "DATETIME", "not equal", ""}},
+		},
+		"parenthesized operands": {
+			src:  "SELECT 1 FROM p.d.t WHERE (dt) <= (DATE '2024-01-31')",
+			want: []report{{"(dt) <= (DATE '2024-01-31')", "DATETIME", "upper", "SELECT 1 FROM p.d.t WHERE (dt) < (DATE '2024-02-01')"}},
+		},
+		"raw string": {
+			src:  "SELECT 1" + ts + " WHERE ts <= r'2024-01-31'",
+			want: []report{{"ts <= r'2024-01-31'", "TIMESTAMP", "upper", "SELECT 1" + ts + " WHERE ts < r'2024-02-01'"}},
+		},
+		"triple-quoted string": {
+			src:  "SELECT 1" + ts + " WHERE ts > '''2024-01-31'''",
+			want: []report{{"ts > '''2024-01-31'''", "TIMESTAMP", "after", "SELECT 1" + ts + " WHERE ts >= '''2024-02-01'''"}},
+		},
+		"last day": {
+			src:  "SELECT 1 FROM p.d.t WHERE dt <= DATE '9999-12-31'",
+			want: []report{{"dt <= DATE '9999-12-31'", "DATETIME", "upper", ""}},
+		},
+		"truncated to the hour": {
+			src:  "SELECT 1 FROM p.d.t WHERE DATETIME_TRUNC(dt, HOUR) = DATE '2024-01-31'",
+			want: []report{{"DATETIME_TRUNC(dt, HOUR) = DATE '2024-01-31'", "DATETIME", "equal", ""}},
+		},
 		"DATE column": {
 			src:  "SELECT 1 FROM p.d.t WHERE dt <= d",
 			want: []report{{"dt <= d", "DATETIME", "upper", ""}},
@@ -77,6 +115,9 @@ func TestDateBoundOnDatetime(t *testing.T) {
 		},
 		"time of day written": {
 			src: "SELECT 1 FROM p.d.t WHERE dt <= '2024-01-31 23:59:59' OR dt <= DATETIME '2024-01-31 00:00:00'",
+		},
+		"midnight values": {
+			src: "SELECT 1" + ts + " WHERE DATETIME_TRUNC(dt, DAY) = DATE '2024-01-31' AND DATETIME(d) <= DATE '2024-01-31' AND TIMESTAMP_TRUNC(ts, MONTH) <= '2024-01-31' AND TIMESTAMP(d) = '2024-01-31'",
 		},
 		"DATE compared with DATE": {
 			src: "SELECT 1 FROM p.d.t WHERE d <= DATE '2024-01-31'",
@@ -119,5 +160,14 @@ func TestDateBoundOnDatetime(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// On a daily ingestion-time partitioned table _PARTITIONTIME is always
+// midnight, and comparing it with a date is the documented way to filter.
+func TestDateBoundOnDatetime_PartitionTime(t *testing.T) {
+	src := "SELECT 1 FROM p.d.ingest WHERE _PARTITIONTIME = '2024-01-31' OR _PARTITIONTIME <= '2024-01-31'"
+	if got := lint.Run(t.Context(), parsePartitioned(t, src), lint.Config{}, lint.Env{}, lint.DateBoundOnDatetime); len(got) != 0 {
+		t.Errorf("got %+v, want nothing for _PARTITIONTIME", got)
 	}
 }
