@@ -41,4 +41,5 @@ var Analyzers = []*Analyzer{
 	SetOperationImplicitCast,
 	RepeatedNullCheck,
 	TimestampDateWithoutZone,
+	DateBoundOnDatetime,
 }

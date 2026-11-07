@@ -34,6 +34,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`self-comparison`](#self-comparison) | on | warning | | | Comparisons whose two sides are the same column, e.g. `a.id = a.id` meant as `a.id = b.id` |
 | [`missing-order-by`](#missing-order-by) | off | warning | | | `ROW_NUMBER()` filters, `ARRAY_AGG` / `STRING_AGG` with `LIMIT`, and indexed `ARRAY_AGG` results without `ORDER BY`, which pick arbitrary rows |
 | [`limit-without-order-by`](#limit-without-order-by) | off | warning | | | `LIMIT` without `ORDER BY` in a subquery, CTE, DML or `CREATE TABLE AS SELECT`, and `LIMIT ... OFFSET` without `ORDER BY`, which keep arbitrary rows |
+| [`date-bound-on-datetime`](#date-bound-on-datetime) | on | warning | yes | | `DATETIME` / `TIMESTAMP` upper bounds and equalities written as a date, which stands for midnight and misses the rest of the day |
 | [`timestamp-string-literal`](#timestamp-string-literal) | off | warning | yes | `time_zone` | String literals without a time zone compared with a `TIMESTAMP`, which are read as UTC |
 | [`timestamp-date-without-zone`](#timestamp-date-without-zone) | off | warning | yes | `time_zone` | `DATE` / `EXTRACT` / `TIMESTAMP_TRUNC` / `FORMAT_TIMESTAMP` and friends of a `TIMESTAMP` without a time zone, which work in UTC |
 | [`nondeterministic-cte`](#nondeterministic-cte) | on | warning | | | `RAND()` / `GENERATE_UUID()` in a CTE that is evaluated more than once, so each reference sees different values |
@@ -216,6 +217,20 @@ Off by default: whether the result actually changes depends on whether rows shar
 Not reported: `LIMIT` without `OFFSET` at the top of a query, which is how a result is previewed; `LIMIT` whose input is sorted, also through pipe operators after `|> ORDER BY`; `LIMIT 0`; the top of an `EXISTS` subquery, whose result depends only on whether a row exists; input of at most one row (e.g. an aggregate without `GROUP BY`); unreferenced CTEs. `ARRAY_AGG(... LIMIT n)` is `missing-order-by`'s concern.
 
 Off by default: taking any few rows (a sample for a test table, one row as an example) is common and often intended.
+
+#### `date-bound-on-datetime`
+
+A `DATETIME` or `TIMESTAMP` compared with a date where that misses the rest of the day. A date compared with a `DATETIME` is implicitly converted to midnight at the start of the day, so:
+
+- `dt <= DATE '2024-01-31'`, `dt BETWEEN ... AND '2024-01-31'` (upper bounds) leave out everything after 00:00:00 on January 31;
+- `dt > DATE '2024-01-31'` keeps it;
+- `dt = DATE '2024-01-31'` matches midnight only.
+
+The date can be a `DATE` value (a column, `CURRENT_DATE()`, a parameter), a `DATE '...'` literal, or a string literal holding only a date (`'2024-01-31'`), which is also how a date is compared with a `TIMESTAMP`. The bound may be on either side (`DATE '2024-01-31' >= dt`). Reported on the comparison.
+
+The quick fix moves a literal bound to the next day and adjusts the operator: `dt <= DATE '2024-01-31'` becomes `dt < DATE '2024-02-01'`, and `dt > '2024-01-31'` becomes `dt >= '2024-02-01'`. That changes the result, so `bqls lint --fix` does not apply it. There is no fix for `BETWEEN`, equality, or a bound that is not a literal.
+
+Not reported: lower bounds (`>=`, `<` with the date on the right, the lower end of `BETWEEN`), which mean midnight correctly; literals with a time of day; `DATETIME '...'` and `TIMESTAMP '...'` literals, which state midnight explicitly; and `DATE` compared with `DATE`. A string literal compared with a `TIMESTAMP` may also be reported by [`timestamp-string-literal`](#timestamp-string-literal), which is about its time zone.
 
 #### `timestamp-string-literal`
 
