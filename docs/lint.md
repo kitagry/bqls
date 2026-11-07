@@ -30,6 +30,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`join-key-implicit-cast`](#join-key-implicit-cast) | on | warning | | | `ON` / `USING` join keys of different types, so one side is implicitly cast (e.g. `INT64` to `FLOAT64`) |
 | [`self-comparison`](#self-comparison) | on | warning | | | Comparisons whose two sides are the same column, e.g. `a.id = a.id` meant as `a.id = b.id` |
 | [`missing-order-by`](#missing-order-by) | off | warning | | | `ROW_NUMBER()` filters, `ARRAY_AGG` / `STRING_AGG` with `LIMIT`, and indexed `ARRAY_AGG` results without `ORDER BY`, which pick arbitrary rows |
+| [`limit-without-order-by`](#limit-without-order-by) | off | warning | | | `LIMIT` without `ORDER BY` in a subquery, CTE, DML or `CREATE TABLE AS SELECT`, and `LIMIT ... OFFSET` without `ORDER BY`, which keep arbitrary rows |
 | [`timestamp-string-literal`](#timestamp-string-literal) | off | warning | yes | `time_zone` | String literals without a time zone compared with a `TIMESTAMP`, which are read as UTC |
 | [`nondeterministic-cte`](#nondeterministic-cte) | on | warning | | | `RAND()` / `GENERATE_UUID()` in a CTE that is evaluated more than once, so each reference sees different values |
 | [`window-default-frame`](#window-default-frame) | on | warning | yes | | `LAST_VALUE` / `NTH_VALUE` whose window has `ORDER BY` but no frame, so the default frame ends at the current row |
@@ -182,6 +183,14 @@ Other numbering and navigation functions (`RANK`, `LAG`, `LEAD`, `FIRST_VALUE`, 
 Not reported: `ROW_NUMBER()` that no condition reads (e.g. a surrogate id), order-insensitive aggregates (`COUNT`, `SUM`, `ANY_VALUE`, ...), `ARRAY_AGG` / `STRING_AGG` without `LIMIT` that is not indexed, and duplicates that look the same to the rest of the statement: rows whose `PARTITION BY` keys cover every column the statement uses (e.g. `PARTITION BY TO_JSON_STRING(t)`, or `SELECT id ... QUALIFY ROW_NUMBER() OVER (PARTITION BY id) = 1`), and aggregate arguments that read only `GROUP BY` keys. Statements bqls cannot trace (e.g. recursive CTEs, table functions) and view definitions are skipped.
 
 Off by default: whether the result actually changes depends on whether rows sharing a key differ, which bqls cannot see, and deduplicating rows known to be identical by key alone (e.g. after at-least-once ingestion) is a common, intentional idiom. No quick fix, since the column to order by cannot be guessed.
+
+#### `limit-without-order-by`
+
+`LIMIT` without `ORDER BY` where the kept rows matter: in a subquery (scalar, `IN`, `ARRAY`, derived table), a CTE, a set operation input, the query of `INSERT`, `CREATE TABLE ... AS SELECT` and other statements, and anywhere with `OFFSET`. BigQuery [does not guarantee row order](https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#limit_and_offset_clause) without `ORDER BY`, so which rows are kept can differ from run to run, and pages read with `OFFSET` can overlap or miss rows. Reported on the `LIMIT` clause. Pipe `|> LIMIT` is checked the same way.
+
+Not reported: `LIMIT` without `OFFSET` at the top of a query, which is how a result is previewed; `LIMIT` whose input is sorted, also through pipe operators after `|> ORDER BY`; `LIMIT 0`; the top of an `EXISTS` subquery, whose result depends only on whether a row exists; input of at most one row (e.g. an aggregate without `GROUP BY`); unreferenced CTEs. `ARRAY_AGG(... LIMIT n)` is `missing-order-by`'s concern.
+
+Off by default: taking any few rows (a sample for a test table, one row as an example) is common and often intended.
 
 #### `timestamp-string-literal`
 

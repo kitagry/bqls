@@ -35,4 +35,5 @@ var Analyzers = []*Analyzer{
 	ArrayNullElement,
 	CastDivisionRounds,
 	InsertWithoutColumnList,
+	LimitWithoutOrderBy,
 }
