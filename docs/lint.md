@@ -31,6 +31,7 @@ Findings are reported as warnings, except those marked *information* below. A qu
 | [`join-key-implicit-cast`](#join-key-implicit-cast) | on | warning | | | `ON` / `USING` join keys of different types, so one side is implicitly cast (e.g. `INT64` to `FLOAT64`) |
 | [`comparison-implicit-cast`](#comparison-implicit-cast) | on | warning | | | Comparisons outside join keys between columns of different types, so one side is implicitly cast (e.g. `INT64` to `FLOAT64`) |
 | [`set-operation-implicit-cast`](#set-operation-implicit-cast) | on | warning | | | Set operation columns implicitly cast to `FLOAT64` because another input has a `FLOAT64` there |
+| [`implicit-outer-reference`](#implicit-outer-reference) | on | warning | yes | | Unqualified column names in a subquery that refer to a column of the outer query |
 | [`self-comparison`](#self-comparison) | on | warning | | | Comparisons whose two sides are the same column, e.g. `a.id = a.id` meant as `a.id = b.id` |
 | [`missing-order-by`](#missing-order-by) | off | warning | | | `ROW_NUMBER()` filters, `ARRAY_AGG` / `STRING_AGG` with `LIMIT`, and indexed `ARRAY_AGG` results without `ORDER BY`, which pick arbitrary rows |
 | [`limit-without-order-by`](#limit-without-order-by) | off | warning | | | `LIMIT` without `ORDER BY` in a subquery, CTE, DML or `CREATE TABLE AS SELECT`, and `LIMIT ... OFFSET` without `ORDER BY`, which keep arbitrary rows |
@@ -189,6 +190,14 @@ Every operand must be a column read from a table, also through CTEs; the types n
 A column of a set operation input (`UNION`, `INTERSECT`, `EXCEPT`) that is `INT64`, `NUMERIC` or `BIGNUMERIC` while another input has a `FLOAT64` in the same position. The result column becomes `FLOAT64`, so the values are [implicitly cast](https://cloud.google.com/bigquery/docs/reference/standard-sql/conversion_rules#supertypes) and may lose precision, e.g. an `INT64` ID above 2^53 changes. Reported on the select list column of the input that is cast, or on the whole input when its columns are not written out (e.g. `SELECT *`).
 
 Not reported: widening to `NUMERIC` or `BIGNUMERIC`, which is exact; a literal (`SELECT 0 ... UNION ALL SELECT f ...`), usually a placeholder; and an explicit `CAST`.
+
+#### `implicit-outer-reference`
+
+An unqualified column name in a subquery (`IN`, `EXISTS`, scalar, `ARRAY`) that refers to a column of the outer query. A bare name resolves to the subquery's own tables first, so it only reaches the outer query when none of them has the column, which is often a typo or a column of the wrong table: in `WHERE id IN (SELECT id FROM orders)`, if `orders` has no `id`, the subquery returns the outer row's own `id` and the condition is TRUE for every row whose `id` is not NULL. Reported on the name.
+
+The quick fix qualifies the name with the outer table's alias, or the last part of its name when it has none (`WHERE id IN (SELECT users.id FROM orders)`), which keeps the meaning and shows the outer reference is intended. It is not offered when the outer column does not come from a table (e.g. a CTE or a derived table), or when the subquery has a table or CTE of that name, which the qualifier would refer to instead.
+
+Not reported: qualified names (`u.id`), and names that the subquery's own tables have.
 
 #### `self-comparison`
 

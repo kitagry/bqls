@@ -42,4 +42,5 @@ var Analyzers = []*Analyzer{
 	RepeatedNullCheck,
 	TimestampDateWithoutZone,
 	DateBoundOnDatetime,
+	ImplicitOuterReference,
 }
