@@ -1,11 +1,11 @@
 package lint
 
 import (
+	"slices"
 	"strings"
 
 	googlesql "github.com/goccy/go-googlesql"
 	"github.com/kitagry/bqls/langserver/internal/lsp"
-	"github.com/kitagry/bqls/langserver/internal/source/file"
 )
 
 var InsertWithoutColumnList = &Analyzer{
@@ -20,15 +20,7 @@ func insertWithoutColumnListMessage(table string) string {
 }
 
 func runInsertWithoutColumnList(pass *Pass) {
-	inserts := make(map[offsets]*googlesql.ASTInsertStatement)
-	for _, s := range file.ListAstNode[*googlesql.ASTInsertStatement](pass.File.Node) {
-		path, err := s.GetTargetPathForNonNested()
-		if err != nil || path == nil {
-			continue
-		}
-		inserts[astOffsets(path)] = s
-	}
-
+	inserts := insertStatementsByTarget(pass)
 	for _, output := range pass.File.RNode {
 		stmt, err := output.ResolvedStatement()
 		if err != nil || stmt == nil {
@@ -64,7 +56,7 @@ func reportInsertWithoutColumnList(pass *Pass, ins *googlesql.ResolvedInsertStmt
 		return
 	}
 	d := Diagnostic{Range: r, Message: insertWithoutColumnListMessage(table), Severity: SeverityWarning}
-	if fix, ok := insertColumnListFix(pass, ins, astIns, at.end); ok {
+	if fix, ok := insertColumnListFix(pass, ins, astIns, table, at.end); ok {
 		d.SuggestedFixes = []SuggestedFix{fix}
 	}
 	pass.Report(d)
@@ -73,7 +65,7 @@ func reportInsertWithoutColumnList(pass *Pass, ins *googlesql.ResolvedInsertStmt
 // insertColumnListFix adds the table's columns in schema order, which is
 // what the statement writes today. The resolved insert_column_list holds
 // them whether or not the statement lists them.
-func insertColumnListFix(pass *Pass, ins *googlesql.ResolvedInsertStmt, astIns *googlesql.ASTInsertStatement, at int) (SuggestedFix, bool) {
+func insertColumnListFix(pass *Pass, ins *googlesql.ResolvedInsertStmt, astIns *googlesql.ASTInsertStatement, table string, at int) (SuggestedFix, bool) {
 	insertCols, err := ins.InsertColumnList()
 	if err != nil || len(insertCols) == 0 {
 		return SuggestedFix{}, false
@@ -87,10 +79,12 @@ func insertColumnListFix(pass *Pass, ins *googlesql.ResolvedInsertStmt, astIns *
 		names[i] = name
 	}
 	// Listing the columns in schema order would state as intended the swap
-	// that insert-column-order reports.
+	// that insert-column-order reports. A query reading the target table
+	// itself is not reported there, since the swap is how a relation is made
+	// symmetric, so schema order is what is meant.
 	if query, err := astIns.Query(); err == nil && query != nil {
 		if cols, ok := outputColumns(query); ok && len(cols.names) == len(names) {
-			if _, got := misplaced(names, cols.names); len(got) > 0 {
+			if _, got := misplaced(names, cols.names); len(got) > 0 && !readsTable(ins, table) {
 				return SuggestedFix{}, false
 			}
 		}
@@ -107,4 +101,9 @@ func insertColumnListFix(pass *Pass, ins *googlesql.ResolvedInsertStmt, astIns *
 		Title: "Add the column list",
 		Edits: []lsp.TextEdit{{Range: r, NewText: " (" + strings.Join(quoted, ", ") + ")"}},
 	}, true
+}
+
+func readsTable(ins *googlesql.ResolvedInsertStmt, table string) bool {
+	q, err := ins.Query()
+	return err == nil && slices.Contains(scannedSources(q), "table:"+table)
 }

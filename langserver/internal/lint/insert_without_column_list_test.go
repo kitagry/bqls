@@ -59,6 +59,13 @@ func TestInsertWithoutColumnList(t *testing.T) {
 			src:  "INSERT INTO p.d.t SELECT 2 AS b, 1 AS a",
 			want: []report{{"p.d.t", "p.d.t"}},
 		},
+		// insert-column-order does not report a swap of the target table's
+		// own columns, so schema order is what is meant.
+		"columns in another order read from the target get a fix": {
+			src:       "INSERT INTO p.d.edges SELECT dst, src FROM p.d.edges",
+			want:      []report{{"p.d.edges", "p.d.edges"}},
+			wantFixed: "INSERT INTO p.d.edges (src, dst) SELECT dst, src FROM p.d.edges",
+		},
 		"column list": {
 			src: "INSERT INTO p.d.t (a, b) SELECT a, b FROM p.d.s",
 		},

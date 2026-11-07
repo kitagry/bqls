@@ -133,9 +133,11 @@ This rule depends on the table schema, so it needs table metadata. Unlike [`inse
 
 An `INSERT` statement without a column list (`INSERT INTO t VALUES (...)`, `INSERT INTO t SELECT ...`). Its values are written to the table's columns by position, so once a column is added to the table, or its columns are reordered, the statement fails or, when the types agree, silently writes values to the wrong columns. Reported on the target table.
 
-The quick fix adds a column list with every column of the table in schema order (`INSERT INTO t (a, b) SELECT ...`), which is what the statement writes today, quoting names that need it. It is not offered when the query's column names are the table's columns in a different order, which `insert-column-order` reports: a list in schema order would state the swap as intended.
+The quick fix adds a column list with every column of the table in schema order (`INSERT INTO t (a, b) SELECT ...`), which is what the statement writes today, quoting names that need it. It is not offered when the query's column names are the table's columns in a different order, which `insert-column-order` reports: a list in schema order would state the swap as intended. A query reading the target table itself (`INSERT INTO edges SELECT dst, src FROM edges`) still gets the fix, since `insert-column-order` treats that swap as intended.
 
 Not reported: `MERGE ... INSERT ROW` / `INSERT VALUES`, and `CREATE TABLE ... AS SELECT`. `INSERT INTO t SELECT * FROM s` is reported like any other query, since the list protects against a change in `t`.
+
+The statement must be analyzed to know the table's columns, so this rule needs table metadata.
 
 #### `left-join-as-inner`
 
