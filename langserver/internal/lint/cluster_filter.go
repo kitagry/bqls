@@ -29,13 +29,8 @@ var ClusterFilterNotPrunable = &Analyzer{
 const clusterFilterAdvice = "filter on the clustering columns in order, starting with the first"
 
 func runClusterFilter(pass *Pass) {
-	for _, output := range pass.File.RNode {
-		stmt, err := output.ResolvedStatement()
-		if err != nil || stmt == nil {
-			continue
-		}
-		flow, ok := analyzeColumnFlow(stmt)
-		if !ok {
+	for _, flow := range pass.columnFlows() {
+		if flow == nil {
 			continue
 		}
 		for _, scan := range flow.scans {
@@ -114,13 +109,8 @@ func checkClusterFilter(pass *Pass, flow *columnFlow, scan *googlesql.ResolvedTa
 }
 
 func runClusterFilterNotPrunable(pass *Pass) {
-	for _, output := range pass.File.RNode {
-		stmt, err := output.ResolvedStatement()
-		if err != nil || stmt == nil {
-			continue
-		}
-		flow, ok := analyzeColumnFlow(stmt)
-		if !ok {
+	for _, flow := range pass.columnFlows() {
+		if flow == nil {
 			continue
 		}
 		reported := make(map[offsets]bool)

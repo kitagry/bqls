@@ -23,13 +23,8 @@ var PartitionFilterNotPrunable = &Analyzer{
 // prune are reported, and only when no other term on the partition column
 // might prune, since BigQuery prunes with any one qualifying AND term.
 func runPartitionFilterNotPrunable(pass *Pass) {
-	for _, output := range pass.File.RNode {
-		stmt, err := output.ResolvedStatement()
-		if err != nil || stmt == nil {
-			continue
-		}
-		flow, ok := analyzeColumnFlow(stmt)
-		if !ok {
+	for _, flow := range pass.columnFlows() {
+		if flow == nil {
 			continue
 		}
 		reported := make(map[offsets]bool)

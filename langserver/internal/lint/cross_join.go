@@ -25,13 +25,14 @@ const crossJoinMessage = "Join has no join condition, so it returns every combin
 func runCrossJoin(pass *Pass) {
 	joins := astJoinsByLocation(pass.File.Node)
 
-	for _, output := range pass.File.RNode {
-		stmt, err := output.ResolvedStatement()
-		if err != nil || stmt == nil {
+	flows := pass.columnFlows()
+	for i, output := range pass.File.RNode {
+		flow := flows[i]
+		if flow == nil {
 			continue
 		}
-		flow, ok := analyzeColumnFlow(stmt)
-		if !ok {
+		stmt, err := output.ResolvedStatement()
+		if err != nil {
 			continue
 		}
 		withSubqueries := make(map[string]googlesql.ResolvedScanNode)

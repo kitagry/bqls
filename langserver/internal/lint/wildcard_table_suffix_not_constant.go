@@ -17,13 +17,8 @@ var WildcardTableSuffixNotConstant = &Analyzer{
 }
 
 func runWildcardTableSuffixNotConstant(pass *Pass) {
-	for _, output := range pass.File.RNode {
-		stmt, err := output.ResolvedStatement()
-		if err != nil || stmt == nil {
-			continue
-		}
-		flow, ok := analyzeColumnFlow(stmt)
-		if !ok {
+	for _, flow := range pass.columnFlows() {
+		if flow == nil {
 			continue
 		}
 		reported := make(map[offsets]bool)

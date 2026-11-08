@@ -57,6 +57,8 @@ type Pass struct {
 	Options any
 
 	report func(Diagnostic)
+	// shared holds analyses of File that every pass of one Run reuses.
+	shared *sharedAnalyses
 }
 
 // Report records a diagnostic. Rule defaults to the analyzer's name, and any
@@ -102,6 +104,7 @@ func Run(ctx context.Context, f file.ParsedFile, cfg Config, env Env, analyzers 
 	}
 
 	suppressions := ParseSuppressions(f.Src)
+	shared := &sharedAnalyses{}
 	var result []Diagnostic
 	for _, a := range analyzers {
 		if !cfg.Enabled(a) {
@@ -120,6 +123,7 @@ func Run(ctx context.Context, f file.ParsedFile, cfg Config, env Env, analyzers 
 			LookupTable: lookup,
 			DryRun:      env.DryRun,
 			Options:     opts,
+			shared:      shared,
 			report: func(d Diagnostic) {
 				if suppressions.Suppressed(d.Rule, d.Range.Start.Line) {
 					return

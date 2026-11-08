@@ -23,13 +23,8 @@ var PartitionFilter = &Analyzer{
 // that merely mentions a value derived from the partition column counts,
 // whether or not BigQuery could prune with it.
 func runPartitionFilter(pass *Pass) {
-	for _, output := range pass.File.RNode {
-		stmt, err := output.ResolvedStatement()
-		if err != nil || stmt == nil {
-			continue
-		}
-		flow, ok := analyzeColumnFlow(stmt)
-		if !ok {
+	for _, flow := range pass.columnFlows() {
+		if flow == nil {
 			continue
 		}
 		for _, scan := range flow.scans {
@@ -57,6 +52,37 @@ type columnFlow struct {
 	aliases map[int32][]int32
 	// used is every column id whose value the statement consumes.
 	used map[int32]bool
+}
+
+// sharedAnalyses caches analyses that several rules need, so that each is
+// built once per file rather than once per enabled rule.
+type sharedAnalyses struct {
+	// columnFlows is nil until first computed.
+	columnFlows []*columnFlow
+}
+
+// columnFlows returns the column flow of each statement in File.RNode, in
+// order, with nil for a statement whose flow cannot be followed. The result
+// is shared by every pass of the same Run and must not be modified.
+func (p *Pass) columnFlows() []*columnFlow {
+	if p.shared == nil {
+		p.shared = &sharedAnalyses{}
+	}
+	if p.shared.columnFlows != nil {
+		return p.shared.columnFlows
+	}
+	flows := make([]*columnFlow, len(p.File.RNode))
+	for i, output := range p.File.RNode {
+		stmt, err := output.ResolvedStatement()
+		if err != nil || stmt == nil {
+			continue
+		}
+		if flow, ok := analyzeColumnFlow(stmt); ok {
+			flows[i] = flow
+		}
+	}
+	p.shared.columnFlows = flows
+	return flows
 }
 
 func analyzeColumnFlow(stmt googlesql.ResolvedStatementNode) (*columnFlow, bool) {

@@ -19,13 +19,8 @@ var WildcardTableSuffix = &Analyzer{
 // merely mentions a value derived from _TABLE_SUFFIX (even on one side of an
 // OR) counts: a false positive costs more trust than a missed report.
 func runWildcardTableSuffix(pass *Pass) {
-	for _, output := range pass.File.RNode {
-		stmt, err := output.ResolvedStatement()
-		if err != nil || stmt == nil {
-			continue
-		}
-		flow, ok := analyzeColumnFlow(stmt)
-		if !ok {
+	for _, flow := range pass.columnFlows() {
+		if flow == nil {
 			continue
 		}
 		for _, scan := range flow.scans {
