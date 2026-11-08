@@ -24,7 +24,7 @@ go install github.com/kitagry/bqls@latest
 
 ### bqls version
 
-The automatic download installs bqls **v0.8.3**. A `bqls` found on your
+The automatic download installs bqls **v0.8.6**. A `bqls` found on your
 `PATH` (or set via `bqls.path`) takes precedence and is used as-is, so make
 sure it is recent enough for the features you use:
 
