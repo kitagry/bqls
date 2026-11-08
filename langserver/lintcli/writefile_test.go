@@ -83,16 +83,16 @@ func TestRun_FixWriteFailureLeavesTheOriginal(t *testing.T) {
 	tests := map[string]struct {
 		failOn  string
 		rename  func(oldpath, newpath string) error
-		wantErr string
+		wantErr error
 	}{
-		"disk full while writing": {failOn: "write", wantErr: "no space left on device"},
-		"sync fails":              {failOn: "sync", wantErr: "input/output error"},
-		"close fails":             {failOn: "close", wantErr: "input/output error"},
+		"disk full while writing": {failOn: "write", wantErr: syscall.ENOSPC},
+		"sync fails":              {failOn: "sync", wantErr: syscall.EIO},
+		"close fails":             {failOn: "close", wantErr: syscall.EIO},
 		"rename fails": {
 			rename: func(oldpath, newpath string) error {
 				return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EXDEV}
 			},
-			wantErr: "invalid cross-device link",
+			wantErr: syscall.EXDEV,
 		},
 	}
 	for name, tt := range tests {
@@ -111,8 +111,9 @@ func TestRun_FixWriteFailureLeavesTheOriginal(t *testing.T) {
 			if got.code != 2 {
 				t.Errorf("exit code = %d, want 2 (stderr: %s)", got.code, got.stderr)
 			}
-			if !strings.Contains(got.stderr, tt.wantErr) {
-				t.Errorf("stderr = %q, want the write error %q", got.stderr, tt.wantErr)
+			// The errno text differs between platforms, so take it from the errno.
+			if !strings.Contains(got.stderr, tt.wantErr.Error()) {
+				t.Errorf("stderr = %q, want the write error %q", got.stderr, tt.wantErr.Error())
 			}
 			assertUnchanged(t, "a.sql", nullComparisonSQL)
 			if names := dirEntries(t, "."); !slices.Equal(names, []string{"a.sql"}) {
