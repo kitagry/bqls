@@ -367,8 +367,9 @@ func ignoreNullsFix(pass *Pass, call *googlesql.ASTFunctionCall) *SuggestedFix {
 		return nil
 	}
 	return &SuggestedFix{
-		Title: "Add IGNORE NULLS, which drops the NULLs and so leaves the array shorter",
-		Edits: []lsp.TextEdit{{Range: r, NewText: " IGNORE NULLS"}},
+		Title:         "Add IGNORE NULLS, which drops the NULLs and so leaves the array shorter",
+		Edits:         []lsp.TextEdit{{Range: r, NewText: " IGNORE NULLS"}},
+		ChangesResult: true,
 	}
 }
 
