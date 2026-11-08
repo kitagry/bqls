@@ -39,13 +39,14 @@ var arrayIndexFunctions = map[string]bool{
 // when exact duplicates are removed with `PARTITION BY TO_JSON_STRING(t)`,
 // make any order give the same result and are not reported either.
 func runMissingOrderBy(pass *Pass) {
-	for _, output := range pass.File.RNode {
-		stmt, err := output.ResolvedStatement()
-		if err != nil || stmt == nil {
+	flows := pass.columnFlows()
+	for i, output := range pass.File.RNode {
+		flow := flows[i]
+		if flow == nil {
 			continue
 		}
-		flow, ok := analyzeColumnFlow(stmt)
-		if !ok {
+		stmt, err := output.ResolvedStatement()
+		if err != nil {
 			continue
 		}
 		indexed := indexedArrays(stmt)

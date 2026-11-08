@@ -42,7 +42,7 @@ func (o *SelectStarOptions) Validate() error {
 // usually copy whole rows on purpose.
 func runSelectStar(pass *Pass) {
 	opts := pass.Options.(*SelectStarOptions)
-	reads := consumedTableReads(pass.File)
+	reads := consumedTableReads(pass)
 	if len(reads) == 0 {
 		return
 	}
@@ -115,18 +115,19 @@ type tableRead struct {
 
 // consumedTableReads returns the table scans of query statements, keyed by
 // the location of their table path.
-func consumedTableReads(f file.ParsedFile) map[offsets]tableRead {
+func consumedTableReads(pass *Pass) map[offsets]tableRead {
 	reads := make(map[offsets]tableRead)
-	for _, output := range f.RNode {
+	flows := pass.columnFlows()
+	for i, output := range pass.File.RNode {
+		flow := flows[i]
+		if flow == nil {
+			continue
+		}
 		stmt, err := output.ResolvedStatement()
-		if err != nil || stmt == nil {
+		if err != nil {
 			continue
 		}
 		if _, ok := stmt.(*googlesql.ResolvedQueryStmt); !ok {
-			continue
-		}
-		flow, ok := analyzeColumnFlow(stmt)
-		if !ok {
 			continue
 		}
 		for _, scan := range flow.scans {
