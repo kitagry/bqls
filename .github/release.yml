@@ -1,0 +1,5 @@
+changelog:
+  exclude:
+    labels:
+      # Release pull requests opened by tagpr.
+      - tagpr
