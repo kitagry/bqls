@@ -238,6 +238,13 @@ func TestArrayNullElement(t *testing.T) {
 					t.Errorf("unexpected diagnostic metadata: %+v", d)
 				}
 				gotReports = append(gotReports, report{text: textInRange(tt.src, d), message: d.Message})
+				// Dropping the NULLs shortens the array, so applying it is
+				// the user's call.
+				for _, fix := range d.SuggestedFixes {
+					if !fix.ChangesResult {
+						t.Errorf("fix %q has ChangesResult = false, want true", fix.Title)
+					}
+				}
 			}
 			if fmt.Sprint(gotReports) != fmt.Sprint(tt.want) {
 				t.Errorf("reports = %+v, want %+v", gotReports, tt.want)
