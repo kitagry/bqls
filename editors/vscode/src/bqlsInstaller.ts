@@ -1,5 +1,4 @@
 import {
-	BQLS_VERSION,
 	assetFileName,
 	checksumFileName,
 	findSha256,
@@ -32,8 +31,11 @@ function manualInstallFallback(reason: string): ResolveBqlsCommandResult {
 	};
 }
 
+// bqlsVersion is the extension's own version: the extension and bqls are
+// released in lockstep from the same v* tag, so it names the matching release.
 export async function resolveBqlsCommand(
 	configuredPath: string,
+	bqlsVersion: string,
 	storageDir: string,
 	platform: string,
 	arch: string,
@@ -54,17 +56,17 @@ export async function resolveBqlsCommand(
 		);
 	}
 
-	const installDir = `${storageDir}/bqls-${BQLS_VERSION}`;
+	const installDir = `${storageDir}/bqls-${bqlsVersion}`;
 	const cachedCommand = `${installDir}/bqls`;
 	if (await deps.fileExists(cachedCommand)) {
 		return { command: cachedCommand };
 	}
 
-	const fileName = assetFileName(BQLS_VERSION, target);
+	const fileName = assetFileName(bqlsVersion, target);
 
 	try {
 		const checksumText = await deps.downloadText(
-			releaseAssetUrl(BQLS_VERSION, checksumFileName(BQLS_VERSION)),
+			releaseAssetUrl(bqlsVersion, checksumFileName(bqlsVersion)),
 		);
 		const expectedSha = findSha256(checksumText, fileName);
 		if (!expectedSha) {
@@ -74,7 +76,7 @@ export async function resolveBqlsCommand(
 		await deps.mkdir(installDir);
 		const archivePath = `${installDir}/${fileName}`;
 		await deps.downloadFile(
-			releaseAssetUrl(BQLS_VERSION, fileName),
+			releaseAssetUrl(bqlsVersion, fileName),
 			archivePath,
 		);
 

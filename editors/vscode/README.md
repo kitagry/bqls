@@ -24,7 +24,9 @@ go install github.com/kitagry/bqls@latest
 
 ### bqls version
 
-The automatic download installs bqls **v0.8.6**. A `bqls` found on your
+The extension and bqls are released together with the same version, and the
+automatic download installs the bqls release that matches the extension's
+version (e.g. extension v0.8.6 installs bqls v0.8.6). A `bqls` found on your
 `PATH` (or set via `bqls.path`) takes precedence and is used as-is, so make
 sure it is recent enough for the features you use:
 
