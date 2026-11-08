@@ -1,7 +1,6 @@
 package lint_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/kitagry/bqls/langserver/internal/lint"
@@ -22,7 +21,7 @@ func TestRun_SharesColumnFlowAcrossAnalyzers(t *testing.T) {
 			},
 		}
 	}
-	lint.Run(context.Background(), parsed, lint.Config{}, lint.Env{}, record("first"), record("second"))
+	lint.Run(t.Context(), parsed, lint.Config{}, lint.Env{}, record("first"), record("second"))
 
 	if len(got) != 2 {
 		t.Fatalf("analyzers ran %d times, want 2", len(got))
