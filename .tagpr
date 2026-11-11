@@ -1,0 +1,21 @@
+# tagpr configuration (git config format). See https://github.com/Songmu/tagpr
+#
+#   tagpr.versionFile
+#       The VS Code extension is released in lockstep with bqls, so its
+#       package.json version is the release version. tagpr proposes a patch
+#       bump; label the release pull request tagpr:minor or tagpr:major, or edit
+#       the version in it, to release a different version.
+#
+#   tagpr.postVersionCommand
+#       Keeps the version in package-lock.json in sync with package.json.
+#
+#   tagpr.release / tagpr.changelog
+#       goreleaser creates the GitHub Release and its notes, and there is no
+#       CHANGELOG.md, so tagpr only creates the release pull request and the tag.
+[tagpr]
+	releaseBranch = main
+	versionFile = editors/vscode/package.json
+	postVersionCommand = npm --prefix editors/vscode install --package-lock-only --ignore-scripts --no-audit --no-fund
+	vPrefix = true
+	release = false
+	changelog = false

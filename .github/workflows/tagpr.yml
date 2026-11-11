@@ -1,0 +1,51 @@
+name: tagpr
+
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+# Keep runs from racing on the release pull request and the tag.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  tagpr:
+    name: Release pull request and tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tagpr.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # For postVersionCommand in .tagpr, which updates package-lock.json.
+      - name: setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - id: tagpr
+        uses: Songmu/tagpr@047aec4b6c0ce166f52958b5a97f5a3d927fd65b # v1.22.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # A tag pushed with GITHUB_TOKEN does not trigger release.yaml's push event,
+  # so run the release from here.
+  release:
+    needs: tagpr
+    if: needs.tagpr.outputs.tag != ''
+    permissions:
+      contents: write
+      pull-requests: read
+      issues: read
+    uses: ./.github/workflows/release.yaml
+    with:
+      tag: ${{ needs.tagpr.outputs.tag }}
+    secrets: inherit
