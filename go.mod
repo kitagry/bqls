@@ -13,7 +13,7 @@ require (
 
 require (
 	cloud.google.com/go/auth v0.24.2
-	cloud.google.com/go/bigquery v1.86.1
+	cloud.google.com/go/bigquery v1.86.2
 	github.com/goccy/go-googlesql v0.4.0
 	github.com/golang/mock v1.6.0
 	github.com/sirupsen/logrus v1.9.3
