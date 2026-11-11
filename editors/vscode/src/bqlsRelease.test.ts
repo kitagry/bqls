@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-	BQLS_VERSION,
 	assetFileName,
 	checksumFileName,
 	findSha256,
@@ -85,11 +84,5 @@ describe("findSha256", () => {
 		expect(
 			findSha256(checksums, "bqls_0.6.0_windows_amd64.zip"),
 		).toBeUndefined();
-	});
-});
-
-describe("BQLS_VERSION", () => {
-	it("is a non-empty version string", () => {
-		expect(BQLS_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
 	});
 });

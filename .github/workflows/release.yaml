@@ -2,12 +2,23 @@ name: Release
 
 on:
   push:
-    tags-ignore: ["vscode-v*"]
+    tags: ["v*"]
+  # Tags created by a workflow with GITHUB_TOKEN do not trigger the push
+  # event above, so a workflow that creates a release tag calls this directly.
+  workflow_call:
+    inputs:
+      tag:
+        description: The release tag, e.g. v1.2.3
+        required: true
+        type: string
 
 permissions:
   contents: write
   pull-requests: read
   issues: read
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   release:
@@ -16,6 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.TAG }}
           fetch-depth: 0
 
       - name: setup Go
@@ -31,3 +43,51 @@ jobs:
           args: release --clean --parallelism 1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ env.TAG }}
+
+  # The extension downloads the bqls release with its own version, so it is
+  # published only after that release has its assets.
+  vscode:
+    name: Publish VS Code extension
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+
+      - name: setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      - name: install dependencies
+        run: npm ci
+
+      # The tag is the source of truth even when package.json was not bumped
+      # (e.g. a tag pushed by hand).
+      - name: set version from tag
+        run: npm version "${TAG#v}" --no-git-tag-version --allow-same-version
+
+      - name: lint
+        run: npm run lint
+
+      - name: type check
+        run: npm run compile
+
+      - name: test
+        run: npm run test
+
+      - name: publish
+        run: npx vsce publish
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}

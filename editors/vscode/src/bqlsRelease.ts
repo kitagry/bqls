@@ -1,8 +1,3 @@
-// Pinned bqls version this extension has been tested against. The extension
-// (vscode-v*) and bqls (v*) tags are versioned independently, so this must be
-// bumped by hand whenever the extension needs to rely on a newer bqls release.
-export const BQLS_VERSION = "0.8.6";
-
 export interface PlatformTarget {
 	os: "darwin" | "linux";
 	arch: "amd64" | "arm64";

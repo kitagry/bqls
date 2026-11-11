@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import { type InstallerDeps, resolveBqlsCommand } from "./bqlsInstaller";
-import { BQLS_VERSION } from "./bqlsRelease";
 
 function makeDeps(overrides: Partial<InstallerDeps> = {}): InstallerDeps {
 	return {
@@ -17,6 +16,8 @@ function makeDeps(overrides: Partial<InstallerDeps> = {}): InstallerDeps {
 }
 
 const STORAGE_DIR = "/storage";
+// Deliberately unlike any real release, so a hard-coded version cannot pass.
+const VERSION = "9.8.7";
 
 describe("resolveBqlsCommand", () => {
 	it("trusts an explicitly configured path without touching deps", async () => {
@@ -24,6 +25,7 @@ describe("resolveBqlsCommand", () => {
 
 		const result = await resolveBqlsCommand(
 			"/custom/bqls",
+			VERSION,
 			STORAGE_DIR,
 			"darwin",
 			"arm64",
@@ -39,6 +41,7 @@ describe("resolveBqlsCommand", () => {
 
 		const result = await resolveBqlsCommand(
 			"",
+			VERSION,
 			STORAGE_DIR,
 			"darwin",
 			"arm64",
@@ -54,6 +57,7 @@ describe("resolveBqlsCommand", () => {
 
 		const result = await resolveBqlsCommand(
 			"bqls",
+			VERSION,
 			STORAGE_DIR,
 			"darwin",
 			"arm64",
@@ -69,6 +73,7 @@ describe("resolveBqlsCommand", () => {
 
 		const result = await resolveBqlsCommand(
 			"bqls",
+			VERSION,
 			STORAGE_DIR,
 			"win32",
 			"x64",
@@ -85,6 +90,7 @@ describe("resolveBqlsCommand", () => {
 
 		const result = await resolveBqlsCommand(
 			"bqls",
+			VERSION,
 			STORAGE_DIR,
 			"darwin",
 			"arm64",
@@ -92,7 +98,7 @@ describe("resolveBqlsCommand", () => {
 		);
 
 		expect(result).toEqual({
-			command: `${STORAGE_DIR}/bqls-${BQLS_VERSION}/bqls`,
+			command: `${STORAGE_DIR}/bqls-${VERSION}/bqls`,
 		});
 		expect(deps.downloadFile).not.toHaveBeenCalled();
 	});
@@ -102,12 +108,13 @@ describe("resolveBqlsCommand", () => {
 		const deps = makeDeps({
 			downloadText: vi
 				.fn()
-				.mockResolvedValue(`${sha}  bqls_${BQLS_VERSION}_darwin_arm64.tar.gz`),
+				.mockResolvedValue(`${sha}  bqls_${VERSION}_darwin_arm64.tar.gz`),
 			sha256File: vi.fn().mockResolvedValue(sha),
 		});
 
 		const result = await resolveBqlsCommand(
 			"bqls",
+			VERSION,
 			STORAGE_DIR,
 			"darwin",
 			"arm64",
@@ -115,16 +122,19 @@ describe("resolveBqlsCommand", () => {
 		);
 
 		expect(deps.mkdir).toHaveBeenCalled();
+		expect(deps.downloadText).toHaveBeenCalledWith(
+			`https://github.com/kitagry/bqls/releases/download/v${VERSION}/bqls_${VERSION}_checksums.txt`,
+		);
 		expect(deps.downloadFile).toHaveBeenCalledWith(
-			`https://github.com/kitagry/bqls/releases/download/v${BQLS_VERSION}/bqls_${BQLS_VERSION}_darwin_arm64.tar.gz`,
+			`https://github.com/kitagry/bqls/releases/download/v${VERSION}/bqls_${VERSION}_darwin_arm64.tar.gz`,
 			expect.any(String),
 		);
 		expect(deps.extractTarGz).toHaveBeenCalled();
 		expect(deps.chmodExecutable).toHaveBeenCalledWith(
-			`${STORAGE_DIR}/bqls-${BQLS_VERSION}/bqls`,
+			`${STORAGE_DIR}/bqls-${VERSION}/bqls`,
 		);
 		expect(result).toEqual({
-			command: `${STORAGE_DIR}/bqls-${BQLS_VERSION}/bqls`,
+			command: `${STORAGE_DIR}/bqls-${VERSION}/bqls`,
 		});
 	});
 
@@ -133,13 +143,14 @@ describe("resolveBqlsCommand", () => {
 			downloadText: vi
 				.fn()
 				.mockResolvedValue(
-					`${"a".repeat(64)}  bqls_${BQLS_VERSION}_darwin_arm64.tar.gz`,
+					`${"a".repeat(64)}  bqls_${VERSION}_darwin_arm64.tar.gz`,
 				),
 			sha256File: vi.fn().mockResolvedValue("b".repeat(64)),
 		});
 
 		const result = await resolveBqlsCommand(
 			"bqls",
+			VERSION,
 			STORAGE_DIR,
 			"darwin",
 			"arm64",
@@ -156,13 +167,14 @@ describe("resolveBqlsCommand", () => {
 			downloadText: vi
 				.fn()
 				.mockResolvedValue(
-					`${"a".repeat(64)}  bqls_${BQLS_VERSION}_darwin_arm64.tar.gz`,
+					`${"a".repeat(64)}  bqls_${VERSION}_darwin_arm64.tar.gz`,
 				),
 			downloadFile: vi.fn().mockRejectedValue(new Error("network error")),
 		});
 
 		const result = await resolveBqlsCommand(
 			"bqls",
+			VERSION,
 			STORAGE_DIR,
 			"darwin",
 			"arm64",

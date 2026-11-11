@@ -654,6 +654,7 @@ export async function activate(
 	const configuredPath = config.get<string>("path") ?? "bqls";
 	const { command, error } = await resolveBqlsCommand(
 		configuredPath,
+		context.extension.packageJSON.version,
 		context.globalStorageUri.fsPath,
 		process.platform,
 		process.arch,
