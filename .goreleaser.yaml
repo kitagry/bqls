@@ -39,4 +39,7 @@ checksum:
   algorithm: sha256
 
 changelog:
-  use: github
+  # GitHub's generated release notes ("What's Changed" with pull requests),
+  # which honor .github/release.yml. github-native does not support sort,
+  # filters, groups, abbrev, or divider.
+  use: github-native
