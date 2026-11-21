@@ -89,7 +89,10 @@ func tokenize(sql string) []token {
 			quote := sql[i]
 			i++
 			for i < n && sql[i] != quote {
-				if sql[i] == '\\' {
+				// The text may end right after the backslash while the string is
+				// still open (e.g. completion inside a literal), so the escape
+				// must not skip past the end.
+				if sql[i] == '\\' && i+1 < n {
 					i++
 				}
 				i++
