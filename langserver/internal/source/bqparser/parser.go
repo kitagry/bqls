@@ -65,41 +65,15 @@ func tokenize(sql string) []token {
 			continue
 		}
 
-		// line comment
-		if i+1 < n && sql[i] == '-' && sql[i+1] == '-' {
-			for i < n && sql[i] != '\n' {
-				i++
-			}
-			continue
-		}
-
-		// block comment
-		if i+1 < n && sql[i] == '/' && sql[i+1] == '*' {
-			i += 2
-			for i+1 < n && !(sql[i] == '*' && sql[i+1] == '/') {
-				i++
-			}
-			i += 2
+		if end := skipComment(sql, i); end > i {
+			i = end
 			continue
 		}
 
 		// quoted strings / backtick identifiers — treat as opaque words
 		if sql[i] == '\'' || sql[i] == '"' || sql[i] == '`' {
 			start := i
-			quote := sql[i]
-			i++
-			for i < n && sql[i] != quote {
-				// The text may end right after the backslash while the string is
-				// still open (e.g. completion inside a literal), so the escape
-				// must not skip past the end.
-				if sql[i] == '\\' && i+1 < n {
-					i++
-				}
-				i++
-			}
-			if i < n {
-				i++
-			}
+			i = skipQuoted(sql, i)
 			tokens = append(tokens, token{kind: tokWord, text: sql[start:i], start: uint(start), end: uint(i)})
 			continue
 		}
@@ -125,7 +99,7 @@ func tokenize(sql string) []token {
 			i++
 		default:
 			start := i
-			for i < n && !isSpace(sql[i]) && sql[i] != '(' && sql[i] != ')' && sql[i] != ',' && sql[i] != ';' && sql[i] != '\'' && sql[i] != '"' && sql[i] != '`' && !strings.HasPrefix(sql[i:], "|>") {
+			for i < n && !endsWord(sql, i) {
 				i++
 			}
 			if i > start {
@@ -135,6 +109,56 @@ func tokenize(sql string) []token {
 	}
 
 	return tokens
+}
+
+// endsWord reports whether a bare word cannot extend over sql[i].
+func endsWord(sql string, i int) bool {
+	switch sql[i] {
+	case '(', ')', ',', ';', '\'', '"', '`':
+		return true
+	}
+	return isSpace(sql[i]) || strings.HasPrefix(sql[i:], "|>") || skipComment(sql, i) != i
+}
+
+// skipComment returns the offset after the comment starting at sql[start],
+// or start when no comment starts there.
+func skipComment(sql string, start int) int {
+	switch {
+	case strings.HasPrefix(sql[start:], "--"), strings.HasPrefix(sql[start:], "#"):
+		if end := strings.IndexByte(sql[start:], '\n'); end != -1 {
+			return start + end + 1
+		}
+		return len(sql)
+	case strings.HasPrefix(sql[start:], "/*"):
+		if end := strings.Index(sql[start+len("/*"):], "*/"); end != -1 {
+			return start + len("/*") + end + len("*/")
+		}
+		return len(sql)
+	}
+	return start
+}
+
+// skipQuoted returns the offset after the string or backtick identifier
+// starting at sql[start]. An unterminated one runs to the end of sql.
+func skipQuoted(sql string, start int) int {
+	quote := sql[start : start+1]
+	if quote != "`" && strings.HasPrefix(sql[start:], strings.Repeat(quote, 3)) {
+		quote = strings.Repeat(quote, 3)
+	}
+	i := start + len(quote)
+	for i < len(sql) {
+		if sql[i] == '\\' {
+			// The text may end right after the backslash while the string is
+			// still open (e.g. completion inside a literal).
+			i = min(i+2, len(sql))
+			continue
+		}
+		if strings.HasPrefix(sql[i:], quote) {
+			return i + len(quote)
+		}
+		i++
+	}
+	return len(sql)
 }
 
 func isSpace(b byte) bool {
