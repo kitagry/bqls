@@ -14,6 +14,17 @@ func TestParse_Empty(t *testing.T) {
 	}
 }
 
+func TestParse_TrailingBackslashInUnterminatedString(t *testing.T) {
+	sql := `SELECT "a\`
+	root := bqparser.Parse(sql)
+	if root.ChildCount() == 0 {
+		t.Fatal("expected at least 1 child")
+	}
+	if got := root.NamedChild(0).EndByte(); got != uint(len(sql)) {
+		t.Errorf("select_statement end: got %d, want %d", got, len(sql))
+	}
+}
+
 func TestParse_SimpleSelect(t *testing.T) {
 	root := bqparser.Parse("SELECT 1")
 	if root.ChildCount() == 0 {
@@ -244,6 +255,19 @@ func TestLastPipeOperatorEnd(t *testing.T) {
 		},
 		"pipe operator in a comment": {
 			src:    "SELECT 1 -- |>\n",
+			wantOk: false,
+		},
+		"backslash at the end of an unterminated double-quoted string": {
+			src:    `SELECT "a\`,
+			wantOk: false,
+		},
+		"backslash at the end of an unterminated single-quoted string": {
+			src:    `FROM t |> SELECT 'a\`,
+			want:   9,
+			wantOk: true,
+		},
+		"backslash at the end of an unterminated backtick identifier": {
+			src:    "SELECT * FROM `a\\",
 			wantOk: false,
 		},
 	}
