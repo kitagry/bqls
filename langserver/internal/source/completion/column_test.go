@@ -2228,6 +2228,66 @@ func TestProject_CompleteColumns(t *testing.T) {
 				},
 			},
 		},
+		"Select columns while typing a column before the next one without a comma": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "WITH raw_orders AS (\n" +
+					"    SELECT 1 AS customer_id, 'x' AS product_name, DATE '2024-01-01' AS order_date\n" +
+					"),\n" +
+					"orders AS (\n" +
+					"    SELECT\n" +
+					"        customer_id,\n" +
+					"        pro|\n" +
+					"        product_name,\n" +
+					"        order_date\n" +
+					"    FROM raw_orders\n" +
+					")\n" +
+					"SELECT\n" +
+					"    o.customer_id,\n" +
+					"    COALESCE(o.product_name, 'n/a') AS product,\n" +
+					"    STRING_AGG(o.product_name, ', ') AS products\n" +
+					"FROM orders AS o\n" +
+					"GROUP BY ALL",
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:          lsp.CIKField,
+					NewText:       "product_name",
+					Detail:        "STRING",
+					Documentation: lsp.MarkupContent{Kind: lsp.MKPlainText, Value: "STRING"},
+					TypedPrefix:   "pro",
+				},
+			},
+		},
+		"Select columns while typing a column before a function call without a comma": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "WITH raw_orders AS (\n" +
+					"    SELECT 1 AS customer_id, 'x' AS product_name, DATE '2024-01-01' AS order_date\n" +
+					"),\n" +
+					"orders AS (\n" +
+					"    SELECT\n" +
+					"        customer_id,\n" +
+					"        product_name,\n" +
+					"        order_date\n" +
+					"    FROM raw_orders\n" +
+					")\n" +
+					"SELECT\n" +
+					"    o.customer_id,\n" +
+					"    cu|\n" +
+					"    COALESCE(o.product_name, 'n/a') AS product,\n" +
+					"    STRING_AGG(o.product_name, ', ') AS products\n" +
+					"FROM orders AS o\n" +
+					"GROUP BY ALL",
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:          lsp.CIKField,
+					NewText:       "customer_id",
+					Detail:        "INT64",
+					Documentation: lsp.MarkupContent{Kind: lsp.MKPlainText, Value: "INT64"},
+					TypedPrefix:   "cu",
+				},
+			},
+		},
 	}
 
 	for n, tt := range tests {

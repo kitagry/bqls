@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 
 	bq "cloud.google.com/go/bigquery"
@@ -702,6 +703,78 @@ func fixOnlyWithClauseSyntaxError(src string, parsedErr Error) (fixedSrc string,
 			edits:  []sourceEdit{{start: errOffset, newLen: len(" SELECT 1 ")}},
 		},
 	}
+}
+
+// fixMissingSelectListComma inserts the comma that the user has not typed yet after a
+// word in front of an existing select list item on the next line.
+//
+//	SELECT id,
+//	  na
+//	  COALESCE(name, '')
+//
+// becomes
+//
+//	SELECT id,
+//	  na,
+//	  COALESCE(name, '')
+func fixMissingSelectListComma(src string, parsedErr Error) (fixedSrc string, fixOffsets []FixOffset) {
+	errOffset, ok := errorByteOffset(src, parsedErr.Position)
+	if !ok {
+		return src, nil
+	}
+	start, end, ok := bqparser.SelectListItemOnNextLine(src, uint(errOffset))
+	if !ok || isReservedKeyword(src[start:end]) {
+		return src, nil
+	}
+	insertAt := int(end)
+	return src[:insertAt] + "," + src[insertAt:], []FixOffset{{
+		Offset: insertAt,
+		Length: len(","),
+		edits:  []sourceEdit{{start: insertAt, newLen: len(",")}},
+	}}
+}
+
+// aliasOnNextLine reports whether the expression spanning [start, end) is a whole select
+// column whose alias, written without AS, is on a following line.
+func aliasOnNextLine(src string, node googlesql.ASTNode, start, end int) bool {
+	col, ok := SearchAstNode[*googlesql.ASTSelectColumn](node, start)
+	if !ok {
+		return false
+	}
+	expr, err := col.Expression()
+	if err != nil || expr == nil || locStart(expr) != start || locEnd(expr) != end {
+		return false
+	}
+	alias, err := col.Alias()
+	if err != nil || alias == nil {
+		return false
+	}
+	aliasStart := locStart(alias)
+	if aliasStart < end || aliasStart > len(src) {
+		return false
+	}
+	// An alias written with AS is meant as one, and dropping it would leave AS
+	// at the start of the next column.
+	if id, err := alias.Identifier(); err != nil || id == nil || locStart(id) != aliasStart {
+		return false
+	}
+	gap := src[end:aliasStart]
+	return strings.TrimSpace(gap) == "" && strings.Contains(gap, "\n")
+}
+
+// The analyzer's options, because some keywords such as QUALIFY are reserved only
+// with the language features enabled.
+var reservedKeywordOptions = sync.OnceValues(newLanguageOptions)
+
+// isReservedKeyword reports false when the keywords cannot be looked up, so that the
+// caller treats word as an identifier as before.
+func isReservedKeyword(word string) bool {
+	opts, err := reservedKeywordOptions()
+	if err != nil {
+		return false
+	}
+	reserved, err := opts.IsReservedKeyword(strings.ToUpper(word))
+	return err == nil && reserved
 }
 
 // pipeOperatorKeywords are the words that can follow "|>" before the operator

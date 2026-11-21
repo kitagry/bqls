@@ -1,6 +1,11 @@
 package bqparser
 
-import "strings"
+import (
+	"slices"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
 
 // Node represents an AST node for BigQuery SQL.
 type Node struct {
@@ -447,6 +452,75 @@ func FromClauseHasJoinWithoutOn(fromClause *Node, src string) bool {
 		}
 	}
 	return joinCount > onCount
+}
+
+// SelectListItemOnNextLine reports the word before the select list item that the token
+// at offset belongs to, when the item starts a line and that word ends the line before.
+// Such a word is likely being typed in front of an existing item, still without its comma.
+func SelectListItemOnNextLine(src string, offset uint) (wordStart, wordEnd uint, ok bool) {
+	tokens := tokenize(src)
+	i := slices.IndexFunc(tokens, func(t token) bool { return offset < t.end })
+	if i <= 0 {
+		return 0, 0, false
+	}
+	// The error is reported after the start of the item when the item began with a
+	// word taken as an alias, e.g. at "(" of `cu\n  COALESCE(`. An error further into
+	// the line is about something other than the missing comma.
+	startsLine := func(i int) bool { return strings.Contains(src[tokens[i-1].end:tokens[i].start], "\n") }
+	if !startsLine(i) {
+		i--
+		if i == 0 || tokens[i].kind != tokWord || !startsLine(i) {
+			return 0, 0, false
+		}
+	}
+	word := tokens[i-1]
+	if word.kind != tokWord || !isIdentifierLike(word.text) || !insideSelectList(tokens[:i]) {
+		return 0, 0, false
+	}
+	return word.start, word.end, true
+}
+
+// isIdentifierLike reports whether text may be a (partially typed) column name or path.
+func isIdentifierLike(text string) bool {
+	first, _ := utf8.DecodeRuneInString(text)
+	if text == "" || !(first == '_' || first == '`' || unicode.IsLetter(first)) {
+		return false
+	}
+	return !strings.ContainsFunc(text, func(r rune) bool {
+		return !(r == '_' || r == '.' || r == '`' || unicode.IsLetter(r) || unicode.IsDigit(r))
+	})
+}
+
+// insideSelectList reports whether the last of tokens is in a select list, that is,
+// SELECT comes before any other clause at the same parenthesis depth.
+func insideSelectList(tokens []token) bool {
+	depth := 0
+	for i := len(tokens) - 1; i >= 0; i-- {
+		switch t := tokens[i]; t.kind {
+		case tokRParen:
+			depth++
+		case tokLParen:
+			if depth == 0 {
+				return false
+			}
+			depth--
+		case tokSemicolon, tokPipe:
+			if depth == 0 {
+				return false
+			}
+		case tokWord:
+			if depth > 0 {
+				continue
+			}
+			switch strings.ToUpper(t.text) {
+			case "SELECT":
+				return true
+			case "FROM", "WHERE", "GROUP", "HAVING", "QUALIFY", "WINDOW", "ORDER", "LIMIT", "ON", "USING", "JOIN", "SET", "VALUES":
+				return false
+			}
+		}
+	}
+	return false
 }
 
 func trimEnd(src string, end uint) uint {

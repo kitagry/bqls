@@ -1,6 +1,7 @@
 package bqparser_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -291,4 +292,59 @@ func namedChildKinds(node *bqparser.Node) map[string]bool {
 		result[node.NamedChild(i).Kind()] = true
 	}
 	return result
+}
+
+func TestSelectListItemOnNextLine(t *testing.T) {
+	tests := map[string]struct {
+		src    string
+		offset string // the error is reported at the first occurrence of this text
+
+		wantWord string
+		wantOK   bool
+	}{
+		"function call on the next line": {
+			src:      "SELECT id,\n  cu\n  COALESCE(name, '')",
+			offset:   "(",
+			wantWord: "cu",
+			wantOK:   true,
+		},
+		"pipe select": {
+			src:      "FROM t |> SELECT id,\n  cu\n  'x'",
+			offset:   "'x'",
+			wantWord: "cu",
+			wantOK:   true,
+		},
+		"same line": {
+			src:    "SELECT id, cu COALESCE(name, '')",
+			offset: "(",
+		},
+		"operator before the item": {
+			src:    "SELECT id +\n  COALESCE(name, '')",
+			offset: "(",
+		},
+		"from clause of a subquery": {
+			src:    "SELECT * FROM (SELECT 1 FROM t\n  x\n  COALESCE(name, ''))",
+			offset: "(name",
+		},
+		"error further into the line": {
+			src:    "SELECT id\n  + b c d",
+			offset: "d",
+		},
+		"inside a function call": {
+			src:    "SELECT CONCAT(a\n  b(1))",
+			offset: "(1",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			start, end, ok := bqparser.SelectListItemOnNextLine(tt.src, uint(strings.Index(tt.src, tt.offset)))
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if ok && tt.src[start:end] != tt.wantWord {
+				t.Errorf("word = %q, want %q", tt.src[start:end], tt.wantWord)
+			}
+		})
+	}
 }

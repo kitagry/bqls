@@ -3693,3 +3693,110 @@ func TestAnalyzer_ParseFileReportsUnfinishedFixUps(t *testing.T) {
 		t.Errorf("got %+v, want the unknown column error on line 2", got.Errors[1])
 	}
 }
+
+func TestAnalyzer_MissingCommaInSelectList(t *testing.T) {
+	const cte = "WITH t AS (SELECT DATE '2024-01-01' AS d, 'x' AS s, 1 AS i)\n"
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+	}{
+		"unknown name followed by a function call": {
+			file:             cte + "SELECT i,\n  cu\n  COALESCE(s, 'n/a') AS p\nFROM t",
+			expectedFixedSrc: cte + "SELECT i,\n  1,\n  COALESCE(s, 'n/a') AS p\nFROM t",
+		},
+		"unknown name followed by a path": {
+			file:             cte + "SELECT i,\n  cu\n  t.s,\n  d\nFROM t",
+			expectedFixedSrc: cte + "SELECT i,\n  1,\n  t.s,\n  d\nFROM t",
+		},
+		"unknown name followed by a string literal": {
+			file:             cte + "SELECT i,\n  cu\n  'x' AS lit\nFROM t",
+			expectedFixedSrc: cte + "SELECT i,\n  1,\n  'x' AS lit\nFROM t",
+		},
+		"unknown name followed by CASE": {
+			file:             cte + "SELECT i,\n  cu\n  CASE WHEN i = 1 THEN 1 END AS c\nFROM t",
+			expectedFixedSrc: cte + "SELECT i,\n  1,\n  CASE WHEN i = 1 THEN 1 END AS c\nFROM t",
+		},
+		"unknown name followed by a binary expression": {
+			file:             cte + "SELECT i,\n  cu\n  i + 1 AS c\nFROM t",
+			expectedFixedSrc: cte + "SELECT i,\n  1,\n  i + 1 AS c\nFROM t",
+		},
+		"unknown name with an alias followed by a function call": {
+			file:             cte + "SELECT i,\n  cu AS x\n  COALESCE(s, 'n/a') AS p\nFROM t",
+			expectedFixedSrc: cte + "SELECT i,\n  1 AS x,\n  COALESCE(s, 'n/a') AS p\nFROM t",
+		},
+		"in a subquery": {
+			file:             cte + "SELECT * FROM (SELECT i,\n  cu\n  COALESCE(s, 'n/a') AS p\nFROM t)",
+			expectedFixedSrc: cte + "SELECT * FROM (SELECT i,\n  1,\n  COALESCE(s, 'n/a') AS p\nFROM t)",
+		},
+		"unknown name read as the alias of the next column": {
+			file: "WITH r AS (SELECT 1 AS customer_id, 'x' AS product_name)\n" +
+				"SELECT COALESCE(o.product_name, 'n/a') FROM (\n" +
+				"  SELECT\n    customer_id,\n    pro\n    product_name\n  FROM r\n) AS o",
+			expectedFixedSrc: "WITH r AS (SELECT 1 AS customer_id, 'x' AS product_name)\n" +
+				"SELECT COALESCE(o.product_name, 'n/a') FROM (\n" +
+				"  SELECT\n    customer_id,\n    1,\n    product_name\n  FROM r\n) AS o",
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			if len(got.RNode) == 0 {
+				t.Errorf("failed to analyze: %+v", got.Errors)
+			}
+		})
+	}
+}
+
+func TestAnalyzer_MissingCommaNeedsNewline(t *testing.T) {
+	const cte = "WITH t AS (SELECT DATE '2024-01-01' AS d, 'x' AS s, 1 AS i)\n"
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+	}{
+		"next column on the same line": {
+			file:             cte + "SELECT i, cu COALESCE(s, 'n/a') AS p FROM t",
+			expectedFixedSrc: cte + "SELECT i, cu COALESCE(s, 'n/a') AS p FROM t",
+		},
+		"implicit alias on the same line": {
+			file:             cte + "SELECT cu s FROM t",
+			expectedFixedSrc: cte + "SELECT 1 s FROM t",
+		},
+		"alias with AS on the next line": {
+			file:             cte + "SELECT\n  cu\n    AS x\nFROM t",
+			expectedFixedSrc: cte + "SELECT\n  1\n    AS x\nFROM t",
+		},
+		"AS at the end of the previous line": {
+			file:             cte + "SELECT i AS\n  COALESCE(s, 'n/a') AS p FROM t",
+			expectedFixedSrc: cte + "SELECT i AS\n  COALESCE(s, 'n/a') AS p FROM t",
+		},
+		"outside of the select list": {
+			file:             cte + "SELECT i FROM t\n  x\n  COALESCE(s, 'n/a')",
+			expectedFixedSrc: cte + "SELECT i FROM t\n  x\n  COALESCE(s, 'n/a')",
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+		})
+	}
+}
