@@ -194,6 +194,14 @@ func TestParse_StatementEnd(t *testing.T) {
 			sql:  "DELETE FROM t WHERE true",
 			want: nil,
 		},
+		"semicolon in a hash comment": {
+			sql:  "SELECT 1 # ;\nFROM t",
+			want: []string{"SELECT 1 # ;\nFROM t"},
+		},
+		"semicolon in a triple-quoted string": {
+			sql:  "SELECT '''a';''' FROM t",
+			want: []string{"SELECT '''a';''' FROM t"},
+		},
 	}
 
 	for name, tt := range tests {
@@ -206,6 +214,44 @@ func TestParse_StatementEnd(t *testing.T) {
 			}
 			if diff := cmp.Diff(tt.want, got); diff != "" {
 				t.Errorf("select_statement ranges mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestFromClauseHasJoinWithoutOn(t *testing.T) {
+	tests := map[string]struct {
+		sql  string
+		want bool
+	}{
+		"JOIN without ON": {
+			sql:  "SELECT * FROM a JOIN b",
+			want: true,
+		},
+		"JOIN in a hash comment": {
+			sql:  "SELECT * FROM a # JOIN b\n",
+			want: false,
+		},
+		"JOIN in a hash comment right after a word": {
+			sql:  "SELECT * FROM a# JOIN b\n",
+			want: false,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			stmt := bqparser.Parse(tt.sql).NamedChild(0)
+			var fromClause *bqparser.Node
+			for i := uint(0); i < stmt.NamedChildCount(); i++ {
+				if child := stmt.NamedChild(i); child.Kind() == "from_clause" {
+					fromClause = child
+				}
+			}
+			if fromClause == nil {
+				t.Fatal("from_clause not found")
+			}
+			if got := bqparser.FromClauseHasJoinWithoutOn(fromClause, tt.sql); got != tt.want {
+				t.Errorf("FromClauseHasJoinWithoutOn() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -269,6 +315,79 @@ func TestLastPipeOperatorEnd(t *testing.T) {
 		"backslash at the end of an unterminated backtick identifier": {
 			src:    "SELECT * FROM `a\\",
 			wantOk: false,
+		},
+		"pipe operator in a hash comment": {
+			src:    "SELECT 1 # |>\n",
+			wantOk: false,
+		},
+		"pipe operator in a hash comment right after a word": {
+			src:    "SELECT 1# |>\n",
+			wantOk: false,
+		},
+		"pipe operator in a dash comment right after a word": {
+			src:    "SELECT 1-- |>\n",
+			wantOk: false,
+		},
+		"pipe operator in a block comment right after a word": {
+			src:    "SELECT 1/* |> */",
+			wantOk: false,
+		},
+		"parenthesis in a hash comment": {
+			src:    "FROM t |> SELECT 1 # (\n",
+			want:   9,
+			wantOk: true,
+		},
+		"pipe operator after a hash comment": {
+			src:    "SELECT 1 # comment\n|> ",
+			want:   21,
+			wantOk: true,
+		},
+		"pipe operator in a triple single-quoted string": {
+			src:    "SELECT '''a'|>'''",
+			wantOk: false,
+		},
+		"pipe operator in a triple double-quoted string": {
+			src:    `SELECT """a"|>"""`,
+			wantOk: false,
+		},
+		"pipe operator in a multi-line triple-quoted string": {
+			src:    "SELECT '''a\n|>\n'''",
+			wantOk: false,
+		},
+		"pipe operator in a raw triple-quoted string": {
+			src:    "SELECT r'''a'|>'''",
+			wantOk: false,
+		},
+		"pipe operator in a bytes triple-quoted string": {
+			src:    `SELECT b"""a"|>"""`,
+			wantOk: false,
+		},
+		"pipe operator in a raw bytes triple-quoted string": {
+			src:    `SELECT rb"""a"|>"""`,
+			wantOk: false,
+		},
+		"escaped quote in a triple-quoted string": {
+			src:    `SELECT """a\"""|>"""`,
+			wantOk: false,
+		},
+		"pipe operator in an unterminated triple-quoted string": {
+			src:    "FROM t |> SELECT '''a |> ",
+			want:   9,
+			wantOk: true,
+		},
+		"backslash at the end of an unterminated triple-quoted string": {
+			src:    `SELECT """a\`,
+			wantOk: false,
+		},
+		"pipe operator after a triple-quoted string": {
+			src:    "SELECT '''a''' |> ",
+			want:   17,
+			wantOk: true,
+		},
+		"pipe operator after an empty string": {
+			src:    "SELECT '' |> ",
+			want:   12,
+			wantOk: true,
 		},
 	}
 
