@@ -2,7 +2,7 @@
 	"name": "bqls",
 	"displayName": "bqls",
 	"description": "BigQuery language server client for VSCode",
-	"version": "0.8.7",
+	"version": "0.8.8",
 	"publisher": "kitagry",
 	"repository": {
 		"type": "git",
