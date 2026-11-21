@@ -1072,6 +1072,41 @@ func fixErrorToExpression(src string, parsedErr Error, expr string) (fixedSrc st
 	return fixedSrc, []FixOffset{fixOffset}
 }
 
+// isWholeFunctionArgument reports whether the path spanning [start, end) is by itself an
+// argument of a function call, CAST or EXTRACT.
+func isWholeFunctionArgument(node googlesql.ASTNode, start, end int) bool {
+	path, ok := SearchAstNode[*googlesql.ASTPathExpression](node, start)
+	if !ok || locStart(path) != start || locEnd(path) != end {
+		return false
+	}
+	parent, err := path.Parent()
+	if err != nil {
+		return false
+	}
+	switch parent.(type) {
+	case *googlesql.ASTFunctionCall, *googlesql.ASTCastExpression, *googlesql.ASTExtractExpression:
+		return !insideTablePartitionBy(parent)
+	}
+	return false
+}
+
+// insideTablePartitionBy reports whether node is in the PARTITION BY of a table, which
+// rejects a constant expression such as `DATE(NULL)`, unlike the one of a window.
+func insideTablePartitionBy(node googlesql.ASTNode) bool {
+	for n := node; n != nil; {
+		parent, err := n.Parent()
+		if err != nil || parent == nil {
+			return false
+		}
+		if _, ok := n.(*googlesql.ASTPartitionBy); ok {
+			_, isWindow := parent.(*googlesql.ASTWindowSpecification)
+			return !isWindow
+		}
+		n = parent
+	}
+	return false
+}
+
 // fix error in where clause.
 //
 //	SELECT * FROM table WHERE unexist_column = 1
@@ -1346,7 +1381,7 @@ func addInformationToNotExistInStructError(src string, node googlesql.ASTNode, p
 
 	parsedErr.TermLength = len(notExistColumn)
 
-	firstIndex := strings.LastIndexFunc(src[:errOffset], unicode.IsSpace) + 1
+	firstIndex := pathStartAfter(node, strings.LastIndexFunc(src[:errOffset], unicode.IsSpace)+1, errOffset)
 	// A field access on a non-path expression, e.g. `STRUCT(1 AS a).b`, may contain
 	// whitespace, so the text after the last whitespace would be only part of it.
 	if dot, ok := SearchAstNode[*googlesql.ASTDotIdentifier](node, errOffset); ok {
@@ -1358,7 +1393,7 @@ func addInformationToNotExistInStructError(src string, node googlesql.ASTNode, p
 	return parsedErr
 }
 
-func addInformationToNotFoundInsideTableError(src string, parsedErr Error) Error {
+func addInformationToNotFoundInsideTableError(src string, node googlesql.ASTNode, parsedErr Error) Error {
 	ind := strings.Index(parsedErr.Msg, "Name ")
 	if ind == -1 {
 		return parsedErr
@@ -1375,9 +1410,21 @@ func addInformationToNotFoundInsideTableError(src string, parsedErr Error) Error
 
 	parsedErr.TermLength = len(notExistColumn)
 
-	firstIndex := strings.LastIndexFunc(src[:errOffset], unicode.IsSpace) + 1
+	firstIndex := pathStartAfter(node, strings.LastIndexFunc(src[:errOffset], unicode.IsSpace)+1, errOffset)
 	parsedErr.IncompleteColumnName = src[firstIndex : errOffset+len(notExistColumn)]
 	return parsedErr
+}
+
+// pathStartAfter returns the start of the path containing errOffset when it is after
+// firstIndex. The path may follow a delimiter without whitespace, e.g. `NULLIF(t.a`,
+// and the fix-up must not replace the delimiter along with it.
+func pathStartAfter(node googlesql.ASTNode, firstIndex, errOffset int) int {
+	if path, ok := SearchAstNode[*googlesql.ASTPathExpression](node, errOffset); ok {
+		if start := locStart(path); start > firstIndex {
+			return start
+		}
+	}
+	return firstIndex
 }
 
 func positionToByteOffset(sql string, position lsp.Position) int {
