@@ -3800,3 +3800,143 @@ func TestAnalyzer_MissingCommaNeedsNewline(t *testing.T) {
 		})
 	}
 }
+
+func TestAnalyzer_NotFoundInsideReplacesOnlyThePath(t *testing.T) {
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc             string
+		expectedIncompleteColumnName string
+	}{
+		"right after an opening parenthesis": {
+			file:                         "SELECT (t.unexist_column) FROM `project.dataset.table` t",
+			expectedFixedSrc:             "SELECT (1) FROM `project.dataset.table` t",
+			expectedIncompleteColumnName: "t.unexist_column",
+		},
+		"right after a comma": {
+			file:                         "SELECT id,t.unexist_column FROM `project.dataset.table` t",
+			expectedFixedSrc:             "SELECT id,1 FROM `project.dataset.table` t",
+			expectedIncompleteColumnName: "t.unexist_column",
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
+				AnyTimes()
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			if len(got.Errors) != 1 {
+				t.Fatalf("got errors %+v, want only the not found inside error", got.Errors)
+			}
+			if got.Errors[0].IncompleteColumnName != tt.expectedIncompleteColumnName {
+				t.Errorf("IncompleteColumnName = %q, want %q", got.Errors[0].IncompleteColumnName, tt.expectedIncompleteColumnName)
+			}
+			if len(got.RNode) == 0 {
+				t.Errorf("failed to analyze")
+			}
+		})
+	}
+}
+
+func TestAnalyzer_UnknownColumnAsFunctionArgument(t *testing.T) {
+	const table = "`project.dataset.table`"
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+		expectedErrMsg   string
+	}{
+		"unrecognized name in select list": {
+			file:             "SELECT DATE_DIFF(d, x, DAY) FROM " + table,
+			expectedFixedSrc: "SELECT DATE_DIFF(d, NULL, DAY) FROM " + table,
+			expectedErrMsg:   "Unrecognized name: x",
+		},
+		"not found inside in select list": {
+			file:             "SELECT DATE_DIFF(t.d, t.unexist_column, DAY) FROM " + table + " t",
+			expectedFixedSrc: "SELECT DATE_DIFF(t.d, NULL, DAY) FROM " + table + " t",
+			expectedErrMsg:   "Name unexist_column not found inside t",
+		},
+		"nested function in between of join on clause": {
+			file:             "SELECT a.id FROM " + table + " a JOIN " + table + " b ON a.id = b.id AND DATE_DIFF(a.d, NULLIF(b.unexist_column, a.d), DAY) BETWEEN 0 AND 15",
+			expectedFixedSrc: "SELECT a.id FROM " + table + " a JOIN " + table + " b ON a.id = b.id AND DATE_DIFF(a.d, NULLIF(NULL, a.d), DAY) BETWEEN 0 AND 15",
+			expectedErrMsg:   "Name unexist_column not found inside b",
+		},
+		"between in where clause": {
+			file:             "SELECT id FROM " + table + " WHERE DATE_DIFF(d, x, DAY) BETWEEN 0 AND 15",
+			expectedFixedSrc: "SELECT id FROM " + table + " WHERE DATE_DIFF(d, NULL, DAY) BETWEEN 0 AND 15",
+			expectedErrMsg:   "Unrecognized name: x",
+		},
+		"cast": {
+			file:             "SELECT CAST(x AS DATE) FROM " + table,
+			expectedFixedSrc: "SELECT CAST(NULL AS DATE) FROM " + table,
+			expectedErrMsg:   "Unrecognized name: x",
+		},
+		"extract": {
+			file:             "SELECT EXTRACT(YEAR FROM x) FROM " + table,
+			expectedFixedSrc: "SELECT EXTRACT(YEAR FROM NULL) FROM " + table,
+			expectedErrMsg:   "Unrecognized name: x",
+		},
+		"field not in struct": {
+			file:             "SELECT UPPER(s.a.zz) FROM (SELECT STRUCT(STRUCT('a' AS b) AS a) AS s)",
+			expectedFixedSrc: "SELECT UPPER(NULL) FROM (SELECT STRUCT(STRUCT('a' AS b) AS a) AS s)",
+			expectedErrMsg:   "Field name zz does not exist in STRUCT",
+		},
+		"window partition by": {
+			file:             "SELECT SUM(id) OVER (PARTITION BY UPPER(x)) FROM " + table,
+			expectedFixedSrc: "SELECT SUM(id) OVER (PARTITION BY UPPER(NULL)) FROM " + table,
+			expectedErrMsg:   "Unrecognized name: x",
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{
+					{Name: "id", Type: bq.IntegerFieldType},
+					{Name: "d", Type: bq.DateFieldType},
+				}}, nil).
+				AnyTimes()
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			if len(got.Errors) != 1 || !strings.HasPrefix(got.Errors[0].Msg, tt.expectedErrMsg) {
+				t.Errorf("got errors %+v, want only %q", got.Errors, tt.expectedErrMsg)
+			}
+			if len(got.RNode) == 0 {
+				t.Errorf("failed to analyze")
+			}
+		})
+	}
+}
+
+func TestAnalyzer_UnknownColumnAsFunctionArgumentInTablePartitionBy(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+	bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", gomock.Any()).
+		Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
+		AnyTimes()
+
+	// `DATE(NULL)` would add "PARTITION BY expression must not be constant".
+	const src = "CREATE TABLE `project.dataset.t2` PARTITION BY DATE(x) AS SELECT id FROM `project.dataset.table`"
+	got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", src)
+	defer got.Close()
+
+	if len(got.Errors) != 1 || !strings.HasPrefix(got.Errors[0].Msg, "Unrecognized name: x") {
+		t.Errorf("got errors %+v, want only the unrecognized name error", got.Errors)
+	}
+}

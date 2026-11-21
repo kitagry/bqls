@@ -1,7 +1,6 @@
 package completion
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -2288,6 +2287,45 @@ func TestProject_CompleteColumns(t *testing.T) {
 				},
 			},
 		},
+		"Select columns while an unknown column is a function argument in JOIN ON": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "WITH orders AS (\n" +
+					"    SELECT 1 AS customer_id, DATE '2024-01-01' AS order_date\n" +
+					"),\n" +
+					"visits AS (\n" +
+					"    SELECT 1 AS customer_id\n" +
+					")\n" +
+					"SELECT\n" +
+					"    |o.customer_id\n" +
+					"FROM\n" +
+					"    orders AS o\n" +
+					"    INNER JOIN visits AS v\n" +
+					"        ON o.customer_id = v.customer_id AND\n" +
+					"            DATE_DIFF(o.order_date, NULLIF(v.visit_date, o.order_date), DAY) BETWEEN 0 AND 15",
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:          lsp.CIKField,
+					NewText:       "customer_id",
+					Detail:        "INT64",
+					Documentation: lsp.MarkupContent{Kind: lsp.MKPlainText, Value: "INT64"},
+				},
+				{
+					Kind:          lsp.CIKField,
+					NewText:       "order_date",
+					Detail:        "DATE",
+					Documentation: lsp.MarkupContent{Kind: lsp.MKPlainText, Value: "DATE"},
+				},
+				{
+					Kind:          lsp.CIKField,
+					NewText:       "customer_id",
+					Detail:        "INT64",
+					Documentation: lsp.MarkupContent{Kind: lsp.MKPlainText, Value: "INT64"},
+				},
+				{Kind: lsp.CIKModule, NewText: "orders", Detail: "CTE"},
+				{Kind: lsp.CIKModule, NewText: "visits", Detail: "CTE"},
+			},
+		},
 	}
 
 	for n, tt := range tests {
@@ -2317,7 +2355,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 			parsedFile := analyzer.ParseFile(path, files[path])
 			defer parsedFile.Close()
 
-			got := completor.completeColumns(context.Background(), parsedFile, position)
+			got := completor.completeColumns(t.Context(), parsedFile, position)
 			if diff := cmp.Diff(got, tt.expectCompletionItems); diff != "" {
 				t.Errorf("(-got, +want)\n%s", diff)
 			}

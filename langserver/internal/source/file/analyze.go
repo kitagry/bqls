@@ -823,7 +823,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			case isNotExistInStructError:
 				pErr = addInformationToNotExistInStructError(fixedSrc, s, pErr)
 			case isNotFoundInsideError:
-				pErr = addInformationToNotFoundInsideTableError(fixedSrc, pErr)
+				pErr = addInformationToNotFoundInsideTableError(fixedSrc, s, pErr)
 			case isTableNotFoundError:
 				ind := strings.Index(pErr.Msg, "Table not found: ")
 				table := strings.TrimSpace(pErr.Msg[ind+len("Table not found: "):])
@@ -858,6 +858,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 					if len(fo) > 0 {
 						skipError = true
 					}
+				} else if isWholeFunctionArgument(s, errTermOffset+pErr.TermLength-len(pErr.IncompleteColumnName), errTermOffset+pErr.TermLength) {
+					// NULL coerces to any argument type, whereas `1` or `true` fails to match the signature.
+					fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "NULL")
 				} else if _, ok := SearchAstNode[*googlesql.ASTSelectList](node, errTermOffset); ok {
 					if aliasOnNextLine(fixedSrc, s, errTermOffset+pErr.TermLength-len(pErr.IncompleteColumnName), errTermOffset+pErr.TermLength) {
 						// The alias is likely the next column, before which the user is typing without a comma yet.
