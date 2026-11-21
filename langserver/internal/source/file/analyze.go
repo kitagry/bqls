@@ -702,6 +702,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			if len(fo) == 0 && strings.Contains(pErr.Msg, "A pipe operator cannot follow the WITH clause") {
 				fixedSrc, fo = fixPipeOperatorAfterWithClause(fixedSrc, pErr)
 			}
+			if len(fo) == 0 && strings.HasPrefix(pErr.Msg, "Syntax error: ") {
+				fixedSrc, fo = fixMissingSelectListComma(fixedSrc, pErr)
+			}
 			srcErr := errorToSrc(src, passSrc, edits, pErr)
 			// An error where one is already reported is left by a fix-up that deleted
 			// what the user has not finished, such as "(SELECT 1 UNION ALL" becoming
@@ -856,7 +859,12 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 						skipError = true
 					}
 				} else if _, ok := SearchAstNode[*googlesql.ASTSelectList](node, errTermOffset); ok {
-					fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
+					if aliasOnNextLine(fixedSrc, s, errTermOffset+pErr.TermLength-len(pErr.IncompleteColumnName), errTermOffset+pErr.TermLength) {
+						// The alias is likely the next column, before which the user is typing without a comma yet.
+						fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "1,")
+					} else {
+						fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
+					}
 				} else if _, ok := SearchAstNode[*googlesql.ASTWhereClause](node, errTermOffset); ok {
 					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
 				} else if _, ok := SearchAstNode[*googlesql.ASTGroupBy](node, errTermOffset); ok {
