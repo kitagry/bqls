@@ -3,6 +3,7 @@ package file
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +22,13 @@ var zetaSQLLocationRegex = regexp.MustCompile(`\[at (\d+):(\d+)\]`)
 var notBoolConditionErrorRegex = regexp.MustCompile(`^Cannot coerce expression (?s:(.*)) to type BOOL$`)
 
 var nonNullArgumentErrorRegex = regexp.MustCompile(`^(Argument \d+ to|The argument to) \S+ must be non-NULL$`)
+
+// operatorSignatureErrorRegex captures the operator and the argument types listed in one of these forms:
+//
+//	No matching signature for operator = for argument types: INT64, STRING
+//	No matching signature for operator BETWEEN\n  Argument types: INT64, STRING, STRING
+//	No matching signature for operator IN for argument types literal INT64 and {STRING}
+var operatorSignatureErrorRegex = regexp.MustCompile(`^No matching signature for operator ([^\n]*?)(?: for argument types:? |\n\s*Argument types: )([^\n]*)`)
 
 var logicalOperandErrorRegex = regexp.MustCompile(`^No matching signature for operator (AND|OR|NOT)\n(?s:.*?)Argument (\d+): Unable to coerce type \S+ to expected type BOOL`)
 
@@ -1115,14 +1123,214 @@ func fixErrorToExpression(src string, parsedErr Error, expr string) (fixedSrc st
 // A NULL that the user wrote is left as is, because the error is the user's.
 func fixSubstitutedNullArgument(src, fixedSrc string, edits []sourceEdit, parsedErr Error) (string, []FixOffset) {
 	errOffset, ok := errorByteOffset(fixedSrc, parsedErr.Position)
-	if !ok || !strings.HasPrefix(fixedSrc[errOffset:], "NULL") {
+	if !ok {
 		return fixedSrc, nil
 	}
-	srcStart, srcEnd := toSrcOffset(edits, errOffset), toSrcEnd(edits, errOffset+len("NULL"))
-	if srcStart < 0 || srcEnd > len(src) || srcStart > srcEnd || strings.EqualFold(src[srcStart:srcEnd], "NULL") {
+	if _, ok := substitutedPlaceholder(src, fixedSrc, edits, errOffset, "NULL"); !ok {
 		return fixedSrc, nil
 	}
 	return fixErrorToLiteral(fixedSrc, Error{Position: parsedErr.Position, TermLength: len("NULL"), IncompleteColumnName: "NULL"})
+}
+
+// substitutedPlaceholder reports whether placeholder at offset in fixedSrc was substituted
+// by a fix-up rather than written by the user, and returns the text it was substituted for.
+func substitutedPlaceholder(src, fixedSrc string, edits []sourceEdit, offset int, placeholder string) (string, bool) {
+	end := offset + len(placeholder)
+	if offset < 0 || end > len(fixedSrc) || !strings.EqualFold(fixedSrc[offset:end], placeholder) {
+		return "", false
+	}
+	srcStart, srcEnd := toSrcOffset(edits, offset), toSrcEnd(edits, end)
+	if srcStart < 0 || srcEnd > len(src) || srcStart > srcEnd || strings.EqualFold(src[srcStart:srcEnd], placeholder) {
+		return "", false
+	}
+	return src[srcStart:srcEnd], true
+}
+
+// fixSubstitutedOperatorOperand replaces the `1` that a fix-up substituted for an unknown
+// operand of an operator such as `=`, IN or BETWEEN with a value of the type of the other
+// operands, taken from the error message. A literal NULL does not work here, because
+// GoogleSQL rejects it as an operand of a comparison.
+//
+// declared maps the lowercased names of declared variables to their dummy values. A `1`
+// substituted for a declared INT64 variable stands for a value of the declared type, so
+// the error about it is the user's and is left as is.
+func fixSubstitutedOperatorOperand(src, fixedSrc string, edits []sourceEdit, node googlesql.ASTNode, parsedErr Error, declared map[string]string) (string, []FixOffset) {
+	m := operatorSignatureErrorRegex.FindStringSubmatch(parsedErr.Msg)
+	if m == nil {
+		return fixedSrc, nil
+	}
+	op := m[1]
+	typeName, ok := operandTypeForOperator(op, m[2])
+	if !ok {
+		return fixedSrc, nil
+	}
+	errOffset, ok := errorByteOffset(fixedSrc, parsedErr.Position)
+	if !ok {
+		return fixedSrc, nil
+	}
+
+	// The error is at the start of a binary expression but at the keyword of IN or BETWEEN,
+	// so the innermost operator of the kind in the message around it that has a substituted
+	// operand is the one. Operators of other kinds may start at the same offset, as `=` in
+	// `1 = 1 AND 1`.
+	var placeholders []googlesql.ASTExpressionNode
+	Walk(node, func(n googlesql.ASTNode) error { //nolint
+		operands := operatorOperands(n, op)
+		if len(operands) == 0 || locStart(n) > errOffset || errOffset >= locEnd(n) {
+			return nil
+		}
+		var found []googlesql.ASTExpressionNode
+		for _, operand := range operands {
+			start := locStart(operand)
+			if locEnd(operand)-start != len("1") {
+				continue
+			}
+			original, ok := substitutedPlaceholder(src, fixedSrc, edits, start, "1")
+			if _, isDeclared := declared[strings.ToLower(original)]; ok && !isDeclared {
+				found = append(found, operand)
+			}
+		}
+		if len(found) > 0 {
+			placeholders = found
+		}
+		return nil
+	})
+	if len(placeholders) == 0 {
+		return fixedSrc, nil
+	}
+
+	dummy := getDummyValueForTypeName(typeName)
+	var fixOffsets []FixOffset
+	// From the last one, so that each edit keeps the offsets of the ones before it.
+	for _, p := range slices.Backward(placeholders) {
+		start := locStart(p)
+		fixedSrc = fixedSrc[:start] + dummy + fixedSrc[start+len("1"):]
+		fixOffsets = append(fixOffsets, FixOffset{
+			Offset: start,
+			Length: len(dummy) - len("1"),
+			edits:  []sourceEdit{{start: start, oldLen: len("1"), newLen: len(dummy)}},
+		})
+	}
+	return fixedSrc, fixOffsets
+}
+
+// operandTypeForOperator returns the type that a placeholder operand of op must have,
+// given the argument types listed in the operator signature error.
+func operandTypeForOperator(op, argumentTypes string) (string, bool) {
+	switch op {
+	case "AND", "OR", "NOT":
+		return "BOOL", true
+	}
+	typeName, ok := operandTypeOtherThanPlaceholder(argumentTypes)
+	if !ok || op != "IN UNNEST" {
+		return typeName, ok
+	}
+	// The placeholder is compared with the elements of the array.
+	elem, ok := strings.CutPrefix(typeName, "ARRAY<")
+	if !ok {
+		return "", false
+	}
+	return strings.CutSuffix(elem, ">")
+}
+
+// operandTypeOtherThanPlaceholder returns the type in the argument types of an operator
+// signature error other than INT64, the type of the `1` placeholder. It fails unless
+// exactly one such type is listed, since the operands then do not agree on a type anyway.
+func operandTypeOtherThanPlaceholder(argumentTypes string) (string, bool) {
+	// IN lists the types as `literal INT64 and {STRING, INT64}`.
+	argumentTypes = strings.NewReplacer(" and {", ", ", "{", "", "}", "").Replace(argumentTypes)
+	var typeName string
+	depth, start := 0, 0
+	for i := 0; i <= len(argumentTypes); i++ {
+		if i < len(argumentTypes) {
+			switch argumentTypes[i] {
+			case '<', '(':
+				depth++
+			case '>', ')':
+				depth--
+			}
+			if argumentTypes[i] != ',' || depth > 0 {
+				continue
+			}
+		}
+		name := strings.TrimPrefix(strings.TrimSpace(argumentTypes[start:i]), "literal ")
+		start = i + 1
+		if name == "INT64" || name == typeName {
+			continue
+		}
+		if typeName != "" {
+			return "", false
+		}
+		typeName = name
+	}
+	return typeName, typeName != ""
+}
+
+// operatorOperands returns the operands of node if it is an operator of the kind that op,
+// the operator named in a signature error, refers to and its operands must agree on a type,
+// which for AND, OR and NOT is BOOL. Arithmetic operators are left out, because their
+// operands may differ in type, as in `date - 1`.
+func operatorOperands(node googlesql.ASTNode, op string) []googlesql.ASTExpressionNode {
+	var operands []googlesql.ASTExpressionNode
+	add := func(e googlesql.ASTExpressionNode, err error) {
+		if err == nil && e != nil {
+			operands = append(operands, e)
+		}
+	}
+	switch n := node.(type) {
+	case *googlesql.ASTBinaryExpression:
+		switch op {
+		case "AND", "OR", "NOT", "IN", "IN UNNEST", "BETWEEN":
+			return nil
+		}
+		switch binOp, _ := n.Op(); binOp {
+		case googlesql.ASTBinaryExpressionEnums_OpEq, googlesql.ASTBinaryExpressionEnums_OpNe,
+			googlesql.ASTBinaryExpressionEnums_OpNe2, googlesql.ASTBinaryExpressionEnums_OpLt,
+			googlesql.ASTBinaryExpressionEnums_OpLe, googlesql.ASTBinaryExpressionEnums_OpGt,
+			googlesql.ASTBinaryExpressionEnums_OpGe, googlesql.ASTBinaryExpressionEnums_OpLike,
+			googlesql.ASTBinaryExpressionEnums_OpDistinct:
+			add(n.Lhs())
+			add(n.Rhs())
+		}
+	case *googlesql.ASTBetweenExpression:
+		if op == "BETWEEN" {
+			add(n.Lhs())
+			add(n.Low())
+			add(n.High())
+		}
+	case *googlesql.ASTInExpression:
+		switch op {
+		case "IN UNNEST":
+			add(n.Lhs())
+		case "IN":
+			add(n.Lhs())
+			if list, err := n.InList(); err == nil && list != nil {
+				num, _ := list.NumChildren()
+				for i := int32(0); i < num; i++ {
+					add(list.List(i))
+				}
+			}
+		}
+	case *googlesql.ASTAndExpr:
+		if op == "AND" {
+			num, _ := n.NumChildren()
+			for i := int32(0); i < num; i++ {
+				add(n.Conjuncts(i))
+			}
+		}
+	case *googlesql.ASTOrExpr:
+		if op == "OR" {
+			num, _ := n.NumChildren()
+			for i := int32(0); i < num; i++ {
+				add(n.Disjuncts(i))
+			}
+		}
+	case *googlesql.ASTUnaryExpression:
+		if unaryOp, _ := n.Op(); op == "NOT" && unaryOp == googlesql.ASTUnaryExpressionEnums_OpNot {
+			add(n.Operand())
+		}
+	}
+	return operands
 }
 
 // isWholeFunctionArgument reports whether the path spanning [start, end) is by itself an

@@ -2287,6 +2287,33 @@ func TestProject_CompleteColumns(t *testing.T) {
 				},
 			},
 		},
+		"Select columns while an unknown column is compared in IF": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "WITH orders AS (\n" +
+					"    SELECT 1 AS customer_id, 'open' AS status\n" +
+					")\n" +
+					"SELECT\n" +
+					"    |o.customer_id,\n" +
+					"    IF(o.state = 'open', 1, 0)\n" +
+					"FROM\n" +
+					"    orders AS o",
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:          lsp.CIKField,
+					NewText:       "customer_id",
+					Detail:        "INT64",
+					Documentation: lsp.MarkupContent{Kind: lsp.MKPlainText, Value: "INT64"},
+				},
+				{
+					Kind:          lsp.CIKField,
+					NewText:       "status",
+					Detail:        "STRING",
+					Documentation: lsp.MarkupContent{Kind: lsp.MKPlainText, Value: "STRING"},
+				},
+				{Kind: lsp.CIKModule, NewText: "orders", Detail: "CTE"},
+			},
+		},
 		"Select columns while an unknown column is a function argument in JOIN ON": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "WITH orders AS (\n" +

@@ -1084,3 +1084,51 @@ func TestPipeOperatorOffsets(t *testing.T) {
 		})
 	}
 }
+
+func TestOperandTypeOtherThanPlaceholder(t *testing.T) {
+	tests := map[string]struct {
+		argumentTypes string
+
+		expectedType string
+		expectedOK   bool
+	}{
+		"binary operator": {
+			argumentTypes: "INT64, STRING",
+			expectedType:  "STRING",
+			expectedOK:    true,
+		},
+		"IN": {
+			argumentTypes: "literal INT64 and {STRING, INT64}",
+			expectedType:  "STRING",
+			expectedOK:    true,
+		},
+		"STRUCT with a comma": {
+			argumentTypes: "INT64, STRUCT<a INT64, b STRING>",
+			expectedType:  "STRUCT<a INT64, b STRING>",
+			expectedOK:    true,
+		},
+		// Placeholders on both sides compare INT64 with INT64, which leaves no type to
+		// substitute, so the fix-up must not loop on replacing them.
+		"only INT64": {
+			argumentTypes: "INT64, INT64",
+			expectedOK:    false,
+		},
+		"IN with only INT64": {
+			argumentTypes: "literal INT64 and {INT64}",
+			expectedOK:    false,
+		},
+		"types that do not agree": {
+			argumentTypes: "INT64, STRING, DATE",
+			expectedOK:    false,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			got, ok := operandTypeOtherThanPlaceholder(tt.argumentTypes)
+			if got != tt.expectedType || ok != tt.expectedOK {
+				t.Errorf("operandTypeOtherThanPlaceholder(%q) = (%q, %v), want (%q, %v)", tt.argumentTypes, got, ok, tt.expectedType, tt.expectedOK)
+			}
+		})
+	}
+}
