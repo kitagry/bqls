@@ -2300,14 +2300,8 @@ func TestAnalyzer_ParseFileWithDeclareStatement(t *testing.T) {
 			file: "SELECT UNKNOWN_FUNC();\n" +
 				"SELECT unknown.*;",
 			bqTableMetadataMap: map[string]*bq.TableMetadata{},
+			// The fix-up turns `unknown.*` into `1.*`, whose syntax error is not the user's.
 			expectedErrs: []file.Error{
-				{
-					Msg: `Syntax error: Unexpected ";"`,
-					Position: lsp.Position{
-						Line:      1,
-						Character: 16,
-					},
-				},
 				{
 					Msg: "Function not found: UNKNOWN_FUNC",
 					Position: lsp.Position{
@@ -3993,5 +3987,60 @@ func TestAnalyzer_UnknownColumnAsNonNullFunctionArgument(t *testing.T) {
 				t.Errorf("errors (-want, +got)\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestAnalyzer_RevertFixUpThatBreaksSyntax(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+
+	// Substituting `1` for n turns `n.x.y` into `1.x.y`, which does not parse
+	// because `1.` is lexed as a floating point literal. When #742 fixes that,
+	// these tests need another fix-up that breaks the syntax.
+	src := "DECLARE n INT64;\nSELECT 1;\nSELECT n.x.y;\nSELECT 2;"
+	got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", src)
+	defer got.Close()
+
+	if got.Node == nil {
+		t.Fatalf("the script was not parsed, errors: %+v", got.Errors)
+	}
+	want := []file.Error{{
+		Msg:      "bqls could not finish analyzing this statement",
+		Position: lsp.Position{Line: 2, Character: 7},
+		Severity: lsp.Warning,
+	}}
+	if diff := cmp.Diff(want, got.Errors); diff != "" {
+		t.Errorf("errors (-want +got):\n%s", diff)
+	}
+	if len(got.RNode) != 2 {
+		t.Errorf("got %d analyzed statements, want the 2 statements other than the one fixed up", len(got.RNode))
+	}
+}
+
+func TestAnalyzer_KeepFixingUpAfterARevertedFixUp(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	bqClient := mock_bigquery.NewMockClient(ctrl)
+
+	// The statements after the one whose fix-up is reverted still need their own fix-ups.
+	src := "DECLARE n INT64;\nSELECT n.x.y;\nSELECT n + 1;\nSELECT n + UNKNOWN_FUNC();"
+	got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", src)
+	defer got.Close()
+
+	want := []file.Error{
+		{
+			Msg:      "bqls could not finish analyzing this statement",
+			Position: lsp.Position{Line: 1, Character: 7},
+			Severity: lsp.Warning,
+		},
+		{
+			Msg:      "Function not found: UNKNOWN_FUNC",
+			Position: lsp.Position{Line: 3, Character: 11},
+		},
+	}
+	if diff := cmp.Diff(want, got.Errors); diff != "" {
+		t.Errorf("errors (-want +got):\n%s", diff)
+	}
+	if len(got.RNode) != 1 {
+		t.Errorf("got %d analyzed statements, want 1 for `SELECT n + 1`", len(got.RNode))
 	}
 }

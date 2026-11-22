@@ -666,6 +666,11 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 	client := newMemoClient(a.bqClient)
 	maxRetries := minRetries
 	budgeted := false
+	// The state before the statement-level fix-up of the previous pass, which is
+	// restored when the fix-up turns the source into a parse error.
+	var beforeFix *fixUpCheckpoint
+	// Statements whose fix-up was reverted; they are analyzed without fix-ups from then on.
+	rejected := make(map[int]bool)
 	for retry := 0; retry < maxRetries; retry++ {
 		// The last pass applies no fix-up, so that it analyzes every statement instead
 		// of stopping at the first one it would fix.
@@ -675,6 +680,22 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 		var fo []FixOffset
 		passSrc := fixedSrc
 		node, err = a.parseScript(fixedSrc)
+		checkpoint := beforeFix
+		beforeFix = nil
+		if err != nil && checkpoint != nil {
+			// The source parsed before the fix-up, so the syntax error is bqls's, not the user's.
+			// The statement then reports the error the fix-up was meant to recover from,
+			// while the statements after it are still fixed up.
+			fixedSrc = checkpoint.fixedSrc
+			fixOffsets = fixOffsets[:checkpoint.fixOffsets]
+			edits = edits[:checkpoint.edits]
+			fixedErrs = fixedErrs[:checkpoint.fixedErrs]
+			rejected[checkpoint.stmt] = true
+			// This pass analyzed nothing, so it does not count against the fix-up budget,
+			// but a pass must remain to analyze the restored source even past the limit.
+			maxRetries = max(min(maxRetries+1, maxRetriesLimit), retry+2)
+			continue
+		}
 		if err != nil {
 			pErr := parseZetaSQLError(fixedSrc, err)
 			if strings.Contains(pErr.Msg, "SELECT list must not be empty") {
@@ -908,13 +929,17 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				fixedSrc, fo = fixNotBoolClauseError(fixedSrc, pErr)
 			}
 
-			if lastPass && len(fo) > 0 {
+			if (lastPass || rejected[i]) && len(fo) > 0 {
 				fixedSrc, fo = srcBeforeFix, nil
 				if skipError {
 					// The error is not the user's, but the rest of the statement is left unchecked.
 					skipError = false
+					msg := "bqls could not finish analyzing this statement"
+					if !rejected[i] {
+						msg = fmt.Sprintf("%s: reached the limit of %d fix-ups", msg, maxRetries)
+					}
 					pErr = Error{
-						Msg:      fmt.Sprintf("bqls could not finish analyzing this statement: reached the limit of %d fix-ups", maxRetries),
+						Msg:      msg,
 						Position: pErr.Position,
 						Severity: lsp.Warning,
 					}
@@ -931,6 +956,13 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				statements = append(statements, StatementResult{Stmt: s, Err: &srcErr})
 			}
 			if len(fo) > 0 {
+				beforeFix = &fixUpCheckpoint{
+					stmt:       i,
+					fixedSrc:   srcBeforeFix,
+					fixOffsets: len(fixOffsets),
+					edits:      len(edits),
+					fixedErrs:  len(fixedErrs),
+				}
 				if !skipError {
 					fixedErrs = append(fixedErrs, statementError{index: i, err: srcErr})
 				}
@@ -974,6 +1006,14 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 		Errors:     errs,
 		catalog:    catalog,
 	}
+}
+
+// fixUpCheckpoint is the state of ParseFile before a fix-up of the stmt-th statement,
+// with the slices kept as their lengths, since fix-ups only append to them.
+type fixUpCheckpoint struct {
+	stmt                         int
+	fixedSrc                     string
+	fixOffsets, edits, fixedErrs int
 }
 
 const (
