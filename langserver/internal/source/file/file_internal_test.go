@@ -156,6 +156,11 @@ func addInformationToNotExistInStructErrorWithoutAST(src string, parsedErr Error
 	return addInformationToNotExistInStructError(src, nil, parsedErr)
 }
 
+// addInformationToNotFoundInsideTableErrorWithoutAST checks the text-based fallback used without a statement.
+func addInformationToNotFoundInsideTableErrorWithoutAST(src string, parsedErr Error) Error {
+	return addInformationToNotFoundInsideTableError(src, nil, parsedErr)
+}
+
 func TestAddInformationFunctions_KeepErrorWhenOutOfRange(t *testing.T) {
 	const src = "SELECT x"
 	tests := map[string]struct {
@@ -167,7 +172,7 @@ func TestAddInformationFunctions_KeepErrorWhenOutOfRange(t *testing.T) {
 			parsedErr: Error{Msg: "Field name too_long_name does not exist in STRUCT", Position: lsp.Position{Line: 0, Character: 7}},
 		},
 		"addInformationToNotFoundInsideTableError": {
-			add:       addInformationToNotFoundInsideTableError,
+			add:       addInformationToNotFoundInsideTableErrorWithoutAST,
 			parsedErr: Error{Msg: "Name too_long_name not found inside t", Position: lsp.Position{Line: 0, Character: 7}},
 		},
 	}
@@ -202,13 +207,13 @@ func TestAddInformationFunctions_StopAtAnyWhitespace(t *testing.T) {
 			want:      "s.zz",
 		},
 		"addInformationToNotFoundInsideTableError after tab": {
-			add:       addInformationToNotFoundInsideTableError,
+			add:       addInformationToNotFoundInsideTableErrorWithoutAST,
 			src:       "SELECT 'a',\ts.zz, id FROM t",
 			parsedErr: Error{Msg: "Name zz not found inside s", Position: lsp.Position{Line: 0, Character: 14}},
 			want:      "s.zz",
 		},
 		"addInformationToNotFoundInsideTableError after newline": {
-			add:       addInformationToNotFoundInsideTableError,
+			add:       addInformationToNotFoundInsideTableErrorWithoutAST,
 			src:       "SELECT id,\n  'a',\ns.zz FROM t",
 			parsedErr: Error{Msg: "Name zz not found inside s", Position: lsp.Position{Line: 2, Character: 2}},
 			want:      "s.zz",
@@ -268,7 +273,7 @@ func TestAddInformationFunctions_NameAtEndOfMessage(t *testing.T) {
 			parsedErr: Error{Msg: "Field name zz", Position: lsp.Position{Line: 0, Character: 9}},
 		},
 		"addInformationToNotFoundInsideTableError": {
-			add:       addInformationToNotFoundInsideTableError,
+			add:       addInformationToNotFoundInsideTableErrorWithoutAST,
 			parsedErr: Error{Msg: "Name zz", Position: lsp.Position{Line: 0, Character: 9}},
 		},
 	}
