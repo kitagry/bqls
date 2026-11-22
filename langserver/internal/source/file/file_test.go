@@ -3940,3 +3940,58 @@ func TestAnalyzer_UnknownColumnAsFunctionArgumentInTablePartitionBy(t *testing.T
 		t.Errorf("got errors %+v, want only the unrecognized name error", got.Errors)
 	}
 }
+
+func TestAnalyzer_UnknownColumnAsNonNullFunctionArgument(t *testing.T) {
+	const table = "`project.dataset.table`"
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+		expectedErrMsgs  []string
+	}{
+		"aggregate function": {
+			file:             "SELECT APPROX_QUANTILES(id, x) FROM " + table,
+			expectedFixedSrc: "SELECT APPROX_QUANTILES(id, 1) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"window function": {
+			file:             "SELECT LAG(id, t.zz) OVER (ORDER BY id) FROM " + table + " t",
+			expectedFixedSrc: "SELECT LAG(id, 1) OVER (ORDER BY id) FROM " + table + " t",
+			expectedErrMsgs:  []string{"Name zz not found inside t"},
+		},
+		"single argument": {
+			file:             "SELECT NTILE(x) OVER (ORDER BY id) FROM " + table,
+			expectedFixedSrc: "SELECT NTILE(1) OVER (ORDER BY id) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"null written by the user": {
+			file:             "SELECT APPROX_QUANTILES(id, NULL), x FROM " + table,
+			expectedFixedSrc: "SELECT APPROX_QUANTILES(id, NULL), x FROM " + table,
+			expectedErrMsgs:  []string{"Argument 2 to APPROX_QUANTILES must be non-NULL"},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
+				AnyTimes()
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			gotMsgs := make([]string, 0, len(got.Errors))
+			for _, e := range got.Errors {
+				gotMsgs = append(gotMsgs, e.Msg)
+			}
+			if diff := cmp.Diff(tt.expectedErrMsgs, gotMsgs); diff != "" {
+				t.Errorf("errors (-want, +got)\n%s", diff)
+			}
+		})
+	}
+}

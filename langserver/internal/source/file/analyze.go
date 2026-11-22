@@ -815,6 +815,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			isLogicalOperandError := logicalOperandErrorRegex.MatchString(pErr.Msg)
 			isNotBoolConditionError := notBoolConditionErrorRegex.MatchString(pErr.Msg)
 			isPipeColumnNotFoundError := strings.HasPrefix(pErr.Msg, "Column name in pipe ") && strings.Contains(pErr.Msg, " not found in input table: ")
+			isNonNullArgumentError := nonNullArgumentErrorRegex.MatchString(pErr.Msg)
 
 			// add information to Error
 			switch {
@@ -853,16 +854,18 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			skipError := false
 			if isUnrecognizedNameError || isNotExistInStructError || isNotFoundInsideError {
 				errTermOffset := positionToByteOffset(fixedSrc, pErr.Position)
+				// The span of the unknown name, which the fix-ups below replace.
+				termStart, termEnd := errTermOffset+pErr.TermLength-len(pErr.IncompleteColumnName), errTermOffset+pErr.TermLength
 				if defaultVal, ok := declarationMap[strings.ToLower(pErr.IncompleteColumnName)]; isUnrecognizedNameError && ok {
 					fixedSrc, fo = fixDeclarationError(fixedSrc, pErr, defaultVal)
 					if len(fo) > 0 {
 						skipError = true
 					}
-				} else if isWholeFunctionArgument(s, errTermOffset+pErr.TermLength-len(pErr.IncompleteColumnName), errTermOffset+pErr.TermLength) {
+				} else if isWholeFunctionArgument(s, termStart, termEnd) {
 					// NULL coerces to any argument type, whereas `1` or `true` fails to match the signature.
 					fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "NULL")
 				} else if _, ok := SearchAstNode[*googlesql.ASTSelectList](node, errTermOffset); ok {
-					if aliasOnNextLine(fixedSrc, s, errTermOffset+pErr.TermLength-len(pErr.IncompleteColumnName), errTermOffset+pErr.TermLength) {
+					if aliasOnNextLine(fixedSrc, s, termStart, termEnd) {
 						// The alias is likely the next column, before which the user is typing without a comma yet.
 						fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "1,")
 					} else {
@@ -890,6 +893,14 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 
 			if isEmptyPipeAggregateError {
 				fixedSrc, fo = fixIncompletePipeOperator(fixedSrc, pErr)
+			}
+
+			if isNonNullArgumentError {
+				fixedSrc, fo = fixSubstitutedNullArgument(src, fixedSrc, edits, pErr)
+				if len(fo) > 0 {
+					// The NULL is the fix-up's, whose error about the unknown name is already reported.
+					skipError = true
+				}
 			}
 
 			// A partially typed name that already matches a non-BOOL column is not "Unrecognized".

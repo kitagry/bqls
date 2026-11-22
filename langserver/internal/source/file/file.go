@@ -20,6 +20,8 @@ var zetaSQLLocationRegex = regexp.MustCompile(`\[at (\d+):(\d+)\]`)
 
 var notBoolConditionErrorRegex = regexp.MustCompile(`^Cannot coerce expression (?s:(.*)) to type BOOL$`)
 
+var nonNullArgumentErrorRegex = regexp.MustCompile(`^(Argument \d+ to|The argument to) \S+ must be non-NULL$`)
+
 var logicalOperandErrorRegex = regexp.MustCompile(`^No matching signature for operator (AND|OR|NOT)\n(?s:.*?)Argument (\d+): Unable to coerce type \S+ to expected type BOOL`)
 
 type ParsedFile struct {
@@ -1143,6 +1145,21 @@ func fixErrorToExpression(src string, parsedErr Error, expr string) (fixedSrc st
 	}
 
 	return fixedSrc, []FixOffset{fixOffset}
+}
+
+// fixSubstitutedNullArgument replaces the NULL that a fix-up substituted for an unknown
+// function argument with 1, for the arguments such as the offset of LAG that must be non-NULL.
+// A NULL that the user wrote is left as is, because the error is the user's.
+func fixSubstitutedNullArgument(src, fixedSrc string, edits []sourceEdit, parsedErr Error) (string, []FixOffset) {
+	errOffset, ok := errorByteOffset(fixedSrc, parsedErr.Position)
+	if !ok || !strings.HasPrefix(fixedSrc[errOffset:], "NULL") {
+		return fixedSrc, nil
+	}
+	srcStart, srcEnd := toSrcOffset(edits, errOffset), toSrcEnd(edits, errOffset+len("NULL"))
+	if srcStart < 0 || srcEnd > len(src) || srcStart > srcEnd || strings.EqualFold(src[srcStart:srcEnd], "NULL") {
+		return fixedSrc, nil
+	}
+	return fixErrorToLiteral(fixedSrc, Error{Position: parsedErr.Position, TermLength: len("NULL"), IncompleteColumnName: "NULL"})
 }
 
 // isWholeFunctionArgument reports whether the path spanning [start, end) is by itself an
