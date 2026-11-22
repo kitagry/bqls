@@ -70,7 +70,7 @@ func tokenize(sql string) []token {
 			continue
 		}
 
-		if end := skipComment(sql, i); end > i {
+		if end := SkipComment(sql, i); end > i {
 			i = end
 			continue
 		}
@@ -78,7 +78,7 @@ func tokenize(sql string) []token {
 		// quoted strings / backtick identifiers — treat as opaque words
 		if sql[i] == '\'' || sql[i] == '"' || sql[i] == '`' {
 			start := i
-			i = skipQuoted(sql, i)
+			i, _ = SkipQuoted(sql, i)
 			tokens = append(tokens, token{kind: tokWord, text: sql[start:i], start: uint(start), end: uint(i)})
 			continue
 		}
@@ -122,12 +122,13 @@ func endsWord(sql string, i int) bool {
 	case '(', ')', ',', ';', '\'', '"', '`':
 		return true
 	}
-	return isSpace(sql[i]) || strings.HasPrefix(sql[i:], "|>") || skipComment(sql, i) != i
+	return isSpace(sql[i]) || strings.HasPrefix(sql[i:], "|>") || SkipComment(sql, i) != i
 }
 
-// skipComment returns the offset after the comment starting at sql[start],
-// or start when no comment starts there.
-func skipComment(sql string, start int) int {
+// SkipComment returns the offset after the comment starting at sql[start],
+// or start when no comment starts there. An unterminated block comment runs to
+// the end of sql.
+func SkipComment(sql string, start int) int {
 	switch {
 	case strings.HasPrefix(sql[start:], "--"), strings.HasPrefix(sql[start:], "#"):
 		if end := strings.IndexByte(sql[start:], '\n'); end != -1 {
@@ -143,9 +144,15 @@ func skipComment(sql string, start int) int {
 	return start
 }
 
-// skipQuoted returns the offset after the string or backtick identifier
-// starting at sql[start]. An unterminated one runs to the end of sql.
-func skipQuoted(sql string, start int) int {
+// SkipQuoted returns the offset after the string literal or backtick
+// identifier starting at sql[start], and whether it is terminated. An
+// unterminated one runs to the end of sql.
+//
+// Only ' and " open triple-quoted strings, since GoogleSQL has no
+// triple-backtick identifiers. Backslashes always skip the next byte: in
+// GoogleSQL even raw strings cannot be terminated by an escaped quote, so
+// raw/bytes prefixes need no special case.
+func SkipQuoted(sql string, start int) (end int, closed bool) {
 	quote := sql[start : start+1]
 	if quote != "`" && strings.HasPrefix(sql[start:], strings.Repeat(quote, 3)) {
 		quote = strings.Repeat(quote, 3)
@@ -159,11 +166,11 @@ func skipQuoted(sql string, start int) int {
 			continue
 		}
 		if strings.HasPrefix(sql[i:], quote) {
-			return i + len(quote)
+			return i + len(quote), true
 		}
 		i++
 	}
-	return len(sql)
+	return len(sql), false
 }
 
 func isSpace(b byte) bool {

@@ -467,3 +467,62 @@ func TestSelectListItemOnNextLine(t *testing.T) {
 		})
 	}
 }
+
+func TestSkipQuoted(t *testing.T) {
+	tests := map[string]struct {
+		src        string
+		start      int
+		wantEnd    int
+		wantClosed bool
+	}{
+		"single-quoted string":            {src: `'a' x`, wantEnd: 3, wantClosed: true},
+		"double-quoted string":            {src: `"a" x`, wantEnd: 3, wantClosed: true},
+		"backtick identifier":             {src: "`a` x", wantEnd: 3, wantClosed: true},
+		"starts in the middle":            {src: `x 'a' y`, start: 2, wantEnd: 5, wantClosed: true},
+		"escaped quote":                   {src: `'a\'b' x`, wantEnd: 6, wantClosed: true},
+		"triple single quotes":            {src: `'''a'b''' x`, wantEnd: 9, wantClosed: true},
+		"triple double quotes":            {src: `"""a"b""" x`, wantEnd: 9, wantClosed: true},
+		"triple-quoted string over lines": {src: "'''a\nb''' x", wantEnd: 9, wantClosed: true},
+		// GoogleSQL has no triple-backtick identifiers, so "``" is an empty
+		// identifier rather than the start of a longer delimiter.
+		"three backticks":                {src: "```a` x", wantEnd: 2, wantClosed: true},
+		"unterminated":                   {src: `'abc`, wantEnd: 4, wantClosed: false},
+		"unterminated triple quotes":     {src: `'''a''`, wantEnd: 6, wantClosed: false},
+		"unterminated with a backslash":  {src: `'a\`, wantEnd: 3, wantClosed: false},
+		"backslash before the end quote": {src: `'a\'`, wantEnd: 4, wantClosed: false},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			end, closed := bqparser.SkipQuoted(tt.src, tt.start)
+			if end != tt.wantEnd || closed != tt.wantClosed {
+				t.Errorf("SkipQuoted(%q, %d) = (%d, %t), want (%d, %t)", tt.src, tt.start, end, closed, tt.wantEnd, tt.wantClosed)
+			}
+		})
+	}
+}
+
+func TestSkipComment(t *testing.T) {
+	tests := map[string]struct {
+		src   string
+		start int
+		want  int
+	}{
+		"double-dash comment":           {src: "-- a\nx", want: 5},
+		"hash comment":                  {src: "# a\nx", want: 4},
+		"block comment":                 {src: "/* a */x", want: 7},
+		"block comment over lines":      {src: "/* a\nb */x", want: 9},
+		"line comment at the end":       {src: "-- a", want: 4},
+		"unterminated block comment":    {src: "/* a", want: 4},
+		"starts in the middle":          {src: "x -- a\ny", start: 2, want: 7},
+		"no comment":                    {src: "x -- a", want: 0},
+		"single dash is not a comment":  {src: "- a", want: 0},
+		"single slash is not a comment": {src: "/ a", want: 0},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := bqparser.SkipComment(tt.src, tt.start); got != tt.want {
+				t.Errorf("SkipComment(%q, %d) = %d, want %d", tt.src, tt.start, got, tt.want)
+			}
+		})
+	}
+}

@@ -531,16 +531,16 @@ func blankBlockComments(src string) string {
 	for i := 0; i < len(src); {
 		switch {
 		case src[i] == '\'' || src[i] == '"' || src[i] == '`':
-			i = skipQuoted(src, i)
+			i, _ = bqparser.SkipQuoted(src, i)
 		case strings.HasPrefix(src[i:], "/*"):
-			end := skipComment(src, i)
+			end := bqparser.SkipComment(src, i)
 			for ; i < end; i++ {
 				if b[i] != '\n' && b[i] != '\r' {
 					b[i] = ' '
 				}
 			}
 		default:
-			if next := skipComment(src, i); next != i {
+			if next := bqparser.SkipComment(src, i); next != i {
 				i = next
 			} else {
 				i++
@@ -671,10 +671,10 @@ func beforeTrailingComments(src string, offset int) int {
 		case unicode.IsSpace(rune(src[i])):
 			i++
 		case src[i] == '\'' || src[i] == '"' || src[i] == '`':
-			i = skipQuoted(src, i)
+			i, _ = bqparser.SkipQuoted(src, i)
 			commentStart = -1
 		default:
-			if next := skipComment(src, i); next != i {
+			if next := bqparser.SkipComment(src, i); next != i {
 				if commentStart == -1 {
 					commentStart = i
 				}
@@ -890,7 +890,7 @@ func lastCTEName(code string) (string, bool) {
 		case unicode.IsSpace(rune(code[i])):
 			i++
 		case code[i] == '\'' || code[i] == '"' || code[i] == '`':
-			end := skipQuoted(code, i)
+			end, _ := bqparser.SkipQuoted(code, i)
 			tokens = append(tokens, token{text: code[i:end]})
 			i = end
 		case code[i] == '(':
@@ -913,7 +913,7 @@ func lastCTEName(code string) (string, bool) {
 			tokens = append(tokens, token{text: code[i:end]})
 			i = end
 		default:
-			if next := skipComment(code, i); next != i {
+			if next := bqparser.SkipComment(code, i); next != i {
 				i = next
 			} else {
 				tokens = append(tokens, token{text: code[i : i+1]})
@@ -950,9 +950,9 @@ func pipeOperatorOffsets(src string) []int {
 			offsets = append(offsets, i)
 			i += len("|>")
 		case src[i] == '\'' || src[i] == '"' || src[i] == '`':
-			i = skipQuoted(src, i)
+			i, _ = bqparser.SkipQuoted(src, i)
 		default:
-			if next := skipComment(src, i); next != i {
+			if next := bqparser.SkipComment(src, i); next != i {
 				i = next
 			} else {
 				i++
@@ -962,43 +962,6 @@ func pipeOperatorOffsets(src string) []int {
 	return offsets
 }
 
-// skipQuoted returns the offset after the quoted string or identifier
-// starting at src[start].
-func skipQuoted(src string, start int) int {
-	quote := src[start : start+1]
-	if strings.HasPrefix(src[start:], strings.Repeat(quote, 3)) {
-		quote = strings.Repeat(quote, 3)
-	}
-	for i := start + len(quote); i < len(src); i++ {
-		if src[i] == '\\' {
-			i++
-			continue
-		}
-		if strings.HasPrefix(src[i:], quote) {
-			return i + len(quote)
-		}
-	}
-	return len(src)
-}
-
-// skipComment returns the offset after the comment starting at src[start],
-// or start when no comment starts there.
-func skipComment(src string, start int) int {
-	switch {
-	case strings.HasPrefix(src[start:], "--"), strings.HasPrefix(src[start:], "#"):
-		if end := strings.IndexByte(src[start:], '\n'); end != -1 {
-			return start + end + 1
-		}
-		return len(src)
-	case strings.HasPrefix(src[start:], "/*"):
-		if end := strings.Index(src[start+len("/*"):], "*/"); end != -1 {
-			return start + len("/*") + end + len("*/")
-		}
-		return len(src)
-	}
-	return start
-}
-
 func skipSpacesAndComments(src string, start int) int {
 	i := start
 	for i < len(src) {
@@ -1006,7 +969,7 @@ func skipSpacesAndComments(src string, start int) int {
 			i++
 			continue
 		}
-		next := skipComment(src, i)
+		next := bqparser.SkipComment(src, i)
 		if next == i {
 			break
 		}
