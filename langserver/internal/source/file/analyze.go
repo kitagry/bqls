@@ -837,6 +837,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			isNotBoolConditionError := notBoolConditionErrorRegex.MatchString(pErr.Msg)
 			isPipeColumnNotFoundError := strings.HasPrefix(pErr.Msg, "Column name in pipe ") && strings.Contains(pErr.Msg, " not found in input table: ")
 			isNonNullArgumentError := nonNullArgumentErrorRegex.MatchString(pErr.Msg)
+			isOperatorSignatureError := operatorSignatureErrorRegex.MatchString(pErr.Msg)
 
 			// add information to Error
 			switch {
@@ -927,6 +928,14 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			// A partially typed name that already matches a non-BOOL column is not "Unrecognized".
 			if (isNotBoolClauseError || isLogicalOperandError) && pErr.IncompleteColumnName != "" {
 				fixedSrc, fo = fixNotBoolClauseError(fixedSrc, pErr)
+			}
+
+			if isOperatorSignatureError && len(fo) == 0 {
+				fixedSrc, fo = fixSubstitutedOperatorOperand(src, fixedSrc, edits, s, pErr, declarationMap)
+				if len(fo) > 0 {
+					// The placeholder is the fix-up's, whose error about the unknown name is already reported.
+					skipError = true
+				}
 			}
 
 			if (lastPass || rejected[i]) && len(fo) > 0 {

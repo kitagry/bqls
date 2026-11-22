@@ -4044,3 +4044,227 @@ func TestAnalyzer_KeepFixingUpAfterARevertedFixUp(t *testing.T) {
 		t.Errorf("got %d analyzed statements, want 1 for `SELECT n + 1`", len(got.RNode))
 	}
 }
+
+func TestAnalyzer_UnknownColumnAsOperatorOperand(t *testing.T) {
+	const table = "`project.dataset.table`"
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+		expectedErrMsgs  []string
+		// The user's own type error leaves the statement without an analyzer output.
+		expectedNoOutput bool
+	}{
+		"IF condition": {
+			file:             "SELECT IF(x = 'a', 1, 2) FROM " + table,
+			expectedFixedSrc: "SELECT IF('' = 'a', 1, 2) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"right operand": {
+			file:             "SELECT IF('a' != x, 1, 2) FROM " + table,
+			expectedFixedSrc: "SELECT IF('a' != '', 1, 2) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"compared with a column": {
+			file:             "SELECT x < name FROM " + table,
+			expectedFixedSrc: "SELECT '' < name FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"CASE WHEN": {
+			file:             "SELECT CASE WHEN t.x >= DATE '2020-01-01' THEN 1 END FROM " + table + " t",
+			expectedFixedSrc: "SELECT CASE WHEN DATE('1970-01-01') >= DATE '2020-01-01' THEN 1 END FROM " + table + " t",
+			expectedErrMsgs:  []string{"Name x not found inside t"},
+		},
+		"GROUP BY": {
+			file:             "SELECT 1 FROM " + table + " GROUP BY x = 'a'",
+			expectedFixedSrc: "SELECT 1 FROM " + table + " GROUP BY '' = 'a'",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"ORDER BY": {
+			file:             "SELECT id FROM " + table + " ORDER BY x <= 'a'",
+			expectedFixedSrc: "SELECT id FROM " + table + " ORDER BY '' <= 'a'",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"IN": {
+			file:             "SELECT x IN ('a', 'b') FROM " + table,
+			expectedFixedSrc: "SELECT '' IN ('a', 'b') FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"IN list element": {
+			file:             "SELECT name IN (x, 'b') FROM " + table,
+			expectedFixedSrc: "SELECT name IN ('', 'b') FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"BETWEEN": {
+			file:             "SELECT 'c' BETWEEN x AND 'd' FROM " + table,
+			expectedFixedSrc: "SELECT 'c' BETWEEN '' AND 'd' FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"LIKE": {
+			file:             "SELECT x LIKE 'a%' FROM " + table,
+			expectedFixedSrc: "SELECT '' LIKE 'a%' FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"IS DISTINCT FROM": {
+			file:             "SELECT x IS DISTINCT FROM 'a' FROM " + table,
+			expectedFixedSrc: "SELECT '' IS DISTINCT FROM 'a' FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"unknown columns on both sides of IN": {
+			file:             "SELECT x IN (y, 'b') FROM " + table,
+			expectedFixedSrc: "SELECT '' IN ('', 'b') FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x", "Unrecognized name: y"},
+		},
+		"unknown columns on both sides": {
+			file:             "SELECT IF(x = y, 1, 2) FROM " + table,
+			expectedFixedSrc: "SELECT IF(1 = 1, 1, 2) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x", "Unrecognized name: y"},
+		},
+		"INT64 literal written by the user in IN": {
+			file:             "SELECT x IN (1, 'b') FROM " + table,
+			expectedFixedSrc: "SELECT '' IN (1, 'b') FROM " + table,
+			expectedErrMsgs: []string{
+				"Unrecognized name: x",
+				"No matching signature for operator IN for argument types literal STRING and {INT64, STRING}",
+			},
+			expectedNoOutput: true,
+		},
+		"INT64 literal written by the user in BETWEEN": {
+			file:             "SELECT x BETWEEN 1 AND 'b' FROM " + table,
+			expectedFixedSrc: "SELECT '' BETWEEN 1 AND 'b' FROM " + table,
+			expectedErrMsgs: []string{
+				"Unrecognized name: x",
+				"No matching signature for operator BETWEEN\n  Argument types: STRING, INT64, STRING\n  Signature: (T1) BETWEEN (T1) AND (T1)\n    Unable to find common supertype for templated argument <T1>\n      Input types for <T1>: {INT64, STRING}",
+			},
+			expectedNoOutput: true,
+		},
+		"logical operator": {
+			file:             "SELECT IF(x AND id > 0, 1, 2) FROM " + table,
+			expectedFixedSrc: "SELECT IF(TRUE AND id > 0, 1, 2) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"IN UNNEST": {
+			file:             "SELECT x IN UNNEST(['a']) FROM " + table,
+			expectedFixedSrc: "SELECT '' IN UNNEST(['a']) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"NOT": {
+			file:             "SELECT NOT x FROM " + table,
+			expectedFixedSrc: "SELECT NOT TRUE FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"comparison starting at the same offset as AND": {
+			file:             "SELECT IF(x = 1 AND y, 1, 0) FROM " + table,
+			expectedFixedSrc: "SELECT IF(1 = 1 AND TRUE, 1, 0) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x", "Unrecognized name: y"},
+		},
+		"STRUCT": {
+			file:             "SELECT x = STRUCT(1 AS a) FROM " + table,
+			expectedFixedSrc: "SELECT CAST(NULL/**/AS/**/STRUCT<a/**/INT64>) = STRUCT(1 AS a) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"operator written by the user": {
+			file:             "SELECT x, 1 = 'a' FROM " + table,
+			expectedFixedSrc: "SELECT 1, 1 = 'a' FROM " + table,
+			expectedErrMsgs: []string{
+				"Unrecognized name: x",
+				"No matching signature for operator = for argument types: INT64, STRING\n  Signature: T1 = T1\n    Unable to find common supertype for templated argument <T1>\n      Input types for <T1>: {INT64, STRING}",
+			},
+			expectedNoOutput: true,
+		},
+		"declared variable": {
+			file:             "DECLARE v INT64;\nSELECT v = 'a' FROM " + table,
+			expectedFixedSrc: "DECLARE v INT64;\nSELECT 1 = 'a' FROM " + table,
+			expectedErrMsgs: []string{
+				"No matching signature for operator = for argument types: INT64, STRING\n  Signature: T1 = T1\n    Unable to find common supertype for templated argument <T1>\n      Input types for <T1>: {INT64, STRING}",
+			},
+			expectedNoOutput: true,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{
+					{Name: "id", Type: bq.IntegerFieldType},
+					{Name: "name", Type: bq.StringFieldType},
+				}}, nil).
+				AnyTimes()
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			wantOutputs := 1
+			if tt.expectedNoOutput {
+				wantOutputs = 0
+			}
+			if len(got.RNode) != wantOutputs {
+				t.Errorf("got %d analyzer outputs, want %d", len(got.RNode), wantOutputs)
+			}
+			gotMsgs := make([]string, 0, len(got.Errors))
+			for _, e := range got.Errors {
+				gotMsgs = append(gotMsgs, e.Msg)
+			}
+			if diff := cmp.Diff(tt.expectedErrMsgs, gotMsgs); diff != "" {
+				t.Errorf("errors (-want, +got)\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestAnalyzer_UnknownColumnAsOperatorOperandWithRevertedFixUp(t *testing.T) {
+	const table = "`project.dataset.table`"
+	// `SELECT n.x.y` stands for a statement whose fix-up breaks the syntax and is reverted,
+	// as in TestAnalyzer_RevertFixUpThatBreaksSyntax.
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+		expectedErrs     []file.Error
+	}{
+		"reverted statement before the operator": {
+			file:             "DECLARE n INT64;\nSELECT n.x.y;\nSELECT IF(x = 'a', 1, 2) FROM " + table + ";",
+			expectedFixedSrc: "DECLARE n INT64;\nSELECT n.x.y;\nSELECT IF('' = 'a', 1, 2) FROM " + table + ";",
+			expectedErrs: []file.Error{
+				{Msg: "bqls could not finish analyzing this statement", Position: lsp.Position{Line: 1, Character: 7}, Severity: lsp.Warning},
+				{Msg: "Unrecognized name: x", Position: lsp.Position{Line: 2, Character: 10}, TermLength: 1, IncompleteColumnName: "x"},
+			},
+		},
+		"reverted statement after the operator": {
+			file:             "DECLARE n INT64;\nSELECT IF(x = 'a', 1, 2) FROM " + table + ";\nSELECT n.x.y;",
+			expectedFixedSrc: "DECLARE n INT64;\nSELECT IF('' = 'a', 1, 2) FROM " + table + ";\nSELECT n.x.y;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: x", Position: lsp.Position{Line: 1, Character: 10}, TermLength: 1, IncompleteColumnName: "x"},
+				{Msg: "bqls could not finish analyzing this statement", Position: lsp.Position{Line: 2, Character: 7}, Severity: lsp.Warning},
+			},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
+				AnyTimes()
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			if diff := cmp.Diff(tt.expectedErrs, got.Errors); diff != "" {
+				t.Errorf("errors (-want +got):\n%s", diff)
+			}
+			if len(got.RNode) != 1 {
+				t.Errorf("got %d analyzed statements, want 1 for the IF", len(got.RNode))
+			}
+		})
+	}
+}
