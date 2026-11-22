@@ -1059,3 +1059,28 @@ func TestNewLanguageOptions_NonPipeFeatures(t *testing.T) {
 		})
 	}
 }
+
+func TestPipeOperatorOffsets(t *testing.T) {
+	tests := map[string]struct {
+		src  string
+		want []int
+	}{
+		"pipe operator":          {src: "FROM t |> WHERE x", want: []int{7}},
+		"inside a string":        {src: "SELECT '|>' |> WHERE x", want: []int{12}},
+		"inside a triple string": {src: "SELECT '''a'|>''' |> WHERE x", want: []int{18}},
+		"inside an identifier":   {src: "SELECT `|>` |> WHERE x", want: []int{12}},
+		"inside a comment":       {src: "FROM t -- |>\n|> WHERE x", want: []int{13}},
+		"inside a block comment": {src: "FROM t /* |> */ |> WHERE x", want: []int{16}},
+		// GoogleSQL has no triple-backtick identifiers: "``" is an empty
+		// identifier, so the "|>" after "`a`" is outside of any quote.
+		"after three backticks": {src: "SELECT ```a` |> WHERE x", want: []int{13}},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := pipeOperatorOffsets(tt.src)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("pipeOperatorOffsets(%q) mismatch (-want +got):\n%s", tt.src, diff)
+			}
+		})
+	}
+}

@@ -2,6 +2,8 @@ package lint
 
 import (
 	"strings"
+
+	"github.com/kitagry/bqls/langserver/internal/source/bqparser"
 )
 
 const ignoreDirective = "bqls:ignore"
@@ -148,7 +150,7 @@ func scan(src string, onComment func(comment)) []LineState {
 			line = endLine
 			i = next
 		case c == '\'' || c == '"' || c == '`':
-			next, closed := skipQuoted(src, i)
+			next, closed := bqparser.SkipQuoted(src, i)
 			endLine := line + strings.Count(src[i:next], "\n")
 			span(line, endLine, closed)
 			line = endLine
@@ -268,29 +270,4 @@ func ParseIgnoreLine(line string) (IgnoreLine, bool) {
 	}
 	directiveStart := bodyStart + len(body) - len(afterSpace)
 	return IgnoreLine{Rules: rules, RulesEnd: directiveStart + len(ignoreDirective) + end}, true
-}
-
-// skipQuoted returns the offset just after the string literal or quoted
-// identifier starting at src[start], and whether it is terminated.
-//
-// Backslashes always skip the next byte: in GoogleSQL even raw strings cannot
-// be terminated by an escaped quote, so raw/bytes prefixes need no special case.
-func skipQuoted(src string, start int) (int, bool) {
-	q := src[start]
-	delim := src[start : start+1]
-	if q != '`' && strings.HasPrefix(src[start:], strings.Repeat(delim, 3)) {
-		delim = strings.Repeat(delim, 3)
-	}
-	i := start + len(delim)
-	for i < len(src) {
-		if src[i] == '\\' {
-			i += 2
-			continue
-		}
-		if strings.HasPrefix(src[i:], delim) {
-			return i + len(delim), true
-		}
-		i++
-	}
-	return len(src), false
 }
