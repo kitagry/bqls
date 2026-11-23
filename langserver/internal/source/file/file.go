@@ -1077,7 +1077,9 @@ func fixDeclarationError(src string, parsedErr Error, defaultVal string) (fixedS
 	if replaceOffset < 0 || replaceOffset+len(parsedErr.IncompleteColumnName) > len(src) {
 		return src, nil
 	}
-	fixedSrc = src[:replaceOffset] + defaultVal + src[replaceOffset+len(parsedErr.IncompleteColumnName):]
+	rest := src[replaceOffset+len(parsedErr.IncompleteColumnName):]
+	defaultVal = keepApartFromDot(defaultVal, rest)
+	fixedSrc = src[:replaceOffset] + defaultVal + rest
 	fixOffset := FixOffset{
 		Offset: errOffset,
 		Length: -parsedErr.TermLength + len(defaultVal),
@@ -1108,14 +1110,64 @@ func fixErrorToExpression(src string, parsedErr Error, expr string) (fixedSrc st
 	if replaceOffset < 0 || replaceOffset+len(parsedErr.IncompleteColumnName) > len(src) {
 		return src, nil
 	}
-	fixedSrc = src[:replaceOffset] + expr + src[replaceOffset+len(parsedErr.IncompleteColumnName):]
+	// The fields of an unknown name are unknown too. Leaving them would also make `1.x`,
+	// where `1.` is lexed as a floating point literal.
+	replaceEnd := replaceOffset + len(parsedErr.IncompleteColumnName)
+	replaceEnd += fieldAccessLen(src[replaceEnd:])
+	fixedSrc = src[:replaceOffset] + expr + src[replaceEnd:]
 	fixOffset := FixOffset{
 		Offset: errOffset,
-		Length: -len(parsedErr.IncompleteColumnName) + len(expr),
-		edits:  []sourceEdit{{start: replaceOffset, oldLen: len(parsedErr.IncompleteColumnName), newLen: len(expr)}},
+		Length: -(replaceEnd - replaceOffset) + len(expr),
+		edits:  []sourceEdit{{start: replaceOffset, oldLen: replaceEnd - replaceOffset, newLen: len(expr)}},
 	}
 
 	return fixedSrc, []FixOffset{fixOffset}
+}
+
+// fieldAccessLen returns the length of the field accesses such as `.x.y` or `.*` that
+// rest starts with. It returns 0 if a subscript follows them, since the placeholder
+// would then be subscripted.
+func fieldAccessLen(rest string) int {
+	n := fieldPathLen(rest)
+	if strings.HasPrefix(rest[n:], "[") {
+		return 0
+	}
+	return n
+}
+
+func fieldPathLen(rest string) int {
+	i := 0
+	for strings.HasPrefix(rest[i:], ".") {
+		j := i + len(".")
+		switch {
+		case strings.HasPrefix(rest[j:], "*"):
+			return j + len("*")
+		case strings.HasPrefix(rest[j:], "`"):
+			end, closed := bqparser.SkipQuoted(rest, j)
+			if !closed {
+				return i
+			}
+			j = end
+		default:
+			for j < len(rest) && isIdentifierByte(rest[j]) {
+				j++
+			}
+			if j == i+len(".") {
+				return i
+			}
+		}
+		i = j
+	}
+	return i
+}
+
+// keepApartFromDot parenthesizes expr if rest starts with a dot, because `1.` would be
+// lexed as a floating point literal.
+func keepApartFromDot(expr, rest string) string {
+	if !strings.HasPrefix(rest, ".") {
+		return expr
+	}
+	return "(" + expr + ")"
 }
 
 // fixSubstitutedNullArgument replaces the NULL that a fix-up substituted for an unknown
@@ -1406,6 +1458,8 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 		if incompleteOffset < 0 || incompleteOffset+replacedLength > len(src) {
 			return src, nil
 		}
+		// As in fixErrorToExpression, `true.x` would fail to access a field of BOOL.
+		replacedLength += fieldAccessLen(src[incompleteOffset+replacedLength:])
 		fixedSrc = src[:incompleteOffset] + "true" + src[incompleteOffset+replacedLength:]
 		fixOffset = FixOffset{
 			Offset: incompleteOffset,
