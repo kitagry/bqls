@@ -41,6 +41,15 @@ func (c *completor) completeColumns(ctx context.Context, parsedFile file.ParsedF
 		}
 	}
 
+	// An aggregate scan only outputs its aggregates and grouping keys, whereas
+	// HAVING can refer to any column of its input inside an aggregate function.
+	if aScanNode, ok := node.(*googlesql.ResolvedAggregateScan); ok {
+		inputScan, err := aScanNode.InputScan()
+		if err == nil && inputScan != nil {
+			node = inputScan
+		}
+	}
+
 	result := make([]CompletionItem, 0)
 	columns, _ := node.MutableColumnList()
 	for _, column := range columns {

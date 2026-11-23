@@ -906,6 +906,10 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 					fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
 				} else if _, ok := SearchAstNode[*googlesql.ASTOnClause](node, errTermOffset); ok {
 					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
+				} else if _, ok := SearchAstNode[*googlesql.ASTHaving](node, errTermOffset); ok {
+					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
+				} else if _, ok := SearchAstNode[*googlesql.ASTQualify](node, errTermOffset); ok {
+					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
 				}
 			}
 
