@@ -4217,6 +4217,132 @@ func TestAnalyzer_UnknownColumnAsOperatorOperand(t *testing.T) {
 	}
 }
 
+func TestAnalyzer_UnknownColumnInTupleComparison(t *testing.T) {
+	const table = "`project.dataset.table`"
+	signatureError := func(op, types string) string {
+		return fmt.Sprintf("No matching signature for operator %s for argument types: %s\n  Signature: T1 %s T1\n    Unable to find common supertype for templated argument <T1>\n      Input types for <T1>: {%s}", op, types, op, types)
+	}
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+		expectedErrMsgs  []string
+		// The user's own type error leaves the statement without an analyzer output.
+		expectedNoOutput bool
+	}{
+		"=": {
+			file:             "SELECT (x, 1) = ('a', 1) FROM " + table,
+			expectedFixedSrc: "SELECT ('', 1) = ('a', 1) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"STRUCT keyword": {
+			file:             "SELECT STRUCT(x, 1) != ('a', 1) FROM " + table,
+			expectedFixedSrc: "SELECT STRUCT('', 1) != ('a', 1) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"right operand": {
+			file:             "SELECT ('a', 1) = (x, 1) FROM " + table,
+			expectedFixedSrc: "SELECT ('a', 1) = ('', 1) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"nested struct": {
+			file:             "SELECT ((x, 1), 2) = (('a', 1), 2) FROM " + table,
+			expectedFixedSrc: "SELECT (('', 1), 2) = (('a', 1), 2) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"compared with a column of named fields": {
+			file:             "SELECT (x, 1) = s FROM " + table,
+			expectedFixedSrc: "SELECT ('', 1) = s FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"field of struct type": {
+			file:             "SELECT (x, 1) = (s, 1) FROM " + table,
+			expectedFixedSrc: "SELECT (CAST(NULL/**/AS/**/STRUCT<a/**/STRING,/**/b/**/INT64>), 1) = (s, 1) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"unknown columns in several fields": {
+			file:             "SELECT (x, y) = ('a', DATE '2020-01-01') FROM " + table,
+			expectedFixedSrc: "SELECT ('', DATE('1970-01-01')) = ('a', DATE '2020-01-01') FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x", "Unrecognized name: y"},
+		},
+		"IN": {
+			file:             "SELECT (x, 1) IN (('a', 1), ('b', 2)) FROM " + table,
+			expectedFixedSrc: "SELECT ('', 1) IN (('a', 1), ('b', 2)) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"IN list element": {
+			file:             "SELECT ('a', 1) IN ((x, 1), ('b', 2)) FROM " + table,
+			expectedFixedSrc: "SELECT ('a', 1) IN (('', 1), ('b', 2)) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"IN UNNEST": {
+			file:             "SELECT (x, 1) IN UNNEST([STRUCT('a', 1)]) FROM " + table,
+			expectedFixedSrc: "SELECT ('', 1) IN UNNEST([STRUCT('a', 1)]) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		// The fix-up in WHERE substitutes `true` rather than `1`.
+		"IN in WHERE": {
+			file:             "SELECT * FROM " + table + " WHERE (x, y) IN (('a', DATE '2020-01-01'))",
+			expectedFixedSrc: "SELECT * FROM " + table + " WHERE ('', DATE('1970-01-01')) IN (('a', DATE '2020-01-01'))",
+			expectedErrMsgs:  []string{"Unrecognized name: x", "Unrecognized name: y"},
+		},
+		"different number of fields": {
+			file:             "SELECT (x, 1) = ('a', 1, 2) FROM " + table,
+			expectedFixedSrc: "SELECT (1, 1) = ('a', 1, 2) FROM " + table,
+			expectedErrMsgs: []string{
+				"Unrecognized name: x",
+				signatureError("=", "STRUCT<INT64, INT64>, STRUCT<STRING, INT64, INT64>"),
+			},
+			expectedNoOutput: true,
+		},
+		"declared variable": {
+			file:             "DECLARE v INT64;\nSELECT (v, 1) = ('a', 1) FROM " + table,
+			expectedFixedSrc: "DECLARE v INT64;\nSELECT (1, 1) = ('a', 1) FROM " + table,
+			expectedErrMsgs: []string{
+				signatureError("=", "STRUCT<INT64, INT64>, STRUCT<STRING, INT64>"),
+			},
+			expectedNoOutput: true,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{
+					{Name: "id", Type: bq.IntegerFieldType},
+					{Name: "s", Type: bq.RecordFieldType, Schema: bq.Schema{
+						{Name: "a", Type: bq.StringFieldType},
+						{Name: "b", Type: bq.IntegerFieldType},
+					}},
+				}}, nil).
+				AnyTimes()
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			wantOutputs := 1
+			if tt.expectedNoOutput {
+				wantOutputs = 0
+			}
+			if len(got.RNode) != wantOutputs {
+				t.Errorf("got %d analyzer outputs, want %d", len(got.RNode), wantOutputs)
+			}
+			gotMsgs := make([]string, 0, len(got.Errors))
+			for _, e := range got.Errors {
+				gotMsgs = append(gotMsgs, e.Msg)
+			}
+			if diff := cmp.Diff(tt.expectedErrMsgs, gotMsgs); diff != "" {
+				t.Errorf("errors (-want, +got)\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestAnalyzer_UnknownColumnAsOperatorOperandWithRevertedFixUp(t *testing.T) {
 	const table = "`project.dataset.table`"
 	// `SELECT n.x.y` stands for a statement whose fix-up breaks the syntax and is reverted,

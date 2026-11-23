@@ -1132,3 +1132,137 @@ func TestOperandTypeOtherThanPlaceholder(t *testing.T) {
 		})
 	}
 }
+
+func TestSubstitutedText(t *testing.T) {
+	tests := map[string]struct {
+		src string
+		// edits turn src into the fixed source, in which [start, end) is looked up.
+		edits      []sourceEdit
+		start, end int
+
+		expectedText string
+		expectedOK   bool
+	}{
+		"placeholder": {
+			// "SELECT (x, 1)" -> "SELECT (1, 1)"
+			src:          "SELECT (x, 1)",
+			edits:        []sourceEdit{{start: 8, oldLen: 1, newLen: 1}},
+			start:        8,
+			end:          9,
+			expectedText: "x",
+			expectedOK:   true,
+		},
+		// A fix-up may substitute more than the expression, as `(1)` for `1`.
+		"expression inside the substituted text": {
+			// "SELECT (abc, 1)" -> "SELECT ((1), 1)"
+			src:          "SELECT (abc, 1)",
+			edits:        []sourceEdit{{start: 8, oldLen: 3, newLen: 3}},
+			start:        9,
+			end:          10,
+			expectedText: "abc",
+			expectedOK:   true,
+		},
+		"after an earlier edit": {
+			// "SELECT y, (x, 1)" -> "SELECT 1,, (x, 1)" -> "SELECT 1,, (1, 1)"
+			src: "SELECT y, (x, 1)",
+			edits: []sourceEdit{
+				{start: 7, oldLen: 1, newLen: 2},
+				{start: 12, oldLen: 1, newLen: 1},
+			},
+			start:        12,
+			end:          13,
+			expectedText: "x",
+			expectedOK:   true,
+		},
+		"written by the user": {
+			// "SELECT x, (1, 1)" -> "SELECT 1, (1, 1)"
+			src:   "SELECT x, (1, 1)",
+			edits: []sourceEdit{{start: 7, oldLen: 1, newLen: 1}},
+			start: 11,
+			end:   12,
+		},
+		"inserted text": {
+			// "SELECT" -> "SELECT 1"
+			src:   "SELECT",
+			edits: []sourceEdit{{start: 6, oldLen: 0, newLen: 2}},
+			start: 7,
+			end:   8,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			got, ok := substitutedText(tt.src, tt.edits, tt.start, tt.end)
+			if got != tt.expectedText || ok != tt.expectedOK {
+				t.Errorf("substitutedText() = (%q, %v), want (%q, %v)", got, ok, tt.expectedText, tt.expectedOK)
+			}
+		})
+	}
+}
+
+func TestStructFieldType(t *testing.T) {
+	tests := map[string]struct {
+		argumentTypes   []string
+		path            []structFieldPosition
+		placeholderType string
+
+		expectedType string
+		expectedOK   bool
+	}{
+		"field": {
+			argumentTypes:   []string{"STRUCT<INT64, INT64>", "STRUCT<STRING, INT64>"},
+			path:            []structFieldPosition{{index: 0, numFields: 2}},
+			placeholderType: "INT64",
+			expectedType:    "STRING",
+			expectedOK:      true,
+		},
+		"named fields": {
+			argumentTypes:   []string{"STRUCT<INT64, INT64>", "STRUCT<a STRING, b STRUCT<c DATE>>"},
+			path:            []structFieldPosition{{index: 1, numFields: 2}},
+			placeholderType: "INT64",
+			expectedType:    "STRUCT<c DATE>",
+			expectedOK:      true,
+		},
+		"nested struct": {
+			argumentTypes:   []string{"STRUCT<STRUCT<INT64, INT64>, INT64>", "STRUCT<STRUCT<STRING, INT64>, INT64>"},
+			path:            []structFieldPosition{{index: 0, numFields: 2}, {index: 0, numFields: 2}},
+			placeholderType: "INT64",
+			expectedType:    "STRING",
+			expectedOK:      true,
+		},
+		"BOOL placeholder": {
+			argumentTypes:   []string{"STRUCT<BOOL, INT64>", "STRUCT<STRING, INT64>"},
+			path:            []structFieldPosition{{index: 0, numFields: 2}},
+			placeholderType: "BOOL",
+			expectedType:    "STRING",
+			expectedOK:      true,
+		},
+		"different number of fields": {
+			argumentTypes:   []string{"STRUCT<INT64, INT64>", "STRUCT<STRING, INT64, INT64>"},
+			path:            []structFieldPosition{{index: 0, numFields: 2}},
+			placeholderType: "INT64",
+			expectedOK:      false,
+		},
+		"types that do not agree": {
+			argumentTypes:   []string{"STRUCT<INT64, INT64>", "STRUCT<STRING, INT64>", "STRUCT<DATE, INT64>"},
+			path:            []structFieldPosition{{index: 0, numFields: 2}},
+			placeholderType: "INT64",
+			expectedOK:      false,
+		},
+		"not a struct": {
+			argumentTypes:   []string{"INT64", "STRING"},
+			path:            []structFieldPosition{{index: 0, numFields: 2}},
+			placeholderType: "INT64",
+			expectedOK:      false,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			got, ok := structFieldType(tt.argumentTypes, tt.path, tt.placeholderType)
+			if got != tt.expectedType || ok != tt.expectedOK {
+				t.Errorf("structFieldType(%q) = (%q, %v), want (%q, %v)", tt.argumentTypes, got, ok, tt.expectedType, tt.expectedOK)
+			}
+		})
+	}
+}
