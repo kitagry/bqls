@@ -30,6 +30,10 @@ var nonNullArgumentErrorRegex = regexp.MustCompile(`^(Argument \d+ to|The argume
 //	No matching signature for operator IN for argument types literal INT64 and {STRING}
 var operatorSignatureErrorRegex = regexp.MustCompile(`^No matching signature for operator ([^\n]*?)(?: for argument types:? |\n\s*Argument types: )([^\n]*)`)
 
+var bitwiseOperatorErrorRegex = regexp.MustCompile(`^Bitwise operator \S+ requires two integer/BYTES arguments of the same type, but saw (\S+) and (\S+)$`)
+
+var literalCastErrorRegex = regexp.MustCompile(`^Could not cast literal .* to type \S+$`)
+
 var logicalOperandErrorRegex = regexp.MustCompile(`^No matching signature for operator (AND|OR|NOT)\n(?s:.*?)Argument (\d+): Unable to coerce type \S+ to expected type BOOL`)
 
 type ParsedFile struct {
@@ -1603,6 +1607,132 @@ func splitTypeList(types string) []string {
 		start = i + 1
 	}
 	return list
+}
+
+// fixSubstitutedArithmeticOperand recovers from an error of an arithmetic, concatenation
+// or bitwise operator, one of whose operands is a placeholder that a fix-up substituted
+// for an unknown name. Unlike comparisons, the operands of these operators may differ in
+// type, as in `date - 1` or `timestamp + INTERVAL 1 DAY`, so the placeholder is replaced
+// with a value of the type that the first signature in the error that fits the other
+// operand expects. If no signature fits, as for `x + 'a'`, the operator fails whatever
+// the unknown name is, so the whole expression is replaced with the placeholder `1`,
+// which the fix-ups of the enclosing expression then handle like any other placeholder.
+//
+// declared maps the lowercased names of declared variables to their dummy values, which
+// stand for values of the declared types, so the errors about them are the user's.
+func fixSubstitutedArithmeticOperand(src, fixedSrc string, edits []sourceEdit, node googlesql.ASTNode, parsedErr Error, declared map[string]string) (string, []FixOffset) {
+	errOffset, ok := errorByteOffset(fixedSrc, parsedErr.Position)
+	if !ok {
+		return fixedSrc, nil
+	}
+	m := operatorSignatureErrorRegex.FindStringSubmatch(parsedErr.Msg)
+	isLiteralCastError := literalCastErrorRegex.MatchString(parsedErr.Msg)
+
+	var expr googlesql.ASTNode
+	var placeholder googlesql.ASTExpressionNode
+	// The index of the placeholder operand.
+	var k int
+	// The innermost operator around the error is the one, which the Walk visits last.
+	Walk(node, func(n googlesql.ASTNode) error { //nolint
+		bin, ok := n.(*googlesql.ASTBinaryExpression)
+		if !ok || locStart(n) > errOffset || errOffset >= locEnd(n) {
+			return nil
+		}
+		binOp, _ := bin.Op()
+		op, ok := arithmeticOperators[binOp]
+		if !ok || m != nil && m[1] != op {
+			return nil
+		}
+		lhs, err := bin.Lhs()
+		if err != nil {
+			return nil
+		}
+		rhs, err := bin.Rhs()
+		if err != nil {
+			return nil
+		}
+		// An operator error is at the start of the operator, and a literal cast error at the
+		// literal operand. An error deeper inside an operand, as `name + 1` in
+		// `x + (name + 1)`, is the user's, which must not be folded away with the placeholder.
+		if isLiteralCastError {
+			if errOffset != locStart(lhs) && errOffset != locStart(rhs) {
+				return nil
+			}
+		} else if errOffset != locStart(n) {
+			return nil
+		}
+		for i, operand := range []googlesql.ASTExpressionNode{lhs, rhs} {
+			original, ok := substitutedText(src, edits, locStart(operand), locEnd(operand))
+			// A placeholder substituted for a declared variable stands for a value of the declared type.
+			if _, isDeclared := declared[strings.ToLower(original)]; ok && !isDeclared {
+				expr, placeholder, k = n, operand, i
+				return nil
+			}
+		}
+		return nil
+	})
+	if expr == nil {
+		return fixedSrc, nil
+	}
+
+	// Only the INT64 placeholder is given a type. A placeholder that already has one may
+	// stand in an operator other than the one in the error, as `1` in `1 + 1 + ts`, so it
+	// is folded into its expression instead of being given types back and forth.
+	var typeName string
+	if m != nil {
+		typeName = arithmeticOperandType(m[1], m[2], parsedErr.Msg, k)
+	} else if bm := bitwiseOperatorErrorRegex.FindStringSubmatch(parsedErr.Msg); bm != nil && bm[1+k] == "INT64" && bm[2-k] != "INT64" {
+		typeName = bm[2-k]
+	}
+	if typeName == "" {
+		return replaceSpan(fixedSrc, locStart(expr), locEnd(expr), "1")
+	}
+	return replaceSpan(fixedSrc, locStart(placeholder), locEnd(placeholder), getDummyValueForTypeName(typeName))
+}
+
+// arithmeticOperators maps the arithmetic, concatenation and bitwise operators to their
+// names in the errors.
+var arithmeticOperators = map[googlesql.ASTBinaryExpressionEnums_Op]string{
+	googlesql.ASTBinaryExpressionEnums_OpPlus:       "+",
+	googlesql.ASTBinaryExpressionEnums_OpMinus:      "-",
+	googlesql.ASTBinaryExpressionEnums_OpMultiply:   "*",
+	googlesql.ASTBinaryExpressionEnums_OpDivide:     "/",
+	googlesql.ASTBinaryExpressionEnums_OpConcatOp:   "||",
+	googlesql.ASTBinaryExpressionEnums_OpBitwiseAnd: "&",
+	googlesql.ASTBinaryExpressionEnums_OpBitwiseOr:  "|",
+	googlesql.ASTBinaryExpressionEnums_OpBitwiseXor: "^",
+}
+
+var signatureLineRegex = regexp.MustCompile(`(?m)^\s*Signature: (.*)$`)
+
+// arithmeticOperandType returns the type of the k-th operand of the binary operator op in
+// the first signature listed in the error message whose other operand has the type of the
+// other argument, or "" if none or if the k-th argument is not the INT64 of a placeholder.
+func arithmeticOperandType(op, argumentTypes, msg string, k int) string {
+	args := argumentTypeList(argumentTypes)
+	if len(args) != 2 {
+		return ""
+	}
+	for _, sm := range signatureLineRegex.FindAllStringSubmatch(msg, -1) {
+		lhs, rhs, ok := strings.Cut(sm[1], " "+op+" ")
+		if !ok {
+			continue
+		}
+		sig := [2]string{lhs, rhs}
+		if args[k] == "INT64" && sig[1-k] == args[1-k] && sig[k] != args[k] {
+			return sig[k]
+		}
+	}
+	return ""
+}
+
+// replaceSpan replaces [start, end) of fixedSrc with text.
+func replaceSpan(fixedSrc string, start, end int, text string) (string, []FixOffset) {
+	return fixedSrc[:start] + text + fixedSrc[end:], []FixOffset{{
+		Offset: start,
+		Length: len(text) - (end - start),
+		edits:  []sourceEdit{{start: start, oldLen: end - start, newLen: len(text)}},
+	}}
 }
 
 // isWholeFunctionArgument reports whether the path spanning [start, end) is by itself an
