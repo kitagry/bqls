@@ -1289,25 +1289,25 @@ func operandTypeForOperator(op, argumentTypes string) (string, bool) {
 // signature error other than INT64, the type of the `1` placeholder. It fails unless
 // exactly one such type is listed, since the operands then do not agree on a type anyway.
 func operandTypeOtherThanPlaceholder(argumentTypes string) (string, bool) {
+	return onlyTypeOtherThan(argumentTypeList(argumentTypes), "INT64")
+}
+
+// argumentTypeList returns the argument types listed in an operator signature error.
+func argumentTypeList(argumentTypes string) []string {
 	// IN lists the types as `literal INT64 and {STRING, INT64}`.
-	argumentTypes = strings.NewReplacer(" and {", ", ", "{", "", "}", "").Replace(argumentTypes)
+	list := splitTypeList(strings.NewReplacer(" and {", ", ", "{", "", "}", "").Replace(argumentTypes))
+	for i, typ := range list {
+		list[i] = strings.TrimPrefix(typ, "literal ")
+	}
+	return list
+}
+
+// onlyTypeOtherThan returns the one type among types other than placeholderType. It fails
+// unless exactly one such type is found, since the operands then do not agree on a type anyway.
+func onlyTypeOtherThan(types []string, placeholderType string) (string, bool) {
 	var typeName string
-	depth, start := 0, 0
-	for i := 0; i <= len(argumentTypes); i++ {
-		if i < len(argumentTypes) {
-			switch argumentTypes[i] {
-			case '<', '(':
-				depth++
-			case '>', ')':
-				depth--
-			}
-			if argumentTypes[i] != ',' || depth > 0 {
-				continue
-			}
-		}
-		name := strings.TrimPrefix(strings.TrimSpace(argumentTypes[start:i]), "literal ")
-		start = i + 1
-		if name == "INT64" || name == typeName {
+	for _, name := range types {
+		if name == placeholderType || name == typeName {
 			continue
 		}
 		if typeName != "" {
@@ -1383,6 +1383,226 @@ func operatorOperands(node googlesql.ASTNode, op string) []googlesql.ASTExpressi
 		}
 	}
 	return operands
+}
+
+// fixSubstitutedStructField replaces the placeholders that fix-ups substituted for unknown
+// fields of a struct constructor compared by an operator, as x in `(x, 1) = ('a', 1)`, with
+// a value of the type of the field at the same position in the STRUCT types of the error
+// message. The fields are found by where the fix-ups substituted text, not by the text of
+// the placeholder, which differs between fix-ups.
+//
+// A STRUCT type whose number of fields differs from the constructor tells nothing about
+// a field, so the error about such a comparison is left as the user's.
+func fixSubstitutedStructField(src, fixedSrc string, edits []sourceEdit, node googlesql.ASTNode, parsedErr Error, declared map[string]string) (string, []FixOffset) {
+	m := operatorSignatureErrorRegex.FindStringSubmatch(parsedErr.Msg)
+	if m == nil {
+		return fixedSrc, nil
+	}
+	op := m[1]
+	argumentTypes := argumentTypeList(m[2])
+	if op == "IN UNNEST" {
+		// The struct is compared with the elements of the array.
+		for i, typ := range argumentTypes {
+			if elem, ok := strings.CutPrefix(typ, "ARRAY<"); ok {
+				argumentTypes[i] = strings.TrimSuffix(elem, ">")
+			}
+		}
+	}
+	errOffset, ok := errorByteOffset(fixedSrc, parsedErr.Position)
+	if !ok {
+		return fixedSrc, nil
+	}
+
+	// As in fixSubstitutedOperatorOperand, the innermost operator around the error is the one.
+	var fields []substitutedStructField
+	Walk(node, func(n googlesql.ASTNode) error { //nolint
+		operands := operatorOperands(n, op)
+		if len(operands) == 0 || locStart(n) > errOffset || errOffset >= locEnd(n) {
+			return nil
+		}
+		var found []substitutedStructField
+		for _, operand := range operands {
+			found = append(found, substitutedStructFields(src, edits, operand, nil, declared)...)
+		}
+		if len(found) > 0 {
+			fields = found
+		}
+		return nil
+	})
+
+	var fixOffsets []FixOffset
+	// From the last one, so that each edit keeps the offsets of the ones before it.
+	for _, f := range slices.Backward(fields) {
+		placeholderType, ok := placeholderTypes[strings.ToUpper(fixedSrc[f.start:f.end])]
+		if !ok {
+			continue
+		}
+		typeName, ok := structFieldType(argumentTypes, f.path, placeholderType)
+		if !ok {
+			continue
+		}
+		dummy := getDummyValueForTypeName(typeName)
+		if fixedSrc[f.start:f.end] == dummy {
+			continue
+		}
+		fixedSrc = fixedSrc[:f.start] + dummy + fixedSrc[f.end:]
+		fixOffsets = append(fixOffsets, FixOffset{
+			Offset: f.start,
+			Length: len(dummy) - (f.end - f.start),
+			edits:  []sourceEdit{{start: f.start, oldLen: f.end - f.start, newLen: len(dummy)}},
+		})
+	}
+	return fixedSrc, fixOffsets
+}
+
+// placeholderTypes maps the placeholders that fix-ups substitute for an unknown name, such
+// as `true` in WHERE, to their types, which the error message lists for them.
+var placeholderTypes = map[string]string{
+	"1":    "INT64",
+	"TRUE": "BOOL",
+}
+
+// substitutedStructField is a field of a struct constructor that a fix-up substituted,
+// spanning [start, end) of the fixed source.
+type substitutedStructField struct {
+	start, end int
+	// path leads from the outermost constructor to the field.
+	path []structFieldPosition
+}
+
+type structFieldPosition struct {
+	index, numFields int
+}
+
+// substitutedStructFields returns the fields that fix-ups substituted in the struct
+// constructors of expr, at any depth. path leads to expr, and is empty for an operand,
+// which fixSubstitutedOperatorOperand handles.
+func substitutedStructFields(src string, edits []sourceEdit, expr googlesql.ASTExpressionNode, path []structFieldPosition, declared map[string]string) []substitutedStructField {
+	var fieldExprs []googlesql.ASTExpressionNode
+	switch e := expr.(type) {
+	case *googlesql.ASTStructConstructorWithParens:
+		num, _ := e.NumChildren()
+		for i := int32(0); i < num; i++ {
+			if f, err := e.FieldExpressions(i); err == nil && f != nil {
+				fieldExprs = append(fieldExprs, f)
+			}
+		}
+	case *googlesql.ASTStructConstructorWithKeyword:
+		if typ, _ := e.StructType(); typ != nil {
+			// The fields are coerced to the written types, so no operator signature error is about them.
+			return nil
+		}
+		num, _ := e.NumChildren()
+		for i := int32(0); i < num; i++ {
+			if arg, err := e.Fields(i); err == nil && arg != nil {
+				if f, err := arg.Expression(); err == nil && f != nil {
+					fieldExprs = append(fieldExprs, f)
+				}
+			}
+		}
+	default:
+		if len(path) == 0 {
+			return nil
+		}
+		start, end := locStart(expr), locEnd(expr)
+		original, ok := substitutedText(src, edits, start, end)
+		// A placeholder substituted for a declared variable stands for a value of the declared type.
+		if _, isDeclared := declared[strings.ToLower(original)]; !ok || isDeclared {
+			return nil
+		}
+		return []substitutedStructField{{start: start, end: end, path: path}}
+	}
+
+	var fields []substitutedStructField
+	for i, f := range fieldExprs {
+		fieldPath := append(slices.Clone(path), structFieldPosition{index: i, numFields: len(fieldExprs)})
+		fields = append(fields, substitutedStructFields(src, edits, f, fieldPath, declared)...)
+	}
+	return fields
+}
+
+// substitutedText reports whether [start, end) of the text after edits lies in text that
+// an edit substituted for what the user wrote, and returns what the user wrote there.
+func substitutedText(src string, edits []sourceEdit, start, end int) (string, bool) {
+	for i := len(edits) - 1; i >= 0; i-- {
+		e := edits[i]
+		if e.oldLen > 0 && e.start <= start && end <= e.start+e.newLen {
+			srcStart, srcEnd := toSrcOffset(edits[:i], e.start), toSrcEnd(edits[:i], e.start+e.oldLen)
+			if srcStart < 0 || srcEnd > len(src) || srcStart > srcEnd {
+				return "", false
+			}
+			return src[srcStart:srcEnd], true
+		}
+		start, end = toSrcOffset(edits[i:i+1], start), toSrcEnd(edits[i:i+1], end)
+	}
+	return "", false
+}
+
+// structFieldType returns the type of the field at path in the STRUCT types among
+// argumentTypes other than placeholderType, the type of the placeholder in the field. As in
+// operandTypeOtherThanPlaceholder, it fails unless exactly one such type is found.
+func structFieldType(argumentTypes []string, path []structFieldPosition, placeholderType string) (string, bool) {
+	var fieldTypes []string
+	for _, typ := range argumentTypes {
+		if field, ok := structFieldTypeAt(typ, path); ok {
+			fieldTypes = append(fieldTypes, field)
+		}
+	}
+	return onlyTypeOtherThan(fieldTypes, placeholderType)
+}
+
+func structFieldTypeAt(typ string, path []structFieldPosition) (string, bool) {
+	for _, p := range path {
+		fields, ok := structFieldTypes(typ)
+		if !ok || len(fields) != p.numFields {
+			return "", false
+		}
+		typ = fields[p.index]
+	}
+	return typ, true
+}
+
+// structFieldTypes returns the types of the fields of a STRUCT type, without the names of the fields.
+func structFieldTypes(typ string) ([]string, bool) {
+	inner, ok := strings.CutPrefix(typ, "STRUCT<")
+	if !ok {
+		return nil, false
+	}
+	inner, ok = strings.CutSuffix(inner, ">")
+	if !ok {
+		return nil, false
+	}
+	fields := splitTypeList(inner)
+	for i, f := range fields {
+		// A named field is listed as `a STRING`, and a type has spaces only inside its brackets.
+		if sp := strings.IndexByte(f, ' '); sp >= 0 && (strings.IndexByte(f, '<') < 0 || sp < strings.IndexByte(f, '<')) {
+			fields[i] = f[sp+1:]
+		}
+	}
+	return fields, true
+}
+
+// splitTypeList splits a comma-separated list of types, such as the argument types in an
+// operator signature error, leaving the commas inside a type such as STRUCT<INT64, STRING>.
+func splitTypeList(types string) []string {
+	var list []string
+	depth, start := 0, 0
+	for i := 0; i <= len(types); i++ {
+		if i < len(types) {
+			switch types[i] {
+			case '<', '(':
+				depth++
+			case '>', ')':
+				depth--
+			}
+			if types[i] != ',' || depth > 0 {
+				continue
+			}
+		}
+		list = append(list, strings.TrimSpace(types[start:i]))
+		start = i + 1
+	}
+	return list
 }
 
 // isWholeFunctionArgument reports whether the path spanning [start, end) is by itself an
