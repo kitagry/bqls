@@ -838,6 +838,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			isPipeColumnNotFoundError := strings.HasPrefix(pErr.Msg, "Column name in pipe ") && strings.Contains(pErr.Msg, " not found in input table: ")
 			isNonNullArgumentError := nonNullArgumentErrorRegex.MatchString(pErr.Msg)
 			isOperatorSignatureError := operatorSignatureErrorRegex.MatchString(pErr.Msg)
+			isArithmeticOperandError := isOperatorSignatureError || bitwiseOperatorErrorRegex.MatchString(pErr.Msg) || literalCastErrorRegex.MatchString(pErr.Msg)
 
 			// add information to Error
 			switch {
@@ -942,6 +943,14 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				if len(fo) == 0 {
 					fixedSrc, fo = fixSubstitutedStructField(src, fixedSrc, edits, s, pErr, declarationMap)
 				}
+				if len(fo) > 0 {
+					// The placeholder is the fix-up's, whose error about the unknown name is already reported.
+					skipError = true
+				}
+			}
+
+			if isArithmeticOperandError && len(fo) == 0 {
+				fixedSrc, fo = fixSubstitutedArithmeticOperand(src, fixedSrc, edits, s, pErr, declarationMap)
 				if len(fo) > 0 {
 					// The placeholder is the fix-up's, whose error about the unknown name is already reported.
 					skipError = true

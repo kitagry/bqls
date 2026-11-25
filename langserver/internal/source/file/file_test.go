@@ -4447,6 +4447,169 @@ func TestAnalyzer_UnknownColumnInTupleComparison(t *testing.T) {
 	}
 }
 
+func TestAnalyzer_UnknownColumnAsArithmeticOperand(t *testing.T) {
+	const table = "`project.dataset.table`"
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+		expectedErrMsgs  []string
+		// The user's own type error leaves the statement without an analyzer output.
+		expectedNoOutput bool
+	}{
+		"DATE - DATE": {
+			file:             "SELECT x - d FROM " + table,
+			expectedFixedSrc: "SELECT DATE('1970-01-01') - d FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"INTERVAL + TIMESTAMP": {
+			file:             "SELECT x + ts FROM " + table,
+			expectedFixedSrc: "SELECT INTERVAL 0 DAY + ts FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"TIMESTAMP + INTERVAL": {
+			file:             "SELECT ts + x FROM " + table,
+			expectedFixedSrc: "SELECT ts + INTERVAL 0 DAY FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"first of the signatures that fit": {
+			file:             "SELECT x + INTERVAL 1 DAY FROM " + table,
+			expectedFixedSrc: "SELECT TIMESTAMP('1970-01-01 00:00:00') + INTERVAL 1 DAY FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"unknown path": {
+			file:             "SELECT x.y - d FROM " + table,
+			expectedFixedSrc: "SELECT DATE('1970-01-01') - d FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"arithmetic operand inside a tuple": {
+			file:             "SELECT (x - d, 'a') = (INTERVAL 1 DAY, 'a') FROM " + table,
+			expectedFixedSrc: "SELECT (DATE('1970-01-01') - d, 'a') = (INTERVAL 1 DAY, 'a') FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"bitwise operator": {
+			file:             "SELECT x & b FROM " + table,
+			expectedFixedSrc: "SELECT b'' & b FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"no signature fits": {
+			file:             "SELECT x + name FROM " + table,
+			expectedFixedSrc: "SELECT 1 FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"literal that casts to no operand type": {
+			file:             "SELECT IF(x + 'a' = 'b', 1, 2) FROM " + table,
+			expectedFixedSrc: "SELECT IF('' = 'b', 1, 2) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"nested arithmetic": {
+			file:             "SELECT x + 'a' + 'b' FROM " + table,
+			expectedFixedSrc: "SELECT 1 FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"unknown columns on both sides of an inner operator": {
+			file:             "SELECT x + y + ts FROM " + table,
+			expectedFixedSrc: "SELECT INTERVAL 0 DAY + ts FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x", "Unrecognized name: y"},
+		},
+		"concatenation with an array": {
+			file:             "SELECT x || [1] FROM " + table,
+			expectedFixedSrc: "SELECT 1 FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"operator written by the user": {
+			file:             "SELECT x, 1 + ts FROM " + table,
+			expectedFixedSrc: "SELECT 1, 1 + ts FROM " + table,
+			expectedErrMsgs: []string{
+				"Unrecognized name: x",
+				"No matching signature for operator +",
+			},
+			expectedNoOutput: true,
+		},
+		"literal cast written by the user": {
+			file:             "SELECT x, 1 + 'a' FROM " + table,
+			expectedFixedSrc: "SELECT 1, 1 + 'a' FROM " + table,
+			expectedErrMsgs: []string{
+				"Unrecognized name: x",
+				`Could not cast literal "a" to type DATE`,
+			},
+			expectedNoOutput: true,
+		},
+		"operator error of the user inside an operand": {
+			file:             "SELECT x + (name + 1) FROM " + table,
+			expectedFixedSrc: "SELECT 1 + (name + 1) FROM " + table,
+			expectedErrMsgs: []string{
+				"Unrecognized name: x",
+				"No matching signature for operator +",
+			},
+			expectedNoOutput: true,
+		},
+		"bitwise error of the user inside an operand": {
+			file:             "SELECT x + (b & 1) FROM " + table,
+			expectedFixedSrc: "SELECT 1 + (b & 1) FROM " + table,
+			expectedErrMsgs: []string{
+				"Unrecognized name: x",
+				"Bitwise operator & requires two integer/BYTES arguments of the same type, but saw BYTES and INT64",
+			},
+			expectedNoOutput: true,
+		},
+		"literal cast error of the user inside an operand": {
+			file:             "SELECT x + DATE_DIFF(d, 'bad', DAY) FROM " + table,
+			expectedFixedSrc: "SELECT 1 + DATE_DIFF(d, 'bad', DAY) FROM " + table,
+			expectedErrMsgs: []string{
+				"Unrecognized name: x",
+				`Could not cast literal "bad" to type DATE`,
+			},
+			expectedNoOutput: true,
+		},
+		"declared variable": {
+			file:             "DECLARE v INT64;\nSELECT v + ts FROM " + table,
+			expectedFixedSrc: "DECLARE v INT64;\nSELECT 1 + ts FROM " + table,
+			expectedErrMsgs:  []string{"No matching signature for operator +"},
+			expectedNoOutput: true,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{
+					{Name: "id", Type: bq.IntegerFieldType},
+					{Name: "name", Type: bq.StringFieldType},
+					{Name: "d", Type: bq.DateFieldType},
+					{Name: "ts", Type: bq.TimestampFieldType},
+					{Name: "b", Type: bq.BytesFieldType},
+				}}, nil).
+				AnyTimes()
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			wantOutputs := 1
+			if tt.expectedNoOutput {
+				wantOutputs = 0
+			}
+			if len(got.RNode) != wantOutputs {
+				t.Errorf("got %d analyzer outputs, want %d", len(got.RNode), wantOutputs)
+			}
+			gotMsgs := make([]string, 0, len(got.Errors))
+			for _, e := range got.Errors {
+				// The signature errors list every signature, of which only the first line matters here.
+				msg, _, _ := strings.Cut(e.Msg, "\n")
+				gotMsgs = append(gotMsgs, msg)
+			}
+			if diff := cmp.Diff(tt.expectedErrMsgs, gotMsgs); diff != "" {
+				t.Errorf("errors (-want, +got)\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestAnalyzer_UnknownColumnAsOperatorOperandWithRevertedFixUp(t *testing.T) {
 	const table = "`project.dataset.table`"
 	// `` SELECT `n`x `` stands for a statement whose fix-up breaks the syntax and is reverted,
