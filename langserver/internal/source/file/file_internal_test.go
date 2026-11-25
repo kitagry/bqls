@@ -95,7 +95,7 @@ func TestFixFunctions_KeepSourceWhenErrorIsOutOfRange(t *testing.T) {
 		},
 		"fixErrorToLiteral": fixErrorToLiteral,
 		"fixErrorForWhereStatement": func(src string, parsedErr Error) (string, []FixOffset) {
-			return fixErrorForWhereStatement(src, nil, parsedErr)
+			return fixErrorForWhereStatement(src, nil, parsedErr, 0)
 		},
 		"fixSelectListMustNotBeEmptyStatement": func(src string, parsedErr Error) (string, []FixOffset) {
 			fixed, _, fo := fixSelectListMustNotBeEmptyStatement(src, parsedErr)
@@ -137,7 +137,7 @@ func TestFixFunctions_KeepSourceWhenTermOverflowsSource(t *testing.T) {
 		},
 		"fixErrorToLiteral": fixErrorToLiteral,
 		"fixErrorForWhereStatement": func(src string, parsedErr Error) (string, []FixOffset) {
-			return fixErrorForWhereStatement(src, nil, parsedErr)
+			return fixErrorForWhereStatement(src, nil, parsedErr, 0)
 		},
 	}
 

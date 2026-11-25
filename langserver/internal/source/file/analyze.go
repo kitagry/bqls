@@ -764,7 +764,8 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 		declarationMap := make(map[string]string)
 		if !budgeted {
 			// A substitution fixes one reference to a declared variable per pass (#467).
-			maxRetries = min(minRetries+countDeclaredVariableReferences(node), maxRetriesLimit)
+			// An unknown name in a condition that names other columns takes a few passes of its own (#769).
+			maxRetries = min(minRetries+countDeclaredVariableReferences(node)+passesPerSubstitutedName*countConditionColumns(node), maxRetriesLimit)
 			lastPass = retry == maxRetries-1
 			budgeted = true
 		}
@@ -840,6 +841,11 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			isOperatorSignatureError := operatorSignatureErrorRegex.MatchString(pErr.Msg)
 			isArrayElementsError := arrayElementsErrorRegex.MatchString(pErr.Msg)
 			isArithmeticOperandError := isOperatorSignatureError || bitwiseOperatorErrorRegex.MatchString(pErr.Msg) || literalCastErrorRegex.MatchString(pErr.Msg)
+			// e.g. Equality is not defined for arguments of type ARRAY<INT64>
+			isUndefinedComparisonError := strings.Contains(pErr.Msg, " is not defined for arguments of type ")
+			// Wider than isOperatorSignatureError, e.g. the placeholder `1` as the condition of
+			// CASE WHEN fails with "No matching signature for operator CASE; all WHEN ...".
+			isAnyOperatorSignatureError := strings.HasPrefix(pErr.Msg, "No matching signature for operator ")
 
 			// add information to Error
 			switch {
@@ -891,30 +897,28 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				} else if isWholeFunctionArgument(s, termStart, termEnd) {
 					// NULL coerces to any argument type, whereas `1` or `true` fails to match the signature.
 					fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "NULL")
-				} else if _, ok := SearchAstNode[*googlesql.ASTSelectList](node, errTermOffset); ok {
-					if aliasOnNextLine(fixedSrc, s, termStart, termEnd) {
-						// The alias is likely the next column, before which the user is typing without a comma yet.
-						fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "1,")
-					} else {
+				} else {
+					switch innermostClause(node, errTermOffset).(type) {
+					case *googlesql.ASTSelectList:
+						if aliasOnNextLine(fixedSrc, s, termStart, termEnd) {
+							// The alias is likely the next column, before which the user is typing without a comma yet.
+							fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "1,")
+						} else {
+							fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
+						}
+					case *googlesql.ASTGroupBy:
+						if _, ok := SearchAstNode[*googlesql.ASTPipeAggregate](node, errTermOffset); ok {
+							// Pipe AGGREGATE rejects both GROUP BY ordinals and literals.
+							fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "1+1")
+						} else {
+							fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
+						}
+					case *googlesql.ASTOrderBy:
 						fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
+					case *googlesql.ASTWhereClause, *googlesql.ASTOnClause, *googlesql.ASTHaving, *googlesql.ASTQualify:
+						// The passes after this one, the last of which applies no fix-up.
+						fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr, maxRetries-1-retry)
 					}
-				} else if _, ok := SearchAstNode[*googlesql.ASTWhereClause](node, errTermOffset); ok {
-					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
-				} else if _, ok := SearchAstNode[*googlesql.ASTGroupBy](node, errTermOffset); ok {
-					if _, ok := SearchAstNode[*googlesql.ASTPipeAggregate](node, errTermOffset); ok {
-						// Pipe AGGREGATE rejects both GROUP BY ordinals and literals.
-						fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "1+1")
-					} else {
-						fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
-					}
-				} else if _, ok := SearchAstNode[*googlesql.ASTOrderBy](node, errTermOffset); ok {
-					fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
-				} else if _, ok := SearchAstNode[*googlesql.ASTOnClause](node, errTermOffset); ok {
-					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
-				} else if _, ok := SearchAstNode[*googlesql.ASTHaving](node, errTermOffset); ok {
-					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
-				} else if _, ok := SearchAstNode[*googlesql.ASTQualify](node, errTermOffset); ok {
-					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
 				}
 			}
 
@@ -960,6 +964,14 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 
 			if isArrayElementsError {
 				fixedSrc, fo = fixSubstitutedArrayElement(src, fixedSrc, edits, s, pErr, declarationMap)
+				if len(fo) > 0 {
+					// The placeholder is the fix-up's, whose error about the unknown name is already reported.
+					skipError = true
+				}
+			}
+
+			if (isArithmeticOperandError || isUndefinedComparisonError || isAnyOperatorSignatureError) && len(fo) == 0 {
+				fixedSrc, fo = fixSubstitutedConditionOperand(src, fixedSrc, edits, s, pErr, declarationMap)
 				if len(fo) > 0 {
 					// The placeholder is the fix-up's, whose error about the unknown name is already reported.
 					skipError = true
@@ -1058,6 +1070,22 @@ const (
 	// maxRetriesLimit bounds the time spent on a file, as every pass re-analyzes every statement.
 	maxRetriesLimit = 100
 )
+
+// countConditionColumns counts the columns named in the conditions that name more than one,
+// each of which fixErrorForWhereStatement may substitute on its own.
+func countConditionColumns(node *googlesql.ASTScript) int {
+	count := 0
+	Walk(node, func(n googlesql.ASTNode) error { //nolint
+		if !isCondition(n) {
+			return nil
+		}
+		if columns := conditionColumns(n); len(columns) > 1 {
+			count += len(columns)
+		}
+		return nil
+	})
+	return count
+}
 
 // countDeclaredVariableReferences counts the identifiers named after a declared variable,
 // including the declarations themselves.

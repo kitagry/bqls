@@ -1763,12 +1763,12 @@ func TestAnalyzer_UnrecognizedNameInArithmeticInCondition(t *testing.T) {
 		},
 		"comparison of arithmetic expression in join on clause": {
 			file:             "SELECT a.id FROM `project.dataset.table` a JOIN `project.dataset.table` b ON a.id = x + 1",
-			expectedFixedSrc: "SELECT a.id FROM `project.dataset.table` a JOIN `project.dataset.table` b ON true",
+			expectedFixedSrc: "SELECT a.id FROM `project.dataset.table` a JOIN `project.dataset.table` b ON a.id = 1 + 1",
 			expectedPosition: lsp.Position{Line: 0, Character: 84},
 		},
 		"comparison of arithmetic expression in having clause": {
 			file:             "SELECT SUM(id) FROM `project.dataset.table` HAVING SUM(id) + x > 0",
-			expectedFixedSrc: "SELECT SUM(id) FROM `project.dataset.table` HAVING true",
+			expectedFixedSrc: "SELECT SUM(id) FROM `project.dataset.table` HAVING SUM(id) + 1 > 0",
 			expectedPosition: lsp.Position{Line: 0, Character: 61},
 		},
 		"comparison of arithmetic expression with analytic function in qualify clause": {
@@ -1795,6 +1795,223 @@ func TestAnalyzer_UnrecognizedNameInArithmeticInCondition(t *testing.T) {
 			file:             "SELECT id FROM `project.dataset.table` WHERE x + 1 BETWEEN 0 AND 1",
 			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true",
 			expectedPosition: lsp.Position{Line: 0, Character: 45},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
+				AnyTimes()
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			expectedErrs := []file.Error{{
+				Msg:                  "Unrecognized name: x",
+				Position:             tt.expectedPosition,
+				TermLength:           1,
+				IncompleteColumnName: "x",
+			}}
+			if diff := cmp.Diff(expectedErrs, got.Errors); diff != "" {
+				t.Errorf("Errors diff (-expect, +got)\n%s", diff)
+			}
+			if len(got.RNode) == 0 {
+				t.Errorf("failed to analyze")
+			}
+		})
+	}
+}
+
+func TestAnalyzer_UnrecognizedNamesInOneCondition(t *testing.T) {
+	type unknownName struct {
+		name      string
+		character int
+	}
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+		expectedNames    []unknownName
+	}{
+		"comparison": {
+			file:             "SELECT * FROM `project.dataset.table` WHERE x = y",
+			expectedFixedSrc: "SELECT * FROM `project.dataset.table` WHERE true",
+			expectedNames:    []unknownName{{"x", 44}, {"y", 48}},
+		},
+		"in list": {
+			file:             "SELECT * FROM `project.dataset.table` WHERE name IN (x, y)",
+			expectedFixedSrc: "SELECT * FROM `project.dataset.table` WHERE name IN ('', '')",
+			expectedNames:    []unknownName{{"x", 53}, {"y", 56}},
+		},
+		"between": {
+			file:             "SELECT * FROM `project.dataset.table` WHERE x BETWEEN 'a' AND y",
+			expectedFixedSrc: "SELECT * FROM `project.dataset.table` WHERE true",
+			expectedNames:    []unknownName{{"x", 44}, {"y", 62}},
+		},
+		"tuple in": {
+			file:             "SELECT * FROM `project.dataset.table` WHERE (x, y) IN (('a', 1))",
+			expectedFixedSrc: "SELECT * FROM `project.dataset.table` WHERE true",
+			expectedNames:    []unknownName{{"x", 45}, {"y", 48}},
+		},
+		"three names": {
+			file:             "SELECT * FROM `project.dataset.table` WHERE x BETWEEN y AND z",
+			expectedFixedSrc: "SELECT * FROM `project.dataset.table` WHERE true",
+			expectedNames:    []unknownName{{"x", 44}, {"y", 54}, {"z", 60}},
+		},
+		"join on clause": {
+			file:             "SELECT a.id FROM `project.dataset.table` a JOIN `project.dataset.table` b ON x = y",
+			expectedFixedSrc: "SELECT a.id FROM `project.dataset.table` a JOIN `project.dataset.table` b ON true",
+			expectedNames:    []unknownName{{"x", 77}, {"y", 81}},
+		},
+		"operator that the operator fix-up cannot type": {
+			file:             "SELECT * FROM `project.dataset.table` WHERE x LIKE id",
+			expectedFixedSrc: "SELECT * FROM `project.dataset.table` WHERE true",
+			expectedNames:    []unknownName{{"x", 44}},
+		},
+		"compared with a column whose type the operator fix-up cannot give": {
+			file:             "SELECT * FROM `project.dataset.table` WHERE x = arr",
+			expectedFixedSrc: "SELECT * FROM `project.dataset.table` WHERE true",
+			expectedNames:    []unknownName{{"x", 44}},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{
+					{Name: "id", Type: bq.IntegerFieldType},
+					{Name: "name", Type: bq.StringFieldType},
+					{Name: "arr", Type: bq.IntegerFieldType, Repeated: true},
+				}}, nil).
+				AnyTimes()
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			var expectedErrs []file.Error
+			for _, name := range tt.expectedNames {
+				expectedErrs = append(expectedErrs, file.Error{
+					Msg:                  "Unrecognized name: " + name.name,
+					Position:             lsp.Position{Line: 0, Character: name.character},
+					TermLength:           len(name.name),
+					IncompleteColumnName: name.name,
+				})
+			}
+			if diff := cmp.Diff(expectedErrs, got.Errors); diff != "" {
+				t.Errorf("Errors diff (-expect, +got)\n%s", diff)
+			}
+			if len(got.RNode) == 0 {
+				t.Errorf("failed to analyze")
+			}
+		})
+	}
+}
+
+func TestAnalyzer_UnrecognizedNamesInConditionsWithinFixUpLimit(t *testing.T) {
+	manyConditions := make([]string, 50)
+	for i := range manyConditions {
+		manyConditions[i] = fmt.Sprintf("name = x%d", i)
+	}
+	tests := map[string]struct {
+		file string
+
+		minErrors int
+	}{
+		"many names in one condition": {
+			file:      "SELECT * FROM `project.dataset.table` WHERE name IN (a, b, c, d, e, f, g, h, i, j, k, l)",
+			minErrors: 12,
+		},
+		"names in several conditions": {
+			file:      "SELECT * FROM `project.dataset.table` WHERE name IN (a, b, c, d, e, f, g, h) AND id BETWEEN i AND j AND id = k",
+			minErrors: 11,
+		},
+		// Each name takes a pass to be substituted and another for the operator fix-up to
+		// type it, which reaches the limit of fix-ups at the last condition.
+		"names up to the limit of fix-ups": {
+			file:      "SELECT * FROM `project.dataset.table` WHERE " + strings.Join(manyConditions, " AND "),
+			minErrors: 50,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{
+					{Name: "id", Type: bq.IntegerFieldType},
+					{Name: "name", Type: bq.StringFieldType},
+				}}, nil).
+				AnyTimes()
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if len(got.RNode) == 0 {
+				t.Fatalf("failed to analyze, errors: %v", got.Errors)
+			}
+			if len(got.Errors) < tt.minErrors {
+				t.Errorf("got %d errors %v, want at least %d", len(got.Errors), got.Errors, tt.minErrors)
+			}
+			for _, e := range got.Errors {
+				if !strings.HasPrefix(e.Msg, "Unrecognized name: ") {
+					t.Errorf("got error %+v, want only the unknown names", e)
+				}
+			}
+		})
+	}
+}
+
+func TestAnalyzer_UnrecognizedNameInClauseOfSubqueryInCondition(t *testing.T) {
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+		expectedPosition lsp.Position
+	}{
+		"order by of subquery in where clause": {
+			file:             "SELECT * FROM `project.dataset.table` WHERE id = (SELECT id FROM `project.dataset.table` ORDER BY x LIMIT 1)",
+			expectedFixedSrc: "SELECT * FROM `project.dataset.table` WHERE id = (SELECT id FROM `project.dataset.table` ORDER BY 1 LIMIT 1)",
+			expectedPosition: lsp.Position{Line: 0, Character: 98},
+		},
+		"order by of exists subquery in where clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE EXISTS (SELECT 1 FROM `project.dataset.table` ORDER BY x)",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE EXISTS (SELECT 1 FROM `project.dataset.table` ORDER BY 1)",
+			expectedPosition: lsp.Position{Line: 0, Character: 100},
+		},
+		"group by of subquery in where clause": {
+			file:             "SELECT * FROM `project.dataset.table` WHERE id IN (SELECT id FROM `project.dataset.table` GROUP BY x)",
+			expectedFixedSrc: "SELECT * FROM `project.dataset.table` WHERE id IN (SELECT id FROM `project.dataset.table` GROUP BY 1)",
+			expectedPosition: lsp.Position{Line: 0, Character: 99},
+		},
+		"group by of subquery in join on clause": {
+			file:             "SELECT a.id FROM `project.dataset.table` a JOIN `project.dataset.table` b ON a.id IN (SELECT id FROM `project.dataset.table` GROUP BY x)",
+			expectedFixedSrc: "SELECT a.id FROM `project.dataset.table` a JOIN `project.dataset.table` b ON a.id IN (SELECT id FROM `project.dataset.table` GROUP BY 1)",
+			expectedPosition: lsp.Position{Line: 0, Character: 134},
+		},
+		"where clause of subquery in select list": {
+			file:             "SELECT (SELECT 1 FROM `project.dataset.table` WHERE x) FROM `project.dataset.table`",
+			expectedFixedSrc: "SELECT (SELECT 1 FROM `project.dataset.table` WHERE true) FROM `project.dataset.table`",
+			expectedPosition: lsp.Position{Line: 0, Character: 52},
+		},
+		"unnest in from clause of subquery in where clause": {
+			// The FROM clause has no fix-up of its own, so the outer condition is replaced.
+			file:             "SELECT * FROM `project.dataset.table` WHERE id IN (SELECT v FROM UNNEST(x) AS v)",
+			expectedFixedSrc: "SELECT * FROM `project.dataset.table` WHERE true",
+			expectedPosition: lsp.Position{Line: 0, Character: 72},
 		},
 	}
 
@@ -4361,7 +4578,7 @@ func TestAnalyzer_UnknownColumnAsOperatorOperand(t *testing.T) {
 		},
 		"IN list element in WHERE": {
 			file:             "SELECT * FROM " + table + " WHERE name IN (x, 'b')",
-			expectedFixedSrc: "SELECT * FROM " + table + " WHERE true",
+			expectedFixedSrc: "SELECT * FROM " + table + " WHERE name IN ('', 'b')",
 			expectedErrMsgs:  []string{"Unrecognized name: x"},
 		},
 		"IN UNNEST in WHERE": {
@@ -4437,6 +4654,29 @@ func TestAnalyzer_UnknownColumnAsOperatorOperand(t *testing.T) {
 				"No matching signature for operator IN for argument types literal INT64 and {STRING}",
 			},
 			expectedNoOutput: true,
+		},
+		"declared variable in WHERE": {
+			file:             "DECLARE v INT64;\nSELECT * FROM " + table + " WHERE name = v",
+			expectedFixedSrc: "DECLARE v INT64;\nSELECT * FROM " + table + " WHERE name = 1",
+			expectedErrMsgs: []string{
+				"No matching signature for operator = for argument types: STRING, INT64\n  Signature: T1 = T1\n    Unable to find common supertype for templated argument <T1>\n      Input types for <T1>: {INT64, STRING}",
+			},
+			expectedNoOutput: true,
+		},
+		// NULL coerces to any argument type, so the operator fails whatever the unknown name is.
+		"user's error beside a NULL function argument in WHERE": {
+			file:             "SELECT * FROM " + table + " WHERE LENGTH(x) = 'a'",
+			expectedFixedSrc: "SELECT * FROM " + table + " WHERE LENGTH(NULL) = 'a'",
+			expectedErrMsgs: []string{
+				"Unrecognized name: x",
+				"No matching signature for operator = for argument types: INT64, STRING\n  Signature: T1 = T1\n    Unable to find common supertype for templated argument <T1>\n      Input types for <T1>: {INT64, STRING}",
+			},
+			expectedNoOutput: true,
+		},
+		"WHEN condition in WHERE": {
+			file:             "SELECT * FROM " + table + " WHERE CASE WHEN x THEN 1 END = id",
+			expectedFixedSrc: "SELECT * FROM " + table + " WHERE true",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
 		},
 	}
 
@@ -4542,7 +4782,7 @@ func TestAnalyzer_UnknownColumnInTupleComparison(t *testing.T) {
 		"IN in WHERE": {
 			file:             "SELECT * FROM " + table + " WHERE (x, y) IN (('a', DATE '2020-01-01'))",
 			expectedFixedSrc: "SELECT * FROM " + table + " WHERE true",
-			expectedErrMsgs:  []string{"Unrecognized name: x"},
+			expectedErrMsgs:  []string{"Unrecognized name: x", "Unrecognized name: y"},
 		},
 		// IS DISTINCT FROM is the only comparison that GoogleSQL defines for arrays.
 		"array": {
