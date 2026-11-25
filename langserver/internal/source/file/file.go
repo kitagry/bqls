@@ -241,11 +241,22 @@ func (p *ParsedFile) FindIncompleteColumnName(pos lsp.Position) string {
 
 	for _, err := range p.Errors {
 		startOffset := positionToByteOffset(p.Src, err.Position)
-		if startOffset <= targetTerm && targetTerm <= startOffset+err.TermLength {
+		endOffset := startOffset + err.TermLength
+		// The completion replaces the typed prefix before the cursor, which would take a
+		// backquote along with it outside of a quoted term.
+		if isQuotedTerm(p.Src, startOffset, endOffset) && (targetTerm == startOffset || targetTerm == endOffset) {
+			continue
+		}
+		if startOffset <= targetTerm && targetTerm <= endOffset {
 			return err.IncompleteColumnName
 		}
 	}
 	return ""
+}
+
+// isQuotedTerm reports whether src[start:end] is a name quoted with backquotes, as "`unknown`".
+func isQuotedTerm(src string, start, end int) bool {
+	return 0 <= start && start+2 <= end && end <= len(src) && src[start] == '`' && src[end-1] == '`'
 }
 
 type FixOffset struct {
@@ -1066,9 +1077,29 @@ func addInformationToUnrecognizedNameError(src string, parsedErr Error) Error {
 		unrecognizedName = unrecognizedName[:ind]
 	}
 
+	// The message quotes only a name that needs it, such as "`my field`", whereas the term
+	// covers the backquotes the user wrote. IncompleteColumnName goes without them, because
+	// the completion matches it with the names and replaces it inside the backquotes.
+	if len(unrecognizedName) >= 2 && strings.HasPrefix(unrecognizedName, "`") && strings.HasSuffix(unrecognizedName, "`") {
+		unrecognizedName = unrecognizedName[1 : len(unrecognizedName)-1]
+	}
 	parsedErr.TermLength = len(unrecognizedName)
+	if errOffset, ok := errorByteOffset(src, parsedErr.Position); ok && errOffset+len(unrecognizedName) <= len(src) {
+		parsedErr.TermLength = nameEnd(src, errOffset, unrecognizedName) - errOffset
+	}
 	parsedErr.IncompleteColumnName = unrecognizedName
 	return parsedErr
+}
+
+// termStart returns where the term of parsedErr at errOffset starts in src. IncompleteColumnName
+// is either the path that ends with the term, as "t.x" of the unknown field x, or the term
+// spelled without its backquotes, as "unknown" of "`unknown`".
+func termStart(src string, errOffset int, parsedErr Error) int {
+	termEnd := errOffset + parsedErr.TermLength
+	if 0 <= errOffset && termEnd <= len(src) && strings.HasSuffix(parsedErr.IncompleteColumnName, src[errOffset:termEnd]) {
+		return termEnd - len(parsedErr.IncompleteColumnName)
+	}
+	return errOffset
 }
 
 func fixDeclarationError(src string, parsedErr Error, defaultVal string) (fixedSrc string, fixOffsets []FixOffset) {
@@ -1077,7 +1108,7 @@ func fixDeclarationError(src string, parsedErr Error, defaultVal string) (fixedS
 		return src, nil
 	}
 
-	replaceOffset := errOffset + parsedErr.TermLength - len(parsedErr.IncompleteColumnName)
+	replaceOffset := termStart(src, errOffset, parsedErr)
 	if replaceOffset < 0 || replaceOffset+len(parsedErr.IncompleteColumnName) > len(src) {
 		return src, nil
 	}
@@ -1102,7 +1133,7 @@ func fixErrorToExpression(src string, parsedErr Error, expr string) (fixedSrc st
 		return src, nil
 	}
 
-	replaceOffset := errOffset + parsedErr.TermLength - len(parsedErr.IncompleteColumnName)
+	replaceOffset := termStart(src, errOffset, parsedErr)
 	if replaceOffset < 0 || replaceOffset+len(parsedErr.IncompleteColumnName) > len(src) {
 		return src, nil
 	}
@@ -1930,7 +1961,7 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 			return substitute(src, startOffset, endOffset, "true", startOffset)
 		}
 	}
-	incompleteOffset := errOffset + parsedErr.TermLength - len(parsedErr.IncompleteColumnName)
+	incompleteOffset := termStart(src, errOffset, parsedErr)
 	if isArithmeticOperand(node, incompleteOffset) {
 		// e.x.) SELECT * FROM table WHERE STARTS_WITH(unexist_column || 'a', 'b')
 		// `true` fails the operator, whereas the fix-ups of arithmetic operators give `1` a type.
@@ -2247,7 +2278,7 @@ func addInformationToNotExistInStructError(src string, node googlesql.ASTNode, p
 	end := nameEnd(src, errOffset, notExistColumn)
 	parsedErr.TermLength = end - errOffset
 
-	firstIndex := pathStartAfter(node, strings.LastIndexFunc(src[:errOffset], unicode.IsSpace)+1, errOffset)
+	firstIndex := pathStart(node, errOffset, strings.LastIndexFunc(src[:errOffset], unicode.IsSpace)+1)
 	// A field access on a non-path expression, e.g. `STRUCT(1 AS a).b`, may contain
 	// whitespace, so the text after the last whitespace would be only part of it.
 	if dot, ok := SearchAstNode[*googlesql.ASTDotIdentifier](node, errOffset); ok {
@@ -2278,21 +2309,21 @@ func addInformationToNotFoundInsideTableError(src string, node googlesql.ASTNode
 	end := nameEnd(src, errOffset, notExistColumn)
 	parsedErr.TermLength = end - errOffset
 
-	firstIndex := pathStartAfter(node, strings.LastIndexFunc(src[:errOffset], unicode.IsSpace)+1, errOffset)
+	firstIndex := pathStart(node, errOffset, strings.LastIndexFunc(src[:errOffset], unicode.IsSpace)+1)
 	parsedErr.IncompleteColumnName = src[firstIndex:end]
 	return parsedErr
 }
 
-// pathStartAfter returns the start of the path containing errOffset when it is after
-// firstIndex. The path may follow a delimiter without whitespace, e.g. `NULLIF(t.a`,
-// and the fix-up must not replace the delimiter along with it.
-func pathStartAfter(node googlesql.ASTNode, firstIndex, errOffset int) int {
+// pathStart returns the start of the path containing errOffset, or fallback if there is
+// none. The path may follow a delimiter without whitespace, e.g. `NULLIF(t.a`, which the
+// fix-up must not replace along with it, or contain a space in a quoted name, e.g. "`a b`.x".
+func pathStart(node googlesql.ASTNode, errOffset, fallback int) int {
 	if path, ok := SearchAstNode[*googlesql.ASTPathExpression](node, errOffset); ok {
-		if start := locStart(path); start > firstIndex {
+		if start := locStart(path); start >= 0 {
 			return start
 		}
 	}
-	return firstIndex
+	return fallback
 }
 
 func positionToByteOffset(sql string, position lsp.Position) int {

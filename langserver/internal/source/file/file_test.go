@@ -4898,14 +4898,14 @@ func TestAnalyzer_PlaceholderBeforeIdentifier(t *testing.T) {
 			file:             "SELECT `unknown`x;",
 			expectedFixedSrc: "SELECT 1 x;",
 			expectedErrs: []file.Error{
-				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 9, IncompleteColumnName: "unknown"},
 			},
 		},
 		"keyword after an unknown name as a WHERE condition": {
 			file:             "SELECT a FROM (SELECT 1 AS a) WHERE `unknown`AND TRUE;",
 			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE true AND TRUE;",
 			expectedErrs: []file.Error{
-				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 36}, TermLength: 7, IncompleteColumnName: "unknown"},
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 36}, TermLength: 9, IncompleteColumnName: "unknown"},
 			},
 		},
 		// The placeholder also replaces a subscript after the name, after which the alias follows.
@@ -4920,7 +4920,7 @@ func TestAnalyzer_PlaceholderBeforeIdentifier(t *testing.T) {
 			file:             "SELECT a FROM (SELECT 1 AS a) WHERE`unknown` = 1;",
 			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE true;",
 			expectedErrs: []file.Error{
-				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 35}, TermLength: 7, IncompleteColumnName: "unknown"},
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 35}, TermLength: 9, IncompleteColumnName: "unknown"},
 			},
 		},
 		// IN, BETWEEN and LIKE are replaced as a whole condition, next to a keyword.
@@ -4928,28 +4928,28 @@ func TestAnalyzer_PlaceholderBeforeIdentifier(t *testing.T) {
 			file:             "SELECT a FROM (SELECT 1 AS a) WHERE `unknown` IN ('a')AND TRUE;",
 			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE true AND TRUE;",
 			expectedErrs: []file.Error{
-				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 36}, TermLength: 7, IncompleteColumnName: "unknown"},
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 36}, TermLength: 9, IncompleteColumnName: "unknown"},
 			},
 		},
 		"WHERE right before BETWEEN with an unknown name": {
 			file:             "SELECT a FROM (SELECT 1 AS a) WHERE`unknown` BETWEEN 1 AND 2;",
 			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE true;",
 			expectedErrs: []file.Error{
-				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 35}, TermLength: 7, IncompleteColumnName: "unknown"},
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 35}, TermLength: 9, IncompleteColumnName: "unknown"},
 			},
 		},
 		"keyword after LIKE with an unknown name in WHERE": {
 			file:             "SELECT a FROM (SELECT 1 AS a) WHERE `unknown` LIKE 'a'AND TRUE;",
 			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE true AND TRUE;",
 			expectedErrs: []file.Error{
-				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 36}, TermLength: 7, IncompleteColumnName: "unknown"},
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 36}, TermLength: 9, IncompleteColumnName: "unknown"},
 			},
 		},
 		"WHERE right before IN with an unknown name": {
 			file:             "SELECT a FROM (SELECT 1 AS a) WHERE`unknown` IN ('a');",
 			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE true;",
 			expectedErrs: []file.Error{
-				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 35}, TermLength: 7, IncompleteColumnName: "unknown"},
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 35}, TermLength: 9, IncompleteColumnName: "unknown"},
 			},
 		},
 		// An arithmetic operand in WHERE gets `1` rather than `true`.
@@ -4957,7 +4957,7 @@ func TestAnalyzer_PlaceholderBeforeIdentifier(t *testing.T) {
 			file:             "SELECT a FROM (SELECT 1 AS a) WHERE STARTS_WITH(CASE WHEN TRUE THEN`unknown` || 'a' END, 'b');",
 			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE STARTS_WITH(CASE WHEN TRUE THEN 1 || 'a' END, 'b');",
 			expectedErrs: []file.Error{
-				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 67}, TermLength: 7, IncompleteColumnName: "unknown"},
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 67}, TermLength: 9, IncompleteColumnName: "unknown"},
 			},
 		},
 		// The examples in #768.
@@ -4969,14 +4969,14 @@ func TestAnalyzer_PlaceholderBeforeIdentifier(t *testing.T) {
 			file:             "SELECT a FROM (SELECT 1 AS a) WHERE`unknown`;",
 			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE true;",
 			expectedErrs: []file.Error{
-				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 35}, TermLength: 7, IncompleteColumnName: "unknown"},
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 35}, TermLength: 9, IncompleteColumnName: "unknown"},
 			},
 		},
 		"keyword before an unknown name as a WHERE condition": {
 			file:             "SELECT a FROM (SELECT 1 AS a) WHERE a = 1 AND`unknown`;",
 			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE a = 1 AND true;",
 			expectedErrs: []file.Error{
-				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 45}, TermLength: 7, IncompleteColumnName: "unknown"},
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 45}, TermLength: 9, IncompleteColumnName: "unknown"},
 			},
 		},
 		"keyword before a declared INT64": {
@@ -5017,6 +5017,28 @@ func TestAnalyzer_PlaceholderBeforeIdentifier(t *testing.T) {
 			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE true AND TRUE;",
 			expectedErrs: []file.Error{
 				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 36}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		// The examples in #774 and #775.
+		"unknown quoted name with a space": {
+			file:             "SELECT `my field`x;",
+			expectedFixedSrc: "SELECT 1 x;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: `my field`", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 10, IncompleteColumnName: "my field"},
+			},
+		},
+		"unknown field after a quoted name with a space": {
+			file:             "SELECT `a b`.x FROM (SELECT STRUCT(1 AS y) AS `a b`);",
+			expectedFixedSrc: "SELECT 1 FROM (SELECT STRUCT(1 AS y) AS `a b`);",
+			expectedErrs: []file.Error{
+				{Msg: "Field name x does not exist in STRUCT<y INT64>", Position: lsp.Position{Line: 0, Character: 13}, TermLength: 1, IncompleteColumnName: "`a b`.x"},
+			},
+		},
+		"name not found inside a quoted table name with a space": {
+			file:             "SELECT `a b`.x FROM (SELECT 1 AS a) AS `a b`;",
+			expectedFixedSrc: "SELECT 1 FROM (SELECT 1 AS a) AS `a b`;",
+			expectedErrs: []file.Error{
+				{Msg: "Name x not found inside a b", Position: lsp.Position{Line: 0, Character: 13}, TermLength: 1, IncompleteColumnName: "`a b`.x"},
 			},
 		},
 	}
