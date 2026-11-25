@@ -2522,6 +2522,23 @@ func TestAnalyzer_UnknownColumnKeepsItsNameForOuterQuery(t *testing.T) {
 			expectedFixedSrc: "SELECT 1 AS y FROM " + table + " WHERE true",
 			expectedErrMsgs:  []string{"Unrecognized name: y", "Unrecognized name: y"},
 		},
+		// A reserved keyword may follow a dot but not AS.
+		"reserved keyword after a dot": {
+			file:             "SELECT t.end FROM " + table + " t",
+			expectedFixedSrc: "SELECT 1 AS `end` FROM " + table + " t",
+			expectedErrMsgs:  []string{"Name end not found inside t"},
+		},
+		// Another column of the name would make the name ambiguous.
+		"name of another column": {
+			file:             "SELECT id, x.id FROM " + table + " ORDER BY id",
+			expectedFixedSrc: "SELECT id, 1 FROM " + table + " ORDER BY id",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"name of another column with an alias": {
+			file:             "SELECT y FROM (SELECT 1 AS Y, x.y FROM " + table + ")",
+			expectedFixedSrc: "SELECT y FROM (SELECT 1 AS Y, 1 FROM " + table + ")",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
 		// A parenthesized column has no name to keep.
 		"parenthesized": {
 			file:             "SELECT id FROM (SELECT id, (y) FROM " + table + ")",

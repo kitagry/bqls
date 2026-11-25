@@ -2043,7 +2043,65 @@ func implicitColumnName(src string, node googlesql.ASTNode, start, end int) (str
 	if nameStart < 0 || nameEnd > len(src) || nameStart >= nameEnd {
 		return "", false
 	}
-	return src[nameStart:nameEnd], true
+	if lastName, err := last.GetAsString(); err != nil || hasOtherColumnNamed(column, lastName) {
+		// Another column of the name would make the name ambiguous to the outer query and ORDER BY.
+		return "", false
+	}
+	name := src[nameStart:nameEnd]
+	if quoted, err := last.IsQuoted(); err == nil && !quoted && isReservedKeyword(name) {
+		// A reserved keyword may follow a dot but not AS.
+		name = "`" + name + "`"
+	}
+	return name, true
+}
+
+// hasOtherColumnNamed reports whether a column of the SELECT list other than column has
+// name, by its alias or by the last name of its path.
+func hasOtherColumnNamed(column *googlesql.ASTSelectColumn, name string) bool {
+	list, err := column.Parent()
+	if err != nil || list == nil {
+		return false
+	}
+	n, err := list.NumChildren()
+	if err != nil {
+		return false
+	}
+	for i := int32(0); i < n; i++ {
+		child, err := list.Child(i)
+		if err != nil {
+			continue
+		}
+		other, ok := child.(*googlesql.ASTSelectColumn)
+		if !ok || locStart(other) == locStart(column) {
+			continue
+		}
+		if otherName, ok := selectColumnName(other); ok && strings.EqualFold(otherName, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// selectColumnName returns the name of column, which is its alias or the last name of its path.
+func selectColumnName(column *googlesql.ASTSelectColumn) (string, bool) {
+	if alias, err := column.Alias(); err == nil && alias != nil {
+		name, err := alias.GetAsString()
+		return name, err == nil
+	}
+	expr, err := column.Expression()
+	if err != nil {
+		return "", false
+	}
+	path, ok := expr.(*googlesql.ASTPathExpression)
+	if !ok {
+		return "", false
+	}
+	last, err := path.LastName()
+	if err != nil || last == nil {
+		return "", false
+	}
+	name, err := last.GetAsString()
+	return name, err == nil
 }
 
 // isSelectAsValue reports whether column is the one of SELECT AS VALUE.
