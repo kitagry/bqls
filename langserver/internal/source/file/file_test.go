@@ -1793,7 +1793,7 @@ func TestAnalyzer_UnrecognizedNameInArithmeticInCondition(t *testing.T) {
 		},
 		"arithmetic expression in between": {
 			file:             "SELECT id FROM `project.dataset.table` WHERE x + 1 BETWEEN 0 AND 1",
-			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE 1 + 1 BETWEEN 0 AND 1",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true",
 			expectedPosition: lsp.Position{Line: 0, Character: 45},
 		},
 	}
@@ -4347,6 +4347,47 @@ func TestAnalyzer_UnknownColumnAsOperatorOperand(t *testing.T) {
 			expectedFixedSrc: "SELECT '' IN UNNEST(['a']) FROM " + table,
 			expectedErrMsgs:  []string{"Unrecognized name: x"},
 		},
+		// In WHERE and ON, the whole condition around an unknown name is replaced with `true`.
+		"IN in WHERE": {
+			file:             "SELECT * FROM " + table + " WHERE x IN ('a')",
+			expectedFixedSrc: "SELECT * FROM " + table + " WHERE true",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"NOT IN in WHERE": {
+			file:             "SELECT * FROM " + table + " WHERE id > 0 AND x NOT IN ('a')",
+			expectedFixedSrc: "SELECT * FROM " + table + " WHERE id > 0 AND true",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"IN list element in WHERE": {
+			file:             "SELECT * FROM " + table + " WHERE name IN (x, 'b')",
+			expectedFixedSrc: "SELECT * FROM " + table + " WHERE true",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"IN UNNEST in WHERE": {
+			file:             "SELECT * FROM " + table + " WHERE x IN UNNEST(['a'])",
+			expectedFixedSrc: "SELECT * FROM " + table + " WHERE true",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"BETWEEN in WHERE": {
+			file:             "SELECT * FROM " + table + " WHERE 'c' BETWEEN x AND 'd'",
+			expectedFixedSrc: "SELECT * FROM " + table + " WHERE true",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"LIKE ANY in WHERE": {
+			file:             "SELECT * FROM " + table + " WHERE x LIKE ANY ('a', 'b')",
+			expectedFixedSrc: "SELECT * FROM " + table + " WHERE true",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"IN in ON": {
+			file:             "SELECT * FROM " + table + " a JOIN " + table + " b ON x IN ('a')",
+			expectedFixedSrc: "SELECT * FROM " + table + " a JOIN " + table + " b ON true",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"IN inside a comparison in WHERE": {
+			file:             "SELECT * FROM " + table + " WHERE (x IN ('a')) = TRUE",
+			expectedFixedSrc: "SELECT * FROM " + table + " WHERE (true) = TRUE",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
 		"NOT": {
 			file:             "SELECT NOT x FROM " + table,
 			expectedFixedSrc: "SELECT NOT TRUE FROM " + table,
@@ -4479,11 +4520,11 @@ func TestAnalyzer_UnknownColumnInTupleComparison(t *testing.T) {
 			expectedFixedSrc: "SELECT ('', 1) IN UNNEST([STRUCT('a', 1)]) FROM " + table,
 			expectedErrMsgs:  []string{"Unrecognized name: x"},
 		},
-		// The fix-up in WHERE substitutes `true` rather than `1`.
+		// The fix-up in WHERE replaces the whole condition, as for `x = 'a'`.
 		"IN in WHERE": {
 			file:             "SELECT * FROM " + table + " WHERE (x, y) IN (('a', DATE '2020-01-01'))",
-			expectedFixedSrc: "SELECT * FROM " + table + " WHERE ('', DATE('1970-01-01')) IN (('a', DATE '2020-01-01'))",
-			expectedErrMsgs:  []string{"Unrecognized name: x", "Unrecognized name: y"},
+			expectedFixedSrc: "SELECT * FROM " + table + " WHERE true",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
 		},
 		"different number of fields": {
 			file:             "SELECT (x, 1) = ('a', 1, 2) FROM " + table,

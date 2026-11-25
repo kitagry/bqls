@@ -1911,6 +1911,8 @@ func isCondition(n googlesql.ASTNode) bool {
 		op, _ := n.Op()
 		_, isArithmetic := arithmeticOperators[op]
 		return !isArithmetic
+	case *googlesql.ASTInExpression, *googlesql.ASTBetweenExpression, *googlesql.ASTLikeExpression:
+		return true
 	}
 	return false
 }
@@ -2091,7 +2093,7 @@ func addInformationToLogicalOperandError(src string, node googlesql.ASTNode, par
 }
 
 // fixNotBoolClauseError replaces only the bare path itself; searching for an enclosing
-// binary expression (as fixErrorForWhereStatement does) could rewrite an outer one.
+// condition (as fixErrorForWhereStatement does) could rewrite an outer one.
 func fixNotBoolClauseError(src string, parsedErr Error) (fixedSrc string, fixOffsets []FixOffset) {
 	start, ok := errorByteOffset(src, parsedErr.Position)
 	end := start + parsedErr.TermLength
