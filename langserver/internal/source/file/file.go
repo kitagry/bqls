@@ -2040,22 +2040,24 @@ func insideTablePartitionBy(node googlesql.ASTNode) bool {
 // becomes
 //
 //	SELECT * FROM table WHERE true
-func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, parsedErr Error) (fixedSrc string, fixOffsets []FixOffset) {
+//
+// When the condition names other columns, which may be unknown as well, only the unknown
+// name is replaced with `1` while passesLeft allows the operator fix-ups to type it.
+func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, parsedErr Error, passesLeft int) (fixedSrc string, fixOffsets []FixOffset) {
 	errOffset, ok := errorByteOffset(src, parsedErr.Position)
 	if !ok || errOffset == 0 || errOffset == len(src) {
 		return src, nil
 	}
 
-	if cond, ok := innermostCondition(node, errOffset); ok && insideInnermostCondition(node, cond, errOffset) && !containsAnalyticFunction(cond) {
-		// e.x.) SELECT * FROM table WHERE unexist_column = 1
-		loc, _ := cond.GetParseLocationRange()
-		startOffset := parseLocStart(loc)
-		endOffset := parseLocEnd(loc)
-		if startOffset >= 0 && endOffset >= 0 {
-			return substitute(src, startOffset, endOffset, "true", startOffset)
-		}
-	}
 	incompleteOffset := termStart(src, errOffset, parsedErr)
+	if cond, ok := replaceableCondition(node, errOffset); ok {
+		if passesLeft >= passesPerSubstitutedName && namesOtherColumn(cond, incompleteOffset) {
+			// e.x.) SELECT * FROM table WHERE unexist_column = other_column
+			return fixErrorToLiteral(src, parsedErr)
+		}
+		// e.x.) SELECT * FROM table WHERE unexist_column = 1
+		return substitute(src, locStart(cond), locEnd(cond), "true", locStart(cond))
+	}
 	if isArithmeticOperand(node, incompleteOffset) {
 		// e.x.) SELECT * FROM table WHERE STARTS_WITH(unexist_column || 'a', 'b')
 		// `true` fails the operator, whereas the fix-ups of arithmetic operators give `1` a type.
@@ -2063,6 +2065,77 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 	}
 	// e.x.) SELECT * FROM table WHERE unexist_column
 	return fixErrorToExpression(src, parsedErr, "true")
+}
+
+// passesPerSubstitutedName is the passes that an unknown name in a condition may take once it
+// is substituted with `1`: one for the operator fix-ups to type it, another to replace the
+// condition when they cannot, and one more for the rest of the statement.
+const passesPerSubstitutedName = 3
+
+// fixSubstitutedConditionOperand replaces with `true` the condition whose operator fails
+// on the placeholder `1` of fixErrorForWhereStatement, or on the dummy that the operator
+// fix-ups substituted for it, e.g. `ARRAY<INT64>[] = array_column`.
+func fixSubstitutedConditionOperand(src, fixedSrc string, edits []sourceEdit, node googlesql.ASTNode, parsedErr Error) (string, []FixOffset) {
+	errOffset, ok := errorByteOffset(fixedSrc, parsedErr.Position)
+	if !ok {
+		return fixedSrc, nil
+	}
+	cond, ok := replaceableCondition(node, errOffset)
+	if !ok {
+		return fixedSrc, nil
+	}
+	hasSubstitution := containsOutsideSubquery(cond, func(n googlesql.ASTNode) bool {
+		start, end := locStart(n), locEnd(n)
+		if start < 0 || end > len(fixedSrc) || start >= end {
+			return false
+		}
+		original, ok := substitutedText(src, edits, start, end)
+		return ok && original != fixedSrc[start:end]
+	})
+	if !hasSubstitution {
+		return fixedSrc, nil
+	}
+	return substitute(fixedSrc, locStart(cond), locEnd(cond), "true", locStart(cond))
+}
+
+// replaceableCondition returns the innermost condition around offset that can be replaced
+// with `true` as a whole.
+func replaceableCondition(node googlesql.ASTNode, offset int) (googlesql.ASTNode, bool) {
+	cond, ok := innermostCondition(node, offset)
+	if !ok || !insideInnermostCondition(node, cond, offset) || containsAnalyticFunction(cond) {
+		return nil, false
+	}
+	return cond, locStart(cond) >= 0 && locEnd(cond) >= 0
+}
+
+// namesOtherColumn reports whether cond names the column at offset and another one.
+// The names in a subquery belong to its own clauses, and those of functions and types are
+// not columns.
+func namesOtherColumn(cond googlesql.ASTNode, offset int) bool {
+	columns := conditionColumns(cond)
+	return len(columns) > 1 && slices.Contains(columns, offset)
+}
+
+// conditionColumns returns the offsets of the columns that cond names outside its subqueries.
+func conditionColumns(cond googlesql.ASTNode) []int {
+	var columns []int
+	containsOutsideSubquery(cond, func(n googlesql.ASTNode) bool {
+		path, ok := n.(*googlesql.ASTPathExpression)
+		if !ok {
+			return false
+		}
+		switch parent, _ := path.Parent(); parent.(type) {
+		case *googlesql.ASTFunctionCall:
+			if locStart(parent) == locStart(path) {
+				return false
+			}
+		case *googlesql.ASTSimpleType:
+			return false
+		}
+		columns = append(columns, locStart(path))
+		return false
+	})
+	return columns
 }
 
 // innermostCondition returns the innermost condition around offset, which
@@ -2164,14 +2237,22 @@ func insideInnermostCondition(node googlesql.ASTNode, expr googlesql.ASTNode, of
 // drop the analytic function, without which QUALIFY fails to analyze. The ones in a
 // subquery are not counted, since the enclosing clause does not depend on them.
 func containsAnalyticFunction(expr googlesql.ASTNode) bool {
+	return containsOutsideSubquery(expr, func(n googlesql.ASTNode) bool {
+		_, ok := n.(*googlesql.ASTAnalyticFunctionCall)
+		return ok
+	})
+}
+
+// containsOutsideSubquery reports whether expr or a node in it, apart from its subqueries, matches.
+func containsOutsideSubquery(expr googlesql.ASTNode, match func(googlesql.ASTNode) bool) bool {
 	if expr == nil {
 		return false
 	}
-	switch expr.(type) {
-	case *googlesql.ASTAnalyticFunctionCall:
-		return true
-	case *googlesql.ASTQuery:
+	if _, ok := expr.(*googlesql.ASTQuery); ok {
 		return false
+	}
+	if match(expr) {
+		return true
 	}
 	n, err := expr.NumChildren()
 	if err != nil {
@@ -2179,7 +2260,7 @@ func containsAnalyticFunction(expr googlesql.ASTNode) bool {
 	}
 	for i := int32(0); i < n; i++ {
 		child, err := expr.Child(i)
-		if err == nil && child != nil && containsAnalyticFunction(child) {
+		if err == nil && child != nil && containsOutsideSubquery(child, match) {
 			return true
 		}
 	}
