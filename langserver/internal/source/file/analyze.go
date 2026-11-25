@@ -833,14 +833,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			errSrc := fixedSrc
 			pErr := parseZetaSQLError(fixedSrc, err)
 
-			if fix, ok := unnestFixes[i]; ok && !rejected[i] && insideAliasPath(s, positionToByteOffset(fixedSrc, pErr.Position), fix.aliases) {
-				// The elements of `[]` are INT64, which the alias is used against, so the error is bqls's.
-				revert(fix.checkpoint)
-				delete(unnestFixes, i)
-				// As for a reverted fix-up that broke the syntax, this pass does not count.
-				maxRetries = max(min(maxRetries+1, maxRetriesLimit), retry+2)
-				goto retry
-			}
+			unnestFixFor, hasUnnestFix := unnestFixes[i]
+			// The elements of `[]` are INT64, which the alias is used against, so the error is bqls's.
+			aliasMisused := hasUnnestFix && insideAliasPath(s, positionToByteOffset(fixedSrc, pErr.Position), unnestFixFor.aliases)
 
 			isUnrecognizedNameError := strings.Contains(pErr.Msg, "Unrecognized name: ")
 			isNotExistInStructError := strings.Contains(pErr.Msg, "does not exist in STRUCT")
@@ -939,9 +934,8 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 						}
 					case *googlesql.ASTOrderBy:
 						parent, _ := clause.Parent()
-						if _, ok := parent.(*googlesql.ASTFunctionCall); ok {
-							// Aggregate functions reject both ORDER BY ordinals and literals.
-							fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "1+1")
+						if call, ok := parent.(*googlesql.ASTFunctionCall); ok {
+							fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, aggregateOrderByPlaceholder(fixedSrc, call))
 						} else {
 							fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
 						}
@@ -1006,6 +1000,16 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 					// The placeholder is the fix-up's, whose error about the unknown name is already reported.
 					skipError = true
 				}
+			}
+
+			// The INT64 elements of `[]` may also reach the error through a renamed column or
+			// a set operation, so an error no fix-up recovers from is taken as bqls's too.
+			if hasUnnestFix && !rejected[i] && (aliasMisused || len(fo) == 0) {
+				revert(unnestFixFor.checkpoint)
+				delete(unnestFixes, i)
+				// As for a reverted fix-up that broke the syntax, this pass does not count.
+				maxRetries = max(min(maxRetries+1, maxRetriesLimit), retry+2)
+				goto retry
 			}
 
 			if (lastPass || rejected[i]) && len(fo) > 0 {

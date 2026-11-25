@@ -2183,6 +2183,17 @@ func TestAnalyzer_UnrecognizedNameAsArrayOfUnnestInFrom(t *testing.T) {
 			expectedFixedSrc: "SELECT y, v.a FROM UNNEST(x) AS v",
 			expectedErrMsgs:  []string{"Unrecognized name: x"},
 		},
+		// The elements reach the comparison under another name, which the alias does not match.
+		"alias renamed in a subquery": {
+			file:             "SELECT w FROM (SELECT v AS w FROM UNNEST(x) AS v) WHERE w = 'a'",
+			expectedFixedSrc: "SELECT w FROM (SELECT v AS w FROM UNNEST(x) AS v) WHERE w = 'a'",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"set operation with a string": {
+			file:             "SELECT v FROM UNNEST(x) AS v UNION ALL SELECT 'a'",
+			expectedFixedSrc: "SELECT v FROM UNNEST(x) AS v UNION ALL SELECT 'a'",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
 		"statement after a reverted one": {
 			file:             "SELECT v.a FROM UNNEST(x) AS v;\nSELECT y FROM " + table,
 			expectedFixedSrc: "SELECT v.a FROM UNNEST(x) AS v;\nSELECT 1 FROM " + table,
@@ -2237,6 +2248,11 @@ func TestAnalyzer_UnrecognizedNameInOrderByOfAggregateFunction(t *testing.T) {
 		"in having clause": {
 			file:             "SELECT SUM(id) FROM " + table + " HAVING ARRAY_LENGTH(ARRAY_AGG(id ORDER BY x)) > 0",
 			expectedFixedSrc: "SELECT SUM(id) FROM " + table + " HAVING ARRAY_LENGTH(ARRAY_AGG(id ORDER BY 1+1)) > 0",
+		},
+		// With DISTINCT, an aggregate function orders only by its arguments.
+		"with distinct": {
+			file:             "SELECT STRING_AGG(DISTINCT name, ',' ORDER BY x) FROM " + table,
+			expectedFixedSrc: "SELECT STRING_AGG(DISTINCT name, ',' ORDER BY name) FROM " + table,
 		},
 		// A window accepts ordinals and literals.
 		"window": {

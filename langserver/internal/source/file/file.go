@@ -2061,7 +2061,12 @@ func wholeUnnestArray(node googlesql.ASTNode, start, end int) (*googlesql.ASTUnn
 func insideAliasPath(node googlesql.ASTNode, offset int, aliases []string) bool {
 	type span struct{ start, end int }
 	var paths []span
+	// The ends of the expressions starting at offset.
+	var ends []int
 	Walk(node, func(n googlesql.ASTNode) error { //nolint
+		if locStart(n) == offset {
+			ends = append(ends, locEnd(n))
+		}
 		path, ok := n.(*googlesql.ASTPathExpression)
 		if !ok {
 			return nil
@@ -2076,21 +2081,26 @@ func insideAliasPath(node googlesql.ASTNode, offset int, aliases []string) bool 
 		}
 		return nil
 	})
-	if slices.ContainsFunc(paths, func(p span) bool { return p.start <= offset && offset < p.end }) {
-		return true
-	}
-	found := false
-	Walk(node, func(n googlesql.ASTNode) error { //nolint
-		if locStart(n) != offset {
-			return nil
+	return slices.ContainsFunc(paths, func(p span) bool {
+		if p.start <= offset && offset < p.end {
+			return true
 		}
-		end := locEnd(n)
-		if slices.ContainsFunc(paths, func(p span) bool { return offset <= p.start && p.end <= end }) {
-			found = true
-		}
-		return nil
+		return slices.ContainsFunc(ends, func(end int) bool { return offset <= p.start && p.end <= end })
 	})
-	return found
+}
+
+// aggregateOrderByPlaceholder returns the expression that stands for an unknown name in the
+// ORDER BY of the aggregate function call. Aggregate functions reject both ORDER BY ordinals
+// and literals, and with DISTINCT they accept only their own arguments.
+func aggregateOrderByPlaceholder(src string, call *googlesql.ASTFunctionCall) string {
+	if distinct, _ := call.Distinct(); distinct {
+		if arg, err := call.Arguments(0); err == nil && arg != nil {
+			if start, end := locStart(arg), locEnd(arg); 0 <= start && start < end && end <= len(src) {
+				return src[start:end]
+			}
+		}
+	}
+	return "1+1"
 }
 
 // wholeTermParent returns the parent of the path spanning [start, end) with the field
