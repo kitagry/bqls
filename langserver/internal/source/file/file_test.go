@@ -2196,7 +2196,7 @@ func TestAnalyzer_UnrecognizedNameAsArrayOfUnnestInFrom(t *testing.T) {
 		},
 		"statement after a reverted one": {
 			file:             "SELECT v.a FROM UNNEST(x) AS v;\nSELECT y FROM " + table,
-			expectedFixedSrc: "SELECT v.a FROM UNNEST(x) AS v;\nSELECT 1 FROM " + table,
+			expectedFixedSrc: "SELECT v.a FROM UNNEST(x) AS v;\nSELECT 1 AS y FROM " + table,
 			expectedErrMsgs:  []string{"Unrecognized name: x", "Unrecognized name: y"},
 			expectedOutputs:  1,
 		},
@@ -2440,6 +2440,119 @@ func TestAnalyzer_FixUpsInCreatedTable(t *testing.T) {
 			}
 			if len(got.RNode) != tt.expectedOutputs {
 				t.Errorf("got %d analyzer outputs, want %d", len(got.RNode), tt.expectedOutputs)
+			}
+		})
+	}
+}
+
+func TestAnalyzer_UnknownColumnKeepsItsNameForOuterQuery(t *testing.T) {
+	const table = "`project.dataset.table`"
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+		expectedErrMsgs  []string
+	}{
+		"subquery": {
+			file:             "SELECT y FROM (SELECT id, y FROM " + table + ")",
+			expectedFixedSrc: "SELECT y FROM (SELECT id, 1 AS y FROM " + table + ")",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		"CTE": {
+			file:             "WITH s AS (SELECT id, y FROM " + table + ") SELECT y FROM s",
+			expectedFixedSrc: "WITH s AS (SELECT id, 1 AS y FROM " + table + ") SELECT y FROM s",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		"field of subquery alias": {
+			file:             "SELECT s.y FROM (SELECT id, y FROM " + table + ") s",
+			expectedFixedSrc: "SELECT s.y FROM (SELECT id, 1 AS y FROM " + table + ") s",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		"field access names the column after its last name": {
+			file:             "SELECT z FROM (SELECT id, y.z FROM " + table + ")",
+			expectedFixedSrc: "SELECT z FROM (SELECT id, 1 AS z FROM " + table + ")",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		"SELECT AS STRUCT": {
+			file:             "SELECT s FROM (SELECT AS STRUCT id, y FROM " + table + ") s",
+			expectedFixedSrc: "SELECT s FROM (SELECT AS STRUCT id, 1 AS y FROM " + table + ") s",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		// The value has no column to name.
+		"SELECT AS VALUE": {
+			file:             "SELECT ARRAY(SELECT AS VALUE y FROM " + table + ")",
+			expectedFixedSrc: "SELECT ARRAY(SELECT AS VALUE 1 FROM " + table + ")",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		"pipe SELECT": {
+			file:             "FROM " + table + " |> SELECT id, y |> WHERE y = 1",
+			expectedFixedSrc: "FROM " + table + " |> SELECT id, 1 AS y |> WHERE y = 1",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		"pipe EXTEND": {
+			file:             "FROM " + table + " |> EXTEND y |> WHERE y = 1",
+			expectedFixedSrc: "FROM " + table + " |> EXTEND 1 AS y |> WHERE y = 1",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		// GROUP BY of pipe AGGREGATE is not a SELECT list.
+		"GROUP BY of pipe AGGREGATE": {
+			file:             "FROM " + table + " |> AGGREGATE COUNT(*) GROUP BY y",
+			expectedFixedSrc: "FROM " + table + " |> AGGREGATE COUNT(*) GROUP BY 1+1",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		// ORDER BY and GROUP BY see the columns of the SELECT list by their names.
+		"ORDER BY the name": {
+			file:             "SELECT y FROM " + table + " ORDER BY y DESC",
+			expectedFixedSrc: "SELECT 1 AS y FROM " + table + " ORDER BY y DESC",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		"GROUP BY the name": {
+			file:             "SELECT y, COUNT(*) FROM " + table + " GROUP BY y",
+			expectedFixedSrc: "SELECT 1 AS y, COUNT(*) FROM " + table + " GROUP BY y",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		"GROUP BY an ordinal": {
+			file:             "SELECT y, COUNT(*) FROM " + table + " GROUP BY 1",
+			expectedFixedSrc: "SELECT 1 AS y, COUNT(*) FROM " + table + " GROUP BY 1",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		// WHERE does not see the SELECT list, so the name there is unknown by itself.
+		"WHERE the name": {
+			file:             "SELECT y FROM " + table + " WHERE y = 1",
+			expectedFixedSrc: "SELECT 1 AS y FROM " + table + " WHERE true",
+			expectedErrMsgs:  []string{"Unrecognized name: y", "Unrecognized name: y"},
+		},
+		// A parenthesized column has no name to keep.
+		"parenthesized": {
+			file:             "SELECT id FROM (SELECT id, (y) FROM " + table + ")",
+			expectedFixedSrc: "SELECT id FROM (SELECT id, (1) FROM " + table + ")",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
+				AnyTimes()
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			gotMsgs := make([]string, 0, len(got.Errors))
+			for _, e := range got.Errors {
+				gotMsgs = append(gotMsgs, e.Msg)
+			}
+			if diff := cmp.Diff(tt.expectedErrMsgs, gotMsgs); diff != "" {
+				t.Errorf("errors (-want, +got)\n%s", diff)
+			}
+			if len(got.RNode) != 1 {
+				t.Errorf("got %d analyzer outputs, want 1", len(got.RNode))
 			}
 		})
 	}
@@ -4502,23 +4615,23 @@ func TestAnalyzer_MissingCommaInSelectList(t *testing.T) {
 	}{
 		"unknown name followed by a function call": {
 			file:             cte + "SELECT i,\n  cu\n  COALESCE(s, 'n/a') AS p\nFROM t",
-			expectedFixedSrc: cte + "SELECT i,\n  1,\n  COALESCE(s, 'n/a') AS p\nFROM t",
+			expectedFixedSrc: cte + "SELECT i,\n  1 AS cu,\n  COALESCE(s, 'n/a') AS p\nFROM t",
 		},
 		"unknown name followed by a path": {
 			file:             cte + "SELECT i,\n  cu\n  t.s,\n  d\nFROM t",
-			expectedFixedSrc: cte + "SELECT i,\n  1,\n  t.s,\n  d\nFROM t",
+			expectedFixedSrc: cte + "SELECT i,\n  1 AS cu,\n  t.s,\n  d\nFROM t",
 		},
 		"unknown name followed by a string literal": {
 			file:             cte + "SELECT i,\n  cu\n  'x' AS lit\nFROM t",
-			expectedFixedSrc: cte + "SELECT i,\n  1,\n  'x' AS lit\nFROM t",
+			expectedFixedSrc: cte + "SELECT i,\n  1 AS cu,\n  'x' AS lit\nFROM t",
 		},
 		"unknown name followed by CASE": {
 			file:             cte + "SELECT i,\n  cu\n  CASE WHEN i = 1 THEN 1 END AS c\nFROM t",
-			expectedFixedSrc: cte + "SELECT i,\n  1,\n  CASE WHEN i = 1 THEN 1 END AS c\nFROM t",
+			expectedFixedSrc: cte + "SELECT i,\n  1 AS cu,\n  CASE WHEN i = 1 THEN 1 END AS c\nFROM t",
 		},
 		"unknown name followed by a binary expression": {
 			file:             cte + "SELECT i,\n  cu\n  i + 1 AS c\nFROM t",
-			expectedFixedSrc: cte + "SELECT i,\n  1,\n  i + 1 AS c\nFROM t",
+			expectedFixedSrc: cte + "SELECT i,\n  1 AS cu,\n  i + 1 AS c\nFROM t",
 		},
 		"unknown name with an alias followed by a function call": {
 			file:             cte + "SELECT i,\n  cu AS x\n  COALESCE(s, 'n/a') AS p\nFROM t",
@@ -4526,7 +4639,7 @@ func TestAnalyzer_MissingCommaInSelectList(t *testing.T) {
 		},
 		"in a subquery": {
 			file:             cte + "SELECT * FROM (SELECT i,\n  cu\n  COALESCE(s, 'n/a') AS p\nFROM t)",
-			expectedFixedSrc: cte + "SELECT * FROM (SELECT i,\n  1,\n  COALESCE(s, 'n/a') AS p\nFROM t)",
+			expectedFixedSrc: cte + "SELECT * FROM (SELECT i,\n  1 AS cu,\n  COALESCE(s, 'n/a') AS p\nFROM t)",
 		},
 		"unknown name read as the alias of the next column": {
 			file: "WITH r AS (SELECT 1 AS customer_id, 'x' AS product_name)\n" +
@@ -4614,7 +4727,7 @@ func TestAnalyzer_NotFoundInsideReplacesOnlyThePath(t *testing.T) {
 		},
 		"right after a comma": {
 			file:                         "SELECT id,t.unexist_column FROM `project.dataset.table` t",
-			expectedFixedSrc:             "SELECT id,1 FROM `project.dataset.table` t",
+			expectedFixedSrc:             "SELECT id,1 AS unexist_column FROM `project.dataset.table` t",
 			expectedIncompleteColumnName: "t.unexist_column",
 		},
 	}
@@ -5068,7 +5181,7 @@ func TestAnalyzer_UnknownColumnAsOperatorOperand(t *testing.T) {
 		},
 		"operator written by the user": {
 			file:             "SELECT x, 1 = 'a' FROM " + table,
-			expectedFixedSrc: "SELECT 1, 1 = 'a' FROM " + table,
+			expectedFixedSrc: "SELECT 1 AS x, 1 = 'a' FROM " + table,
 			expectedErrMsgs: []string{
 				"Unrecognized name: x",
 				"No matching signature for operator = for argument types: INT64, STRING\n  Signature: T1 = T1\n    Unable to find common supertype for templated argument <T1>\n      Input types for <T1>: {INT64, STRING}",
@@ -5541,7 +5654,7 @@ func TestAnalyzer_UnknownColumnAsArithmeticOperand(t *testing.T) {
 		},
 		"operator written by the user": {
 			file:             "SELECT x, 1 + ts FROM " + table,
-			expectedFixedSrc: "SELECT 1, 1 + ts FROM " + table,
+			expectedFixedSrc: "SELECT 1 AS x, 1 + ts FROM " + table,
 			expectedErrMsgs: []string{
 				"Unrecognized name: x",
 				"No matching signature for operator +",
@@ -5550,7 +5663,7 @@ func TestAnalyzer_UnknownColumnAsArithmeticOperand(t *testing.T) {
 		},
 		"literal cast written by the user": {
 			file:             "SELECT x, 1 + 'a' FROM " + table,
-			expectedFixedSrc: "SELECT 1, 1 + 'a' FROM " + table,
+			expectedFixedSrc: "SELECT 1 AS x, 1 + 'a' FROM " + table,
 			expectedErrMsgs: []string{
 				"Unrecognized name: x",
 				`Could not cast literal "a" to type DATE`,
@@ -5836,14 +5949,14 @@ func TestAnalyzer_PlaceholderBeforeIdentifier(t *testing.T) {
 		},
 		"unknown field after a quoted name with a space": {
 			file:             "SELECT `a b`.x FROM (SELECT STRUCT(1 AS y) AS `a b`);",
-			expectedFixedSrc: "SELECT 1 FROM (SELECT STRUCT(1 AS y) AS `a b`);",
+			expectedFixedSrc: "SELECT 1 AS x FROM (SELECT STRUCT(1 AS y) AS `a b`);",
 			expectedErrs: []file.Error{
 				{Msg: "Field name x does not exist in STRUCT<y INT64>", Position: lsp.Position{Line: 0, Character: 13}, TermLength: 1, IncompleteColumnName: "`a b`.x"},
 			},
 		},
 		"name not found inside a quoted table name with a space": {
 			file:             "SELECT `a b`.x FROM (SELECT 1 AS a) AS `a b`;",
-			expectedFixedSrc: "SELECT 1 FROM (SELECT 1 AS a) AS `a b`;",
+			expectedFixedSrc: "SELECT 1 AS x FROM (SELECT 1 AS a) AS `a b`;",
 			expectedErrs: []file.Error{
 				{Msg: "Name x not found inside a b", Position: lsp.Position{Line: 0, Character: 13}, TermLength: 1, IncompleteColumnName: "`a b`.x"},
 			},
@@ -5852,21 +5965,21 @@ func TestAnalyzer_PlaceholderBeforeIdentifier(t *testing.T) {
 		// The examples in #765. The path is replaced as a whole across the whitespace around a dot.
 		"unknown field after a newline before a dot": {
 			file:             "SELECT t\n  .missing FROM (SELECT STRUCT(1 AS a) AS t);",
-			expectedFixedSrc: "SELECT 1 FROM (SELECT STRUCT(1 AS a) AS t);",
+			expectedFixedSrc: "SELECT 1 AS missing FROM (SELECT STRUCT(1 AS a) AS t);",
 			expectedErrs: []file.Error{
 				{Msg: "Field name missing does not exist in STRUCT<a INT64>", Position: lsp.Position{Line: 1, Character: 3}, TermLength: 7, IncompleteColumnName: "t\n  .missing"},
 			},
 		},
 		"field access with a space after a dot on an unknown name": {
 			file:             "SELECT unknown. x;",
-			expectedFixedSrc: "SELECT 1;",
+			expectedFixedSrc: "SELECT 1 AS x;",
 			expectedErrs: []file.Error{
 				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
 			},
 		},
 		"quoted field access with a space after a dot on an unknown name": {
 			file:             "SELECT unknown. `x y`;",
-			expectedFixedSrc: "SELECT 1;",
+			expectedFixedSrc: "SELECT 1 AS `x y`;",
 			expectedErrs: []file.Error{
 				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
 			},
@@ -5923,14 +6036,14 @@ func TestAnalyzer_PlaceholderBeforeFieldAccess(t *testing.T) {
 		// A placeholder in parentheses would raise an error about the placeholder.
 		"field access on an unknown name": {
 			file:             "SELECT unknown.x.y;",
-			expectedFixedSrc: "SELECT 1;",
+			expectedFixedSrc: "SELECT 1 AS y;",
 			expectedErrs: []file.Error{
 				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
 			},
 		},
 		"quoted field access on an unknown name": {
 			file:             "SELECT unknown.`x y`;",
-			expectedFixedSrc: "SELECT 1;",
+			expectedFixedSrc: "SELECT 1 AS `x y`;",
 			expectedErrs: []file.Error{
 				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
 			},
@@ -5966,21 +6079,21 @@ func TestAnalyzer_PlaceholderBeforeFieldAccess(t *testing.T) {
 		},
 		"field access with whitespace on an unknown name": {
 			file:             "SELECT unknown .x;",
-			expectedFixedSrc: "SELECT 1;",
+			expectedFixedSrc: "SELECT 1 AS x;",
 			expectedErrs: []file.Error{
 				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
 			},
 		},
 		"field access on the next line on an unknown name": {
 			file:             "SELECT unknown\n  .x;",
-			expectedFixedSrc: "SELECT 1;",
+			expectedFixedSrc: "SELECT 1 AS x;",
 			expectedErrs: []file.Error{
 				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
 			},
 		},
 		"field access after a comment on an unknown name": {
 			file:             "SELECT unknown /* c */ .x;",
-			expectedFixedSrc: "SELECT 1;",
+			expectedFixedSrc: "SELECT 1 AS x;",
 			expectedErrs: []file.Error{
 				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
 			},

@@ -932,8 +932,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 						if aliasOnNextLine(fixedSrc, s, termStart, termEnd) {
 							// The alias is likely the next column, before which the user is typing without a comma yet.
 							fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "1,")
-						} else if alias, ok := createdColumnName(fixedSrc, s, termStart, termEnd); ok {
-							// A created table or view needs its columns named, which later statements refer to.
+						} else if alias, ok := implicitColumnName(fixedSrc, s, termStart, termEnd); ok {
+							// The outer query, a later statement reading a created table, or ORDER BY may
+							// refer to the column by its name. A created table also needs its columns named.
 							fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "1 AS "+alias)
 						} else {
 							fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)

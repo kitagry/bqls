@@ -2011,15 +2011,10 @@ func isWholeFunctionArgument(node googlesql.ASTNode, start, end int) bool {
 	return false
 }
 
-// createdColumnName returns the name of the column that the path spanning [start, end) makes
-// by itself in the SELECT list of CREATE TABLE AS SELECT or CREATE VIEW, which is its last
-// name, as GoogleSQL names the column of a path without an alias.
-func createdColumnName(src string, node googlesql.ASTNode, start, end int) (string, bool) {
-	switch node.(type) {
-	case *googlesql.ASTCreateTableStatement, *googlesql.ASTCreateViewStatement, *googlesql.ASTCreateMaterializedViewStatement:
-	default:
-		return "", false
-	}
+// implicitColumnName returns the name of the column that the path spanning [start, end) makes
+// by itself in a SELECT list, which is its last name, as GoogleSQL names the column of a path
+// without an alias.
+func implicitColumnName(src string, node googlesql.ASTNode, start, end int) (string, bool) {
 	path, ok := SearchAstNode[*googlesql.ASTPathExpression](node, start)
 	if !ok || locStart(path) != start || locEnd(path) != end {
 		return "", false
@@ -2029,10 +2024,15 @@ func createdColumnName(src string, node googlesql.ASTNode, start, end int) (stri
 		return "", false
 	}
 	column, ok := parent.(*googlesql.ASTSelectColumn)
-	if !ok {
+	// A parenthesized path, e.g. `(x)`, has no alias of its own and leaves no room for one.
+	if !ok || locStart(column) != start {
 		return "", false
 	}
 	if alias, err := column.Alias(); err == nil && alias != nil {
+		return "", false
+	}
+	if isSelectAsValue(column) {
+		// The value has no column to name.
 		return "", false
 	}
 	last, err := path.LastName()
@@ -2044,6 +2044,28 @@ func createdColumnName(src string, node googlesql.ASTNode, start, end int) (stri
 		return "", false
 	}
 	return src[nameStart:nameEnd], true
+}
+
+// isSelectAsValue reports whether column is the one of SELECT AS VALUE.
+func isSelectAsValue(column *googlesql.ASTSelectColumn) bool {
+	list, err := column.Parent()
+	if err != nil {
+		return false
+	}
+	sel, err := list.Parent()
+	if err != nil {
+		return false
+	}
+	selectNode, ok := sel.(*googlesql.ASTSelect)
+	if !ok {
+		return false
+	}
+	as, err := selectNode.SelectAs()
+	if err != nil || as == nil {
+		return false
+	}
+	mode, _ := as.AsMode()
+	return mode == googlesql.ASTSelectAsEnums_AsModeValue
 }
 
 // isInUnnestArray reports whether the path spanning [start, end), with the field accesses
