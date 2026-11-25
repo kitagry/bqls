@@ -4862,6 +4862,35 @@ func TestAnalyzer_PlaceholderBeforeIdentifier(t *testing.T) {
 				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 35}, TermLength: 7, IncompleteColumnName: "unknown"},
 			},
 		},
+		// IN, BETWEEN and LIKE are replaced as a whole condition, next to a keyword.
+		"keyword after IN with an unknown name in WHERE": {
+			file:             "SELECT a FROM (SELECT 1 AS a) WHERE `unknown` IN ('a')AND TRUE;",
+			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE true AND TRUE;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 36}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		"WHERE right before BETWEEN with an unknown name": {
+			file:             "SELECT a FROM (SELECT 1 AS a) WHERE`unknown` BETWEEN 1 AND 2;",
+			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE true;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 35}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		"keyword after LIKE with an unknown name in WHERE": {
+			file:             "SELECT a FROM (SELECT 1 AS a) WHERE `unknown` LIKE 'a'AND TRUE;",
+			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE true AND TRUE;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 36}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		"WHERE right before IN with an unknown name": {
+			file:             "SELECT a FROM (SELECT 1 AS a) WHERE`unknown` IN ('a');",
+			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE true;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 35}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
 		// An arithmetic operand in WHERE gets `1` rather than `true`.
 		"THEN right before an unknown arithmetic operand in WHERE": {
 			file:             "SELECT a FROM (SELECT 1 AS a) WHERE STARTS_WITH(CASE WHEN TRUE THEN`unknown` || 'a' END, 'b');",
