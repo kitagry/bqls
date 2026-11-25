@@ -500,26 +500,44 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) 
 		}
 
 		// src is a word that ends with a dot.
-		loc := lastDotRegex.FindIndex([]byte(code[:ind] + " "))
+		loc := findDottedWord(code, 0, ind)
 		if len(loc) != 2 {
 			fixedBuilder.WriteString(line + "\n")
 			currentOffset += len(line) + 1
 			continue
 		}
 
+		// The span of the path skipped below, as `t. ` of `t. x`.
+		pathStart, pathEnd := -1, -1
 		for len(loc) == 2 {
+			// A word right after the skipped path continues it, so that `t. x.` is replaced
+			// as a whole rather than `x.` first, which would leave `t. true` to be taken for a
+			// dot being typed before a keyword.
+			if pathEnd >= 0 && strings.TrimLeft(code[pathEnd:loc[0]], " \t") == "" {
+				loc[0] = pathStart
+			}
+			// A field after whitespace on the same line, as in `t. x`, is part of the path.
+			if fieldAfterSpace(code[loc[1]-1 : ind]) {
+				pathStart, pathEnd = loc[0], loc[1]-1
+				loc = findDottedWord(code, pathEnd, ind)
+				continue
+			}
+			pathEnd = -1
 			// sql.Rawtext[loc[1]] is a space, a semicolon, or end of file.
 			loc[0] = hyphenatedTablePathStart(code, loc[0])
 			srcStart := currentOffset + loc[0]
 			targetWord := line[loc[0] : loc[1]-1]
+			// The path goes without the whitespace and comments inside it, as the completion
+			// splits it at the dots.
+			name := strings.Join(strings.Fields(code[loc[0]:loc[1]-1]), "")
 			line = line[:loc[0]] + "true" + line[loc[1]-1:]
 			code = code[:loc[0]] + "true" + code[loc[1]-1:]
 			pos, _ := byteOffsetToPosition(src, srcStart-growth)
 			errs = append(errs, Error{
-				Msg:                  fmt.Sprintf("Unrecognized name: %s", targetWord),
+				Msg:                  fmt.Sprintf("Unrecognized name: %s", name),
 				Position:             pos,
 				TermLength:           len(targetWord),
-				IncompleteColumnName: targetWord,
+				IncompleteColumnName: name,
 			})
 			fixOffsets = append(fixOffsets, FixOffset{
 				Offset: srcStart + len(targetWord),
@@ -530,7 +548,7 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) 
 
 			oldLoc := loc
 			ind -= len(targetWord) - len("true")
-			loc = lastDotRegex.FindIndex([]byte(code[:ind] + " "))
+			loc = findDottedWord(code, 0, ind)
 			if len(loc) == 2 && loc[0] == oldLoc[0] {
 				break
 			}
@@ -543,6 +561,33 @@ func fixDot(src string) (fixedSrc string, errs []Error, fixOffsets []FixOffset) 
 	// more than src has.
 	fixed := strings.TrimSuffix(fixedBuilder.String(), "\n")
 	return fixed, errs, fixOffsets
+}
+
+// findDottedWord returns the span of the first word ending with a dot in code[from:end],
+// with the space, semicolon or end of code after it, or nil if there is none.
+func findDottedWord(code string, from, end int) []int {
+	loc := lastDotRegex.FindIndex([]byte(code[from:end] + " "))
+	if loc == nil {
+		return nil
+	}
+	return []int{from + loc[0], from + loc[1]}
+}
+
+// fieldAfterSpace reports whether rest, what follows a dot, is horizontal whitespace and a
+// field name or `*`. A reserved keyword such as FROM follows a dot being typed instead.
+func fieldAfterSpace(rest string) bool {
+	field := strings.TrimLeft(rest, " \t")
+	if len(field) == len(rest) {
+		return false
+	}
+	if strings.HasPrefix(field, "`") || strings.HasPrefix(field, "*") {
+		return true
+	}
+	n := 0
+	for n < len(field) && isIdentifierByte(field[n]) {
+		n++
+	}
+	return n > 0 && !isReservedKeyword(field[:n])
 }
 
 // blankBlockComments replaces each byte inside /* */ comments, other than line
@@ -1166,16 +1211,7 @@ func unknownTermEnd(src string, start int, name string) int {
 func fieldAccessLen(rest string) int {
 	n := 0
 	for {
-		i := n
-		for i < len(rest) {
-			if unicode.IsSpace(rune(rest[i])) {
-				i++
-			} else if next := bqparser.SkipComment(rest, i); next != i {
-				i = next
-			} else {
-				break
-			}
-		}
+		i := skipSpacesAndComments(rest, n)
 		var m int
 		switch {
 		case strings.HasPrefix(rest[i:], "."):
@@ -1224,7 +1260,7 @@ func subscriptLen(rest string) int {
 func fieldPathLen(rest string) int {
 	i := 0
 	for strings.HasPrefix(rest[i:], ".") {
-		j := i + len(".")
+		j := skipSpacesAndComments(rest, i+len("."))
 		switch {
 		case strings.HasPrefix(rest[j:], "*"):
 			return j + len("*")
@@ -1235,10 +1271,11 @@ func fieldPathLen(rest string) int {
 			}
 			j = end
 		default:
+			start := j
 			for j < len(rest) && isIdentifierByte(rest[j]) {
 				j++
 			}
-			if j == i+len(".") {
+			if j == start {
 				return i
 			}
 		}

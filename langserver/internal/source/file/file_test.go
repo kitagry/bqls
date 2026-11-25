@@ -5041,6 +5041,29 @@ func TestAnalyzer_PlaceholderBeforeIdentifier(t *testing.T) {
 				{Msg: "Name x not found inside a b", Position: lsp.Position{Line: 0, Character: 13}, TermLength: 1, IncompleteColumnName: "`a b`.x"},
 			},
 		},
+
+		// The examples in #765. The path is replaced as a whole across the whitespace around a dot.
+		"unknown field after a newline before a dot": {
+			file:             "SELECT t\n  .missing FROM (SELECT STRUCT(1 AS a) AS t);",
+			expectedFixedSrc: "SELECT 1 FROM (SELECT STRUCT(1 AS a) AS t);",
+			expectedErrs: []file.Error{
+				{Msg: "Field name missing does not exist in STRUCT<a INT64>", Position: lsp.Position{Line: 1, Character: 3}, TermLength: 7, IncompleteColumnName: "t\n  .missing"},
+			},
+		},
+		"field access with a space after a dot on an unknown name": {
+			file:             "SELECT unknown. x;",
+			expectedFixedSrc: "SELECT 1;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		"quoted field access with a space after a dot on an unknown name": {
+			file:             "SELECT unknown. `x y`;",
+			expectedFixedSrc: "SELECT 1;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
 	}
 
 	for n, tt := range tests {
