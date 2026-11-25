@@ -2300,6 +2300,21 @@ func TestAnalyzer_FixUpsInCreatedTable(t *testing.T) {
 		msg     string
 		warning bool
 	}
+	// More unknown columns than the passes fix up, so that the last pass drops its fix-up.
+	var columns []string
+	var fixedColumns []string
+	var unknownColumns []message
+	for i := range 14 {
+		columns = append(columns, fmt.Sprintf("a%d", i))
+		if i < 9 {
+			fixedColumns = append(fixedColumns, fmt.Sprintf("1 AS a%d", i))
+		} else {
+			fixedColumns = append(fixedColumns, fmt.Sprintf("a%d", i))
+		}
+		if i < 10 {
+			unknownColumns = append(unknownColumns, message{0, fmt.Sprintf("Unrecognized name: a%d", i), false})
+		}
+	}
 	tests := map[string]struct {
 		file string
 
@@ -2361,6 +2376,35 @@ func TestAnalyzer_FixUpsInCreatedTable(t *testing.T) {
 			expectedMsgs:     []message{{0, "Unrecognized name: y", false}, {1, "No matching signature for operator = for argument types: INT64, STRING", false}},
 			expectedOutputs:  1,
 		},
+		"table created by a statement substituting a declared variable": {
+			file:             "DECLARE x INT64 DEFAULT 1;\nCREATE TEMP TABLE t AS SELECT x AS v FROM " + table + ";\nSELECT * FROM t WHERE v = 'a'",
+			expectedFixedSrc: "DECLARE x INT64 DEFAULT 1;\nCREATE TEMP TABLE t AS SELECT 1 AS v FROM " + table + ";\nSELECT * FROM t WHERE v = 'a'",
+			expectedMsgs:     []message{{2, "No matching signature for operator = for argument types: INT64, STRING", false}},
+			expectedOutputs:  1,
+		},
+		"table replaced without errors": {
+			file:             "CREATE TEMP TABLE t AS SELECT y AS v FROM " + table + ";\nCREATE OR REPLACE TEMP TABLE t AS SELECT id AS v FROM " + table + ";\nSELECT * FROM t WHERE v = 'a'",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT 1 AS v FROM " + table + ";\nCREATE OR REPLACE TEMP TABLE t AS SELECT id AS v FROM " + table + ";\nSELECT * FROM t WHERE v = 'a'",
+			expectedMsgs:     []message{{0, "Unrecognized name: y", false}, {2, "No matching signature for operator = for argument types: INT64, STRING", false}},
+			expectedOutputs:  2,
+		},
+		"CTE of the same name": {
+			file:             "CREATE TEMP TABLE t AS SELECT y AS v FROM " + table + ";\nWITH t AS (SELECT 1 AS v) SELECT * FROM t WHERE v = 'a'",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT 1 AS v FROM " + table + ";\nWITH t AS (SELECT 1 AS v) SELECT * FROM t WHERE v = 'a'",
+			expectedMsgs:     []message{{0, "Unrecognized name: y", false}, {1, "No matching signature for operator = for argument types: INT64, STRING", false}},
+			expectedOutputs:  1,
+		},
+		"table referred to with its project": {
+			file:             "CREATE TABLE dataset.t AS SELECT y AS v FROM " + table + ";\nSELECT * FROM project.dataset.t WHERE v = 'a'",
+			expectedFixedSrc: "CREATE TABLE dataset.t AS SELECT 1 AS v FROM " + table + ";\nSELECT * FROM project.dataset.t WHERE v = 'a'",
+			expectedMsgs:     []message{{0, "Unrecognized name: y", false}, {1, "bqls could not finish analyzing this statement: it uses dataset.t, created by a statement with errors", true}},
+			expectedOutputs:  1,
+		},
+		"table left uncreated by the last pass": {
+			file:             "CREATE TEMP TABLE t AS SELECT " + strings.Join(columns, ", ") + " FROM " + table + ";\nSELECT id FROM t",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT " + strings.Join(fixedColumns, ", ") + " FROM " + table + ";\nSELECT id FROM t",
+			expectedMsgs:     append(unknownColumns, message{1, warning, true}),
+		},
 		"table created without errors": {
 			file:             "CREATE TEMP TABLE t AS SELECT id AS v FROM " + table + ";\nSELECT * FROM t WHERE v = 'a'",
 			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT id AS v FROM " + table + ";\nSELECT * FROM t WHERE v = 'a'",
@@ -2376,6 +2420,9 @@ func TestAnalyzer_FixUpsInCreatedTable(t *testing.T) {
 			bqClient.EXPECT().GetDefaultProject().Return("project").AnyTimes()
 			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
 				Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
+				AnyTimes()
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "t").
+				Return(nil, &googleapi.Error{Code: 404, Message: "Not found: Table project:dataset.t"}).
 				AnyTimes()
 
 			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
@@ -4679,6 +4726,7 @@ func TestAnalyzer_UnknownColumnAsFunctionArgument(t *testing.T) {
 func TestAnalyzer_UnknownColumnAsFunctionArgumentInTablePartitionBy(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	bqClient := mock_bigquery.NewMockClient(ctrl)
+	bqClient.EXPECT().GetDefaultProject().Return("project").AnyTimes()
 	bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", gomock.Any()).
 		Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
 		AnyTimes()

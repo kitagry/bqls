@@ -275,6 +275,15 @@ func (c *Catalog) addScriptObject(object scriptObject) error {
 	return nil
 }
 
+// scriptTableKey returns the key by which the catalog holds the table that a statement of
+// the script names as name, so that dataset.t and project.dataset.t are the same table.
+func (c *Catalog) scriptTableKey(name string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return strings.ToLower(strings.Join(c.scriptPaths([]string{name})[0], "."))
+}
+
 // hasTable reports whether the table is loaded from BigQuery or created by the
 // script.
 func (c *Catalog) hasTable(namePath []string) bool {

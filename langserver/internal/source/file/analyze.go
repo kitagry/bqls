@@ -674,7 +674,8 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 	// The state before `[]` replaced an unknown array of UNNEST in FROM, by statement, which
 	// is restored when its alias turns out to be used as something other than INT64.
 	unnestFixes := make(map[int]unnestFix)
-	// Statements that fix-ups have been applied to.
+	// Statements that fix-ups other than substituting declared variables have been applied to,
+	// since the dummy value of a variable has its declared type.
 	fixedStmts := make(map[int]bool)
 	revert := func(c fixUpCheckpoint) {
 		fixedSrc = c.fixedSrc
@@ -831,9 +832,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				if output != nil {
 					a.registerCreatedObject(output, catalog)
 				}
-				if fixedStmts[i] {
-					addErroneousTable(erroneousTables, s)
-				}
+				setErroneousTable(erroneousTables, catalog, s, fixedStmts[i])
 				statements = append(statements, StatementResult{Stmt: s, Output: output})
 				continue
 			}
@@ -900,6 +899,8 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			// fix src
 			srcBeforeFix := fixedSrc
 			skipError := false
+			// Whether the fix-up substitutes a declared variable, which keeps the column types.
+			declarationFix := false
 			// The alias of the UNNEST in FROM whose array the fix-up replaces with `[]`.
 			unnestAlias := ""
 			if isUnrecognizedNameError || isNotExistInStructError || isNotFoundInsideError {
@@ -913,6 +914,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 					fixedSrc, fo = fixDeclarationError(fixedSrc, pErr, defaultVal)
 					if len(fo) > 0 {
 						skipError = true
+						declarationFix = true
 					}
 				} else if isWholeFunctionArgument(s, termStart, termEnd) {
 					// NULL coerces to any argument type, whereas `1` or `true` fails to match the signature.
@@ -1024,7 +1026,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			}
 
 			if len(fo) == 0 {
-				if table, ok := readsTable(s, erroneousTables); ok {
+				if table, ok := readsTable(s, erroneousTables, catalog); ok {
 					// The error may come from the columns that the fix-ups gave the table, or from the
 					// table missing, which the user does not see in this statement.
 					pErr = Error{
@@ -1034,7 +1036,6 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 					}
 					isNotBoolConditionError = false
 				}
-				addErroneousTable(erroneousTables, s)
 			}
 
 			if (lastPass || rejected[i]) && len(fo) > 0 {
@@ -1052,6 +1053,10 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 						Severity: lsp.Warning,
 					}
 				}
+			}
+			if len(fo) == 0 {
+				// Also after the last pass or a rejected statement drops its fix-up, which leaves the table uncreated.
+				setErroneousTable(erroneousTables, catalog, s, true)
 			}
 			srcErr := errorToSrc(src, errSrc, edits, pErr)
 			if isNotBoolConditionError {
@@ -1071,7 +1076,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 					edits:      len(edits),
 					fixedErrs:  len(fixedErrs),
 				}
-				fixedStmts[i] = true
+				if !declarationFix {
+					fixedStmts[i] = true
+				}
 				if unnestAlias != "" {
 					fix, ok := unnestFixes[i]
 					if !ok {
