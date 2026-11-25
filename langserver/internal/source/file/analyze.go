@@ -671,6 +671,19 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 	var beforeFix *fixUpCheckpoint
 	// Statements whose fix-up was reverted; they are analyzed without fix-ups from then on.
 	rejected := make(map[int]bool)
+	// The state before `[]` replaced an unknown array of UNNEST in FROM, by statement, which
+	// is restored when its alias turns out to be used as something other than INT64.
+	unnestFixes := make(map[int]unnestFix)
+	// Statements that fix-ups other than substituting declared variables have been applied to,
+	// since the dummy value of a variable has its declared type.
+	fixedStmts := make(map[int]bool)
+	revert := func(c fixUpCheckpoint) {
+		fixedSrc = c.fixedSrc
+		fixOffsets = fixOffsets[:c.fixOffsets]
+		edits = edits[:c.edits]
+		fixedErrs = fixedErrs[:c.fixedErrs]
+		rejected[c.stmt] = true
+	}
 	for retry := 0; retry < maxRetries; retry++ {
 		// The last pass applies no fix-up, so that it analyzes every statement instead
 		// of stopping at the first one it would fix.
@@ -686,11 +699,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			// The source parsed before the fix-up, so the syntax error is bqls's, not the user's.
 			// The statement then reports the error the fix-up was meant to recover from,
 			// while the statements after it are still fixed up.
-			fixedSrc = checkpoint.fixedSrc
-			fixOffsets = fixOffsets[:checkpoint.fixOffsets]
-			edits = edits[:checkpoint.edits]
-			fixedErrs = fixedErrs[:checkpoint.fixedErrs]
-			rejected[checkpoint.stmt] = true
+			revert(*checkpoint)
 			// This pass analyzed nothing, so it does not count against the fix-up budget,
 			// but a pass must remain to analyze the restored source even past the limit.
 			maxRetries = max(min(maxRetries+1, maxRetriesLimit), retry+2)
@@ -770,6 +779,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			budgeted = true
 		}
 
+		// The tables that statements with errors create, whose columns may differ from the
+		// user's, by the lowercased name.
+		erroneousTables := make(map[string]string)
 		for i, s := range stmts {
 			kind, _ := s.NodeKind()
 			if kind == googlesql.ASTNodeKindAstVariableDeclaration {
@@ -820,12 +832,17 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				if output != nil {
 					a.registerCreatedObject(output, catalog)
 				}
+				setErroneousTable(erroneousTables, catalog, s, fixedStmts[i])
 				statements = append(statements, StatementResult{Stmt: s, Output: output})
 				continue
 			}
 
 			errSrc := fixedSrc
 			pErr := parseZetaSQLError(fixedSrc, err)
+
+			unnestFixFor, hasUnnestFix := unnestFixes[i]
+			// The elements of `[]` are INT64, which the alias is used against, so the error is bqls's.
+			aliasMisused := hasUnnestFix && insideAliasPath(s, positionToByteOffset(fixedSrc, pErr.Position), unnestFixFor.aliases)
 
 			isUnrecognizedNameError := strings.Contains(pErr.Msg, "Unrecognized name: ")
 			isNotExistInStructError := strings.Contains(pErr.Msg, "does not exist in STRUCT")
@@ -882,6 +899,10 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			// fix src
 			srcBeforeFix := fixedSrc
 			skipError := false
+			// Whether the fix-up substitutes a declared variable, which keeps the column types.
+			declarationFix := false
+			// The alias of the UNNEST in FROM whose array the fix-up replaces with `[]`.
+			unnestAlias := ""
 			if isUnrecognizedNameError || isNotExistInStructError || isNotFoundInsideError {
 				errTermOffset := positionToByteOffset(fixedSrc, pErr.Position)
 				// The span of the unknown name with its field accesses and subscripts, which the fix-ups below replace.
@@ -893,16 +914,28 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 					fixedSrc, fo = fixDeclarationError(fixedSrc, pErr, defaultVal)
 					if len(fo) > 0 {
 						skipError = true
+						declarationFix = true
 					}
 				} else if isWholeFunctionArgument(s, termStart, termEnd) {
 					// NULL coerces to any argument type, whereas `1` or `true` fails to match the signature.
 					fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "NULL")
+				} else if alias, ok := unnestAliasInFrom(s, termStart, termEnd); ok {
+					// The rows of the table are unknown, but the rest of the statement is analyzed against none.
+					fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "[]")
+					unnestAlias = alias
+				} else if isInUnnestArray(s, termStart, termEnd) {
+					// An empty array coerces to an array of any element type.
+					fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "[]")
 				} else {
-					switch innermostClause(node, errTermOffset).(type) {
+					switch clause := innermostClause(node, errTermOffset); clause.(type) {
 					case *googlesql.ASTSelectList:
 						if aliasOnNextLine(fixedSrc, s, termStart, termEnd) {
 							// The alias is likely the next column, before which the user is typing without a comma yet.
 							fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "1,")
+						} else if alias, ok := implicitColumnName(fixedSrc, s, termStart, termEnd); ok {
+							// The outer query, a later statement reading a created table, or ORDER BY may
+							// refer to the column by its name. A created table also needs its columns named.
+							fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "1 AS "+alias)
 						} else {
 							fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
 						}
@@ -914,7 +947,12 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 							fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
 						}
 					case *googlesql.ASTOrderBy:
-						fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
+						parent, _ := clause.Parent()
+						if call, ok := parent.(*googlesql.ASTFunctionCall); ok {
+							fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, aggregateOrderByPlaceholder(fixedSrc, call))
+						} else {
+							fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
+						}
 					case *googlesql.ASTWhereClause, *googlesql.ASTOnClause, *googlesql.ASTHaving, *googlesql.ASTQualify:
 						// The passes after this one, the last of which applies no fix-up.
 						fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr, maxRetries-1-retry)
@@ -978,6 +1016,29 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				}
 			}
 
+			// The INT64 elements of `[]` may also reach the error through a renamed column or
+			// a set operation, so an error no fix-up recovers from is taken as bqls's too.
+			if hasUnnestFix && !rejected[i] && (aliasMisused || len(fo) == 0) {
+				revert(unnestFixFor.checkpoint)
+				delete(unnestFixes, i)
+				// As for a reverted fix-up that broke the syntax, this pass does not count.
+				maxRetries = max(min(maxRetries+1, maxRetriesLimit), retry+2)
+				goto retry
+			}
+
+			if len(fo) == 0 {
+				if table, ok := readsTable(s, erroneousTables, catalog); ok {
+					// The error may come from the columns that the fix-ups gave the table, or from the
+					// table missing, which the user does not see in this statement.
+					pErr = Error{
+						Msg:      fmt.Sprintf("bqls could not finish analyzing this statement: it uses %s, created by a statement with errors", table),
+						Position: pErr.Position,
+						Severity: lsp.Warning,
+					}
+					isNotBoolConditionError = false
+				}
+			}
+
 			if (lastPass || rejected[i]) && len(fo) > 0 {
 				fixedSrc, fo = srcBeforeFix, nil
 				if skipError {
@@ -993,6 +1054,10 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 						Severity: lsp.Warning,
 					}
 				}
+			}
+			if len(fo) == 0 {
+				// Also after the last pass or a rejected statement drops its fix-up, which leaves the table uncreated.
+				setErroneousTable(erroneousTables, catalog, s, true)
 			}
 			srcErr := errorToSrc(src, errSrc, edits, pErr)
 			if isNotBoolConditionError {
@@ -1011,6 +1076,17 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 					fixOffsets: len(fixOffsets),
 					edits:      len(edits),
 					fixedErrs:  len(fixedErrs),
+				}
+				if !declarationFix {
+					fixedStmts[i] = true
+				}
+				if unnestAlias != "" {
+					fix, ok := unnestFixes[i]
+					if !ok {
+						fix.checkpoint = *beforeFix
+					}
+					fix.aliases = append(fix.aliases, unnestAlias)
+					unnestFixes[i] = fix
 				}
 				if !skipError {
 					fixedErrs = append(fixedErrs, statementError{index: i, err: srcErr})
@@ -1063,6 +1139,13 @@ type fixUpCheckpoint struct {
 	stmt                         int
 	fixedSrc                     string
 	fixOffsets, edits, fixedErrs int
+}
+
+// unnestFix is the state before the fix-ups that replaced unknown arrays of UNNEST in FROM
+// with `[]` in a statement, and the aliases of those UNNEST.
+type unnestFix struct {
+	checkpoint fixUpCheckpoint
+	aliases    []string
 }
 
 const (

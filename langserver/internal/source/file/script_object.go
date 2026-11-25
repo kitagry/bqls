@@ -1,6 +1,9 @@
 package file
 
 import (
+	"errors"
+	"strings"
+
 	"github.com/goccy/go-googlesql"
 )
 
@@ -73,4 +76,70 @@ func (a *Analyzer) addCreatedProcedure(stmt *googlesql.ResolvedCreateProcedureSt
 		return err
 	}
 	return catalog.addScriptProcedure(namePath, signature)
+}
+
+// setErroneousTable records in tables, by the catalog's key, whether the table that a CREATE
+// TABLE statement creates has come from a statement with errors or fix-ups, since a later
+// clean CREATE OR REPLACE gives the table the user's columns again.
+func setErroneousTable(tables map[string]string, catalog *Catalog, stmt googlesql.ASTNode, erroneous bool) {
+	create, ok := stmt.(*googlesql.ASTCreateTableStatement)
+	if !ok {
+		return
+	}
+	path, err := create.Name()
+	if err != nil || path == nil {
+		return
+	}
+	name, ok := joinPathExpression(path)
+	if !ok {
+		return
+	}
+	key := catalog.scriptTableKey(name)
+	if erroneous {
+		tables[key] = name
+	} else {
+		delete(tables, key)
+	}
+}
+
+var errTableFound = errors.New("table found")
+
+// readsTable returns the first of tables that stmt reads from, other than through a CTE of
+// the same name.
+func readsTable(stmt googlesql.ASTNode, tables map[string]string, catalog *Catalog) (string, bool) {
+	if len(tables) == 0 {
+		return "", false
+	}
+	ctes := make(map[string]bool)
+	Walk(stmt, func(n googlesql.ASTNode) error { //nolint
+		if q, ok := n.(*googlesql.ASTAliasedQuery); ok {
+			if alias, err := q.Alias(); err == nil && alias != nil {
+				if name, err := alias.GetAsString(); err == nil {
+					ctes[strings.ToLower(name)] = true
+				}
+			}
+		}
+		return nil
+	})
+	var used string
+	Walk(stmt, func(n googlesql.ASTNode) error { //nolint
+		table, ok := n.(*googlesql.ASTTablePathExpression)
+		if !ok {
+			return nil
+		}
+		path, err := table.PathExpr()
+		if err != nil || path == nil {
+			return nil
+		}
+		name, ok := joinPathExpression(path)
+		if !ok || ctes[strings.ToLower(name)] {
+			return nil
+		}
+		if created, ok := tables[catalog.scriptTableKey(name)]; ok {
+			used = created
+			return errTableFound
+		}
+		return nil
+	})
+	return used, used != ""
 }

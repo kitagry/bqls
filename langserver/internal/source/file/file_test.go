@@ -1737,6 +1737,56 @@ func TestAnalyzer_UnrecognizedNameInHavingAndQualify(t *testing.T) {
 				IncompleteColumnName: "unknown_col",
 			}},
 		},
+		"negated and compared with analytic function in qualify clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () = -unknown_col",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () = -1",
+			expectedErrs: []file.Error{{
+				Msg:                  "Unrecognized name: unknown_col",
+				Position:             lsp.Position{Line: 0, Character: 82},
+				TermLength:           11,
+				IncompleteColumnName: "unknown_col",
+			}},
+		},
+		"bitwise not compared with analytic function in qualify clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () = ~unknown_col",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () = ~1",
+			expectedErrs: []file.Error{{
+				Msg:                  "Unrecognized name: unknown_col",
+				Position:             lsp.Position{Line: 0, Character: 82},
+				TermLength:           11,
+				IncompleteColumnName: "unknown_col",
+			}},
+		},
+		"unary plus compared with analytic function in qualify clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () = +unknown_col",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () = +1",
+			expectedErrs: []file.Error{{
+				Msg:                  "Unrecognized name: unknown_col",
+				Position:             lsp.Position{Line: 0, Character: 82},
+				TermLength:           11,
+				IncompleteColumnName: "unknown_col",
+			}},
+		},
+		"like any list with analytic function in qualify clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY CAST(ROW_NUMBER() OVER () AS STRING) LIKE ANY (unknown_col, 'a')",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY CAST(ROW_NUMBER() OVER () AS STRING) LIKE ANY ('', 'a')",
+			expectedErrs: []file.Error{{
+				Msg:                  "Unrecognized name: unknown_col",
+				Position:             lsp.Position{Line: 0, Character: 105},
+				TermLength:           11,
+				IncompleteColumnName: "unknown_col",
+			}},
+		},
+		"in unnest with analytic function in qualify clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () IN UNNEST(unknown_col)",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () IN UNNEST([])",
+			expectedErrs: []file.Error{{
+				Msg:                  "Unrecognized name: unknown_col",
+				Position:             lsp.Position{Line: 0, Character: 89},
+				TermLength:           11,
+				IncompleteColumnName: "unknown_col",
+			}},
+		},
 		"partition by of window function in qualify clause": {
 			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER (PARTITION BY unknown_col ORDER BY id) = 1",
 			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER (PARTITION BY true ORDER BY id) = 1",
@@ -2048,9 +2098,8 @@ func TestAnalyzer_UnrecognizedNameInClauseOfSubqueryInCondition(t *testing.T) {
 			expectedPosition: lsp.Position{Line: 0, Character: 52},
 		},
 		"unnest in from clause of subquery in where clause": {
-			// The FROM clause has no fix-up of its own, so the outer condition is replaced.
 			file:             "SELECT * FROM `project.dataset.table` WHERE id IN (SELECT v FROM UNNEST(x) AS v)",
-			expectedFixedSrc: "SELECT * FROM `project.dataset.table` WHERE true",
+			expectedFixedSrc: "SELECT * FROM `project.dataset.table` WHERE id IN (SELECT v FROM UNNEST([]) AS v)",
 			expectedPosition: lsp.Position{Line: 0, Character: 72},
 		},
 	}
@@ -2081,6 +2130,446 @@ func TestAnalyzer_UnrecognizedNameInClauseOfSubqueryInCondition(t *testing.T) {
 			}
 			if len(got.RNode) == 0 {
 				t.Errorf("failed to analyze")
+			}
+		})
+	}
+}
+
+func TestAnalyzer_UnrecognizedNameAsArrayOfUnnestInFrom(t *testing.T) {
+	const table = "`project.dataset.table`"
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+		expectedErrMsgs  []string
+		expectedOutputs  int
+	}{
+		"alias not referenced": {
+			file:             "SELECT 1 FROM UNNEST(x)",
+			expectedFixedSrc: "SELECT 1 FROM UNNEST([])",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+			expectedOutputs:  1,
+		},
+		"alias referenced as a whole": {
+			file:             "SELECT v FROM UNNEST(x) AS v",
+			expectedFixedSrc: "SELECT v FROM UNNEST([]) AS v",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+			expectedOutputs:  1,
+		},
+		"joined with a table": {
+			file:             "SELECT id FROM " + table + ", UNNEST(x) AS v",
+			expectedFixedSrc: "SELECT id FROM " + table + ", UNNEST([]) AS v",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+			expectedOutputs:  1,
+		},
+		// The elements of `[]` are INT64, which the alias may be used against.
+		"alias compared with a string": {
+			file:             "SELECT v FROM UNNEST(x) AS v WHERE v = 'a'",
+			expectedFixedSrc: "SELECT v FROM UNNEST(x) AS v WHERE v = 'a'",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"alias compared after a string": {
+			file:             "SELECT v FROM UNNEST(x) AS v WHERE 'a' = v",
+			expectedFixedSrc: "SELECT v FROM UNNEST(x) AS v WHERE 'a' = v",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"field of alias": {
+			file:             "SELECT v.a FROM UNNEST(x) AS v",
+			expectedFixedSrc: "SELECT v.a FROM UNNEST(x) AS v",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"field of alias after another fix-up": {
+			file:             "SELECT y, v.a FROM UNNEST(x) AS v",
+			expectedFixedSrc: "SELECT y, v.a FROM UNNEST(x) AS v",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		// The elements reach the comparison under another name, which the alias does not match.
+		"alias renamed in a subquery": {
+			file:             "SELECT w FROM (SELECT v AS w FROM UNNEST(x) AS v) WHERE w = 'a'",
+			expectedFixedSrc: "SELECT w FROM (SELECT v AS w FROM UNNEST(x) AS v) WHERE w = 'a'",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"set operation with a string": {
+			file:             "SELECT v FROM UNNEST(x) AS v UNION ALL SELECT 'a'",
+			expectedFixedSrc: "SELECT v FROM UNNEST(x) AS v UNION ALL SELECT 'a'",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"statement after a reverted one": {
+			file:             "SELECT v.a FROM UNNEST(x) AS v;\nSELECT y FROM " + table,
+			expectedFixedSrc: "SELECT v.a FROM UNNEST(x) AS v;\nSELECT 1 AS y FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x", "Unrecognized name: y"},
+			expectedOutputs:  1,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
+				AnyTimes()
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			gotMsgs := make([]string, 0, len(got.Errors))
+			for _, e := range got.Errors {
+				gotMsgs = append(gotMsgs, e.Msg)
+			}
+			if diff := cmp.Diff(tt.expectedErrMsgs, gotMsgs); diff != "" {
+				t.Errorf("errors (-want, +got)\n%s", diff)
+			}
+			if len(got.RNode) != tt.expectedOutputs {
+				t.Errorf("got %d analyzer outputs, want %d", len(got.RNode), tt.expectedOutputs)
+			}
+		})
+	}
+}
+
+func TestAnalyzer_UnrecognizedNameInOrderByOfAggregateFunction(t *testing.T) {
+	const table = "`project.dataset.table`"
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+	}{
+		"in select list": {
+			file:             "SELECT ARRAY_AGG(id ORDER BY x) FROM " + table,
+			expectedFixedSrc: "SELECT ARRAY_AGG(id ORDER BY 1+1) FROM " + table,
+		},
+		"with a separator": {
+			file:             "SELECT STRING_AGG(name, ',' ORDER BY x DESC) FROM " + table,
+			expectedFixedSrc: "SELECT STRING_AGG(name, ',' ORDER BY 1+1 DESC) FROM " + table,
+		},
+		"in having clause": {
+			file:             "SELECT SUM(id) FROM " + table + " HAVING ARRAY_LENGTH(ARRAY_AGG(id ORDER BY x)) > 0",
+			expectedFixedSrc: "SELECT SUM(id) FROM " + table + " HAVING ARRAY_LENGTH(ARRAY_AGG(id ORDER BY 1+1)) > 0",
+		},
+		// With DISTINCT, an aggregate function orders only by its arguments.
+		"with distinct": {
+			file:             "SELECT STRING_AGG(DISTINCT name, ',' ORDER BY x) FROM " + table,
+			expectedFixedSrc: "SELECT STRING_AGG(DISTINCT name, ',' ORDER BY name) FROM " + table,
+		},
+		// A window accepts ordinals and literals.
+		"window": {
+			file:             "SELECT ROW_NUMBER() OVER (ORDER BY x) FROM " + table,
+			expectedFixedSrc: "SELECT ROW_NUMBER() OVER (ORDER BY 1) FROM " + table,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{
+					{Name: "id", Type: bq.IntegerFieldType},
+					{Name: "name", Type: bq.StringFieldType},
+				}}, nil).
+				AnyTimes()
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			gotMsgs := make([]string, 0, len(got.Errors))
+			for _, e := range got.Errors {
+				gotMsgs = append(gotMsgs, e.Msg)
+			}
+			if diff := cmp.Diff([]string{"Unrecognized name: x"}, gotMsgs); diff != "" {
+				t.Errorf("errors (-want, +got)\n%s", diff)
+			}
+			if len(got.RNode) != 1 {
+				t.Errorf("got %d analyzer outputs, want 1", len(got.RNode))
+			}
+		})
+	}
+}
+
+func TestAnalyzer_FixUpsInCreatedTable(t *testing.T) {
+	const table = "`project.dataset.table`"
+	const warning = "bqls could not finish analyzing this statement: it uses t, created by a statement with errors"
+	type message struct {
+		line    int
+		msg     string
+		warning bool
+	}
+	// More unknown columns than the passes fix up, so that the last pass drops its fix-up.
+	var columns []string
+	var fixedColumns []string
+	var unknownColumns []message
+	for i := range 14 {
+		columns = append(columns, fmt.Sprintf("a%d", i))
+		if i < 9 {
+			fixedColumns = append(fixedColumns, fmt.Sprintf("1 AS a%d", i))
+		} else {
+			fixedColumns = append(fixedColumns, fmt.Sprintf("a%d", i))
+		}
+		if i < 10 {
+			unknownColumns = append(unknownColumns, message{0, fmt.Sprintf("Unrecognized name: a%d", i), false})
+		}
+	}
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+		expectedMsgs     []message
+		expectedOutputs  int
+	}{
+		"unknown column keeps its name": {
+			file:             "CREATE TEMP TABLE t AS SELECT id, y FROM " + table + ";\nSELECT id, y FROM t",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT id, 1 AS y FROM " + table + ";\nSELECT id, y FROM t",
+			expectedMsgs:     []message{{0, "Unrecognized name: y", false}},
+			expectedOutputs:  2,
+		},
+		"unknown column with a field access keeps the last name": {
+			file:             "CREATE TEMP TABLE t AS SELECT id, y.z FROM " + table + ";\nSELECT id, z FROM t",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT id, 1 AS z FROM " + table + ";\nSELECT id, z FROM t",
+			expectedMsgs:     []message{{0, "Unrecognized name: y", false}},
+			expectedOutputs:  2,
+		},
+		"unknown column with an alias": {
+			file:             "CREATE TEMP TABLE t AS SELECT id, y AS w FROM " + table + ";\nSELECT id, w FROM t",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT id, 1 AS w FROM " + table + ";\nSELECT id, w FROM t",
+			expectedMsgs:     []message{{0, "Unrecognized name: y", false}},
+			expectedOutputs:  2,
+		},
+		"unknown column in a view": {
+			file:             "CREATE VIEW dataset.v AS SELECT id, y FROM " + table,
+			expectedFixedSrc: "CREATE VIEW dataset.v AS SELECT id, 1 AS y FROM " + table,
+			expectedMsgs:     []message{{0, "Unrecognized name: y", false}},
+			expectedOutputs:  1,
+		},
+		// The column of the placeholder is INT64, which the user did not write.
+		"column of a placeholder used against another type": {
+			file:             "CREATE TEMP TABLE t AS SELECT y AS v FROM " + table + ";\nSELECT * FROM t WHERE v = 'a'",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT 1 AS v FROM " + table + ";\nSELECT * FROM t WHERE v = 'a'",
+			expectedMsgs:     []message{{0, "Unrecognized name: y", false}, {1, warning, true}},
+			expectedOutputs:  1,
+		},
+		"column of a placeholder used through a subquery": {
+			file:             "CREATE TEMP TABLE t AS SELECT y AS v FROM " + table + ";\nSELECT * FROM (SELECT v AS w FROM t) WHERE w = 'a'",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT 1 AS v FROM " + table + ";\nSELECT * FROM (SELECT v AS w FROM t) WHERE w = 'a'",
+			expectedMsgs:     []message{{0, "Unrecognized name: y", false}, {1, warning, true}},
+			expectedOutputs:  1,
+		},
+		"elements of an unnest placeholder used against another type": {
+			file:             "CREATE TEMP TABLE t AS SELECT v FROM UNNEST(x) AS v;\nSELECT * FROM t WHERE v = 'a'",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT v FROM UNNEST([]) AS v;\nSELECT * FROM t WHERE v = 'a'",
+			expectedMsgs:     []message{{0, "Unrecognized name: x", false}, {1, warning, true}},
+			expectedOutputs:  1,
+		},
+		"table not created": {
+			file:             "CREATE TEMP TABLE t AS SELECT id FROM " + table + " WHERE id = 'a';\nSELECT id FROM t",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT id FROM " + table + " WHERE id = 'a';\nSELECT id FROM t",
+			expectedMsgs:     []message{{0, "No matching signature for operator = for argument types: INT64, STRING", false}, {1, warning, true}},
+		},
+		"another table in a later statement": {
+			file:             "CREATE TEMP TABLE t AS SELECT y AS v FROM " + table + ";\nSELECT * FROM " + table + " WHERE id = 'a'",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT 1 AS v FROM " + table + ";\nSELECT * FROM " + table + " WHERE id = 'a'",
+			expectedMsgs:     []message{{0, "Unrecognized name: y", false}, {1, "No matching signature for operator = for argument types: INT64, STRING", false}},
+			expectedOutputs:  1,
+		},
+		"table created by a statement substituting a declared variable": {
+			file:             "DECLARE x INT64 DEFAULT 1;\nCREATE TEMP TABLE t AS SELECT x AS v FROM " + table + ";\nSELECT * FROM t WHERE v = 'a'",
+			expectedFixedSrc: "DECLARE x INT64 DEFAULT 1;\nCREATE TEMP TABLE t AS SELECT 1 AS v FROM " + table + ";\nSELECT * FROM t WHERE v = 'a'",
+			expectedMsgs:     []message{{2, "No matching signature for operator = for argument types: INT64, STRING", false}},
+			expectedOutputs:  1,
+		},
+		"table replaced without errors": {
+			file:             "CREATE TEMP TABLE t AS SELECT y AS v FROM " + table + ";\nCREATE OR REPLACE TEMP TABLE t AS SELECT id AS v FROM " + table + ";\nSELECT * FROM t WHERE v = 'a'",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT 1 AS v FROM " + table + ";\nCREATE OR REPLACE TEMP TABLE t AS SELECT id AS v FROM " + table + ";\nSELECT * FROM t WHERE v = 'a'",
+			expectedMsgs:     []message{{0, "Unrecognized name: y", false}, {2, "No matching signature for operator = for argument types: INT64, STRING", false}},
+			expectedOutputs:  2,
+		},
+		"CTE of the same name": {
+			file:             "CREATE TEMP TABLE t AS SELECT y AS v FROM " + table + ";\nWITH t AS (SELECT 1 AS v) SELECT * FROM t WHERE v = 'a'",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT 1 AS v FROM " + table + ";\nWITH t AS (SELECT 1 AS v) SELECT * FROM t WHERE v = 'a'",
+			expectedMsgs:     []message{{0, "Unrecognized name: y", false}, {1, "No matching signature for operator = for argument types: INT64, STRING", false}},
+			expectedOutputs:  1,
+		},
+		"table referred to with its project": {
+			file:             "CREATE TABLE dataset.t AS SELECT y AS v FROM " + table + ";\nSELECT * FROM project.dataset.t WHERE v = 'a'",
+			expectedFixedSrc: "CREATE TABLE dataset.t AS SELECT 1 AS v FROM " + table + ";\nSELECT * FROM project.dataset.t WHERE v = 'a'",
+			expectedMsgs:     []message{{0, "Unrecognized name: y", false}, {1, "bqls could not finish analyzing this statement: it uses dataset.t, created by a statement with errors", true}},
+			expectedOutputs:  1,
+		},
+		"table left uncreated by the last pass": {
+			file:             "CREATE TEMP TABLE t AS SELECT " + strings.Join(columns, ", ") + " FROM " + table + ";\nSELECT id FROM t",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT " + strings.Join(fixedColumns, ", ") + " FROM " + table + ";\nSELECT id FROM t",
+			expectedMsgs:     append(unknownColumns, message{1, warning, true}),
+		},
+		"table created without errors": {
+			file:             "CREATE TEMP TABLE t AS SELECT id AS v FROM " + table + ";\nSELECT * FROM t WHERE v = 'a'",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT id AS v FROM " + table + ";\nSELECT * FROM t WHERE v = 'a'",
+			expectedMsgs:     []message{{1, "No matching signature for operator = for argument types: INT64, STRING", false}},
+			expectedOutputs:  1,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetDefaultProject().Return("project").AnyTimes()
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
+				AnyTimes()
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "t").
+				Return(nil, &googleapi.Error{Code: 404, Message: "Not found: Table project:dataset.t"}).
+				AnyTimes()
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			gotMsgs := make([]message, 0, len(got.Errors))
+			for _, e := range got.Errors {
+				gotMsgs = append(gotMsgs, message{line: e.Position.Line, msg: strings.SplitN(e.Msg, "\n", 2)[0], warning: e.Severity == lsp.Warning})
+			}
+			if diff := cmp.Diff(tt.expectedMsgs, gotMsgs, cmp.AllowUnexported(message{})); diff != "" {
+				t.Errorf("errors (-want, +got)\n%s", diff)
+			}
+			if len(got.RNode) != tt.expectedOutputs {
+				t.Errorf("got %d analyzer outputs, want %d", len(got.RNode), tt.expectedOutputs)
+			}
+		})
+	}
+}
+
+func TestAnalyzer_UnknownColumnKeepsItsNameForOuterQuery(t *testing.T) {
+	const table = "`project.dataset.table`"
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+		expectedErrMsgs  []string
+	}{
+		"subquery": {
+			file:             "SELECT y FROM (SELECT id, y FROM " + table + ")",
+			expectedFixedSrc: "SELECT y FROM (SELECT id, 1 AS y FROM " + table + ")",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		"CTE": {
+			file:             "WITH s AS (SELECT id, y FROM " + table + ") SELECT y FROM s",
+			expectedFixedSrc: "WITH s AS (SELECT id, 1 AS y FROM " + table + ") SELECT y FROM s",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		"field of subquery alias": {
+			file:             "SELECT s.y FROM (SELECT id, y FROM " + table + ") s",
+			expectedFixedSrc: "SELECT s.y FROM (SELECT id, 1 AS y FROM " + table + ") s",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		"field access names the column after its last name": {
+			file:             "SELECT z FROM (SELECT id, y.z FROM " + table + ")",
+			expectedFixedSrc: "SELECT z FROM (SELECT id, 1 AS z FROM " + table + ")",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		"SELECT AS STRUCT": {
+			file:             "SELECT s FROM (SELECT AS STRUCT id, y FROM " + table + ") s",
+			expectedFixedSrc: "SELECT s FROM (SELECT AS STRUCT id, 1 AS y FROM " + table + ") s",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		// The value has no column to name.
+		"SELECT AS VALUE": {
+			file:             "SELECT ARRAY(SELECT AS VALUE y FROM " + table + ")",
+			expectedFixedSrc: "SELECT ARRAY(SELECT AS VALUE 1 FROM " + table + ")",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		"pipe SELECT": {
+			file:             "FROM " + table + " |> SELECT id, y |> WHERE y = 1",
+			expectedFixedSrc: "FROM " + table + " |> SELECT id, 1 AS y |> WHERE y = 1",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		"pipe EXTEND": {
+			file:             "FROM " + table + " |> EXTEND y |> WHERE y = 1",
+			expectedFixedSrc: "FROM " + table + " |> EXTEND 1 AS y |> WHERE y = 1",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		// GROUP BY of pipe AGGREGATE is not a SELECT list.
+		"GROUP BY of pipe AGGREGATE": {
+			file:             "FROM " + table + " |> AGGREGATE COUNT(*) GROUP BY y",
+			expectedFixedSrc: "FROM " + table + " |> AGGREGATE COUNT(*) GROUP BY 1+1",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		// ORDER BY and GROUP BY see the columns of the SELECT list by their names.
+		"ORDER BY the name": {
+			file:             "SELECT y FROM " + table + " ORDER BY y DESC",
+			expectedFixedSrc: "SELECT 1 AS y FROM " + table + " ORDER BY y DESC",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		"GROUP BY the name": {
+			file:             "SELECT y, COUNT(*) FROM " + table + " GROUP BY y",
+			expectedFixedSrc: "SELECT 1 AS y, COUNT(*) FROM " + table + " GROUP BY y",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		"GROUP BY an ordinal": {
+			file:             "SELECT y, COUNT(*) FROM " + table + " GROUP BY 1",
+			expectedFixedSrc: "SELECT 1 AS y, COUNT(*) FROM " + table + " GROUP BY 1",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+		// WHERE does not see the SELECT list, so the name there is unknown by itself.
+		"WHERE the name": {
+			file:             "SELECT y FROM " + table + " WHERE y = 1",
+			expectedFixedSrc: "SELECT 1 AS y FROM " + table + " WHERE true",
+			expectedErrMsgs:  []string{"Unrecognized name: y", "Unrecognized name: y"},
+		},
+		// A reserved keyword may follow a dot but not AS.
+		"reserved keyword after a dot": {
+			file:             "SELECT t.end FROM " + table + " t",
+			expectedFixedSrc: "SELECT 1 AS `end` FROM " + table + " t",
+			expectedErrMsgs:  []string{"Name end not found inside t"},
+		},
+		// Another column of the name would make the name ambiguous.
+		"name of another column": {
+			file:             "SELECT id, x.id FROM " + table + " ORDER BY id",
+			expectedFixedSrc: "SELECT id, 1 FROM " + table + " ORDER BY id",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"name of another column with an alias": {
+			file:             "SELECT y FROM (SELECT 1 AS Y, x.y FROM " + table + ")",
+			expectedFixedSrc: "SELECT y FROM (SELECT 1 AS Y, 1 FROM " + table + ")",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		// A parenthesized column has no name to keep.
+		"parenthesized": {
+			file:             "SELECT id FROM (SELECT id, (y) FROM " + table + ")",
+			expectedFixedSrc: "SELECT id FROM (SELECT id, (1) FROM " + table + ")",
+			expectedErrMsgs:  []string{"Unrecognized name: y"},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
+				AnyTimes()
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			gotMsgs := make([]string, 0, len(got.Errors))
+			for _, e := range got.Errors {
+				gotMsgs = append(gotMsgs, e.Msg)
+			}
+			if diff := cmp.Diff(tt.expectedErrMsgs, gotMsgs); diff != "" {
+				t.Errorf("errors (-want, +got)\n%s", diff)
+			}
+			if len(got.RNode) != 1 {
+				t.Errorf("got %d analyzer outputs, want 1", len(got.RNode))
 			}
 		})
 	}
@@ -4143,23 +4632,23 @@ func TestAnalyzer_MissingCommaInSelectList(t *testing.T) {
 	}{
 		"unknown name followed by a function call": {
 			file:             cte + "SELECT i,\n  cu\n  COALESCE(s, 'n/a') AS p\nFROM t",
-			expectedFixedSrc: cte + "SELECT i,\n  1,\n  COALESCE(s, 'n/a') AS p\nFROM t",
+			expectedFixedSrc: cte + "SELECT i,\n  1 AS cu,\n  COALESCE(s, 'n/a') AS p\nFROM t",
 		},
 		"unknown name followed by a path": {
 			file:             cte + "SELECT i,\n  cu\n  t.s,\n  d\nFROM t",
-			expectedFixedSrc: cte + "SELECT i,\n  1,\n  t.s,\n  d\nFROM t",
+			expectedFixedSrc: cte + "SELECT i,\n  1 AS cu,\n  t.s,\n  d\nFROM t",
 		},
 		"unknown name followed by a string literal": {
 			file:             cte + "SELECT i,\n  cu\n  'x' AS lit\nFROM t",
-			expectedFixedSrc: cte + "SELECT i,\n  1,\n  'x' AS lit\nFROM t",
+			expectedFixedSrc: cte + "SELECT i,\n  1 AS cu,\n  'x' AS lit\nFROM t",
 		},
 		"unknown name followed by CASE": {
 			file:             cte + "SELECT i,\n  cu\n  CASE WHEN i = 1 THEN 1 END AS c\nFROM t",
-			expectedFixedSrc: cte + "SELECT i,\n  1,\n  CASE WHEN i = 1 THEN 1 END AS c\nFROM t",
+			expectedFixedSrc: cte + "SELECT i,\n  1 AS cu,\n  CASE WHEN i = 1 THEN 1 END AS c\nFROM t",
 		},
 		"unknown name followed by a binary expression": {
 			file:             cte + "SELECT i,\n  cu\n  i + 1 AS c\nFROM t",
-			expectedFixedSrc: cte + "SELECT i,\n  1,\n  i + 1 AS c\nFROM t",
+			expectedFixedSrc: cte + "SELECT i,\n  1 AS cu,\n  i + 1 AS c\nFROM t",
 		},
 		"unknown name with an alias followed by a function call": {
 			file:             cte + "SELECT i,\n  cu AS x\n  COALESCE(s, 'n/a') AS p\nFROM t",
@@ -4167,7 +4656,7 @@ func TestAnalyzer_MissingCommaInSelectList(t *testing.T) {
 		},
 		"in a subquery": {
 			file:             cte + "SELECT * FROM (SELECT i,\n  cu\n  COALESCE(s, 'n/a') AS p\nFROM t)",
-			expectedFixedSrc: cte + "SELECT * FROM (SELECT i,\n  1,\n  COALESCE(s, 'n/a') AS p\nFROM t)",
+			expectedFixedSrc: cte + "SELECT * FROM (SELECT i,\n  1 AS cu,\n  COALESCE(s, 'n/a') AS p\nFROM t)",
 		},
 		"unknown name read as the alias of the next column": {
 			file: "WITH r AS (SELECT 1 AS customer_id, 'x' AS product_name)\n" +
@@ -4255,7 +4744,7 @@ func TestAnalyzer_NotFoundInsideReplacesOnlyThePath(t *testing.T) {
 		},
 		"right after a comma": {
 			file:                         "SELECT id,t.unexist_column FROM `project.dataset.table` t",
-			expectedFixedSrc:             "SELECT id,1 FROM `project.dataset.table` t",
+			expectedFixedSrc:             "SELECT id,1 AS unexist_column FROM `project.dataset.table` t",
 			expectedIncompleteColumnName: "t.unexist_column",
 		},
 	}
@@ -4367,6 +4856,7 @@ func TestAnalyzer_UnknownColumnAsFunctionArgument(t *testing.T) {
 func TestAnalyzer_UnknownColumnAsFunctionArgumentInTablePartitionBy(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	bqClient := mock_bigquery.NewMockClient(ctrl)
+	bqClient.EXPECT().GetDefaultProject().Return("project").AnyTimes()
 	bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", gomock.Any()).
 		Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
 		AnyTimes()
@@ -4605,6 +5095,41 @@ func TestAnalyzer_UnknownColumnAsOperatorOperand(t *testing.T) {
 			expectedFixedSrc: "SELECT '' IN UNNEST(['a']) FROM " + table,
 			expectedErrMsgs:  []string{"Unrecognized name: x"},
 		},
+		"array of IN UNNEST": {
+			file:             "SELECT name IN UNNEST(x) FROM " + table,
+			expectedFixedSrc: "SELECT name IN UNNEST([]) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"LIKE ANY": {
+			file:             "SELECT name LIKE ANY (x, 'a') FROM " + table,
+			expectedFixedSrc: "SELECT name LIKE ANY ('', 'a') FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"NOT LIKE SOME": {
+			file:             "SELECT name NOT LIKE SOME ('a', x) FROM " + table,
+			expectedFixedSrc: "SELECT name NOT LIKE SOME ('a', '') FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"LIKE ALL": {
+			file:             "SELECT name LIKE ALL (x, 'a') FROM " + table,
+			expectedFixedSrc: "SELECT name LIKE ALL ('', 'a') FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"left operand of LIKE ANY": {
+			file:             "SELECT x LIKE ANY ('a', 'b') FROM " + table,
+			expectedFixedSrc: "SELECT '' LIKE ANY ('a', 'b') FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"array of LIKE ANY UNNEST": {
+			file:             "SELECT name LIKE ANY UNNEST(x) FROM " + table,
+			expectedFixedSrc: "SELECT name LIKE ANY UNNEST([]) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"left operand of LIKE ALL UNNEST": {
+			file:             "SELECT x LIKE ALL UNNEST(['a']) FROM " + table,
+			expectedFixedSrc: "SELECT '' LIKE ALL UNNEST(['a']) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
 		// In WHERE and ON, the whole condition around an unknown name is replaced with `true`.
 		"IN in WHERE": {
 			file:             "SELECT * FROM " + table + " WHERE x IN ('a')",
@@ -4624,6 +5149,16 @@ func TestAnalyzer_UnknownColumnAsOperatorOperand(t *testing.T) {
 		"IN UNNEST in WHERE": {
 			file:             "SELECT * FROM " + table + " WHERE x IN UNNEST(['a'])",
 			expectedFixedSrc: "SELECT * FROM " + table + " WHERE true",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"array of IN UNNEST in WHERE": {
+			file:             "SELECT * FROM " + table + " WHERE name IN UNNEST(x)",
+			expectedFixedSrc: "SELECT * FROM " + table + " WHERE name IN UNNEST([])",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"LIKE ANY list element in WHERE": {
+			file:             "SELECT * FROM " + table + " WHERE name LIKE ANY (x, 'a')",
+			expectedFixedSrc: "SELECT * FROM " + table + " WHERE name LIKE ANY ('', 'a')",
 			expectedErrMsgs:  []string{"Unrecognized name: x"},
 		},
 		"BETWEEN in WHERE": {
@@ -4663,7 +5198,7 @@ func TestAnalyzer_UnknownColumnAsOperatorOperand(t *testing.T) {
 		},
 		"operator written by the user": {
 			file:             "SELECT x, 1 = 'a' FROM " + table,
-			expectedFixedSrc: "SELECT 1, 1 = 'a' FROM " + table,
+			expectedFixedSrc: "SELECT 1 AS x, 1 = 'a' FROM " + table,
 			expectedErrMsgs: []string{
 				"Unrecognized name: x",
 				"No matching signature for operator = for argument types: INT64, STRING\n  Signature: T1 = T1\n    Unable to find common supertype for templated argument <T1>\n      Input types for <T1>: {INT64, STRING}",
@@ -5136,7 +5671,7 @@ func TestAnalyzer_UnknownColumnAsArithmeticOperand(t *testing.T) {
 		},
 		"operator written by the user": {
 			file:             "SELECT x, 1 + ts FROM " + table,
-			expectedFixedSrc: "SELECT 1, 1 + ts FROM " + table,
+			expectedFixedSrc: "SELECT 1 AS x, 1 + ts FROM " + table,
 			expectedErrMsgs: []string{
 				"Unrecognized name: x",
 				"No matching signature for operator +",
@@ -5145,7 +5680,7 @@ func TestAnalyzer_UnknownColumnAsArithmeticOperand(t *testing.T) {
 		},
 		"literal cast written by the user": {
 			file:             "SELECT x, 1 + 'a' FROM " + table,
-			expectedFixedSrc: "SELECT 1, 1 + 'a' FROM " + table,
+			expectedFixedSrc: "SELECT 1 AS x, 1 + 'a' FROM " + table,
 			expectedErrMsgs: []string{
 				"Unrecognized name: x",
 				`Could not cast literal "a" to type DATE`,
@@ -5431,14 +5966,14 @@ func TestAnalyzer_PlaceholderBeforeIdentifier(t *testing.T) {
 		},
 		"unknown field after a quoted name with a space": {
 			file:             "SELECT `a b`.x FROM (SELECT STRUCT(1 AS y) AS `a b`);",
-			expectedFixedSrc: "SELECT 1 FROM (SELECT STRUCT(1 AS y) AS `a b`);",
+			expectedFixedSrc: "SELECT 1 AS x FROM (SELECT STRUCT(1 AS y) AS `a b`);",
 			expectedErrs: []file.Error{
 				{Msg: "Field name x does not exist in STRUCT<y INT64>", Position: lsp.Position{Line: 0, Character: 13}, TermLength: 1, IncompleteColumnName: "`a b`.x"},
 			},
 		},
 		"name not found inside a quoted table name with a space": {
 			file:             "SELECT `a b`.x FROM (SELECT 1 AS a) AS `a b`;",
-			expectedFixedSrc: "SELECT 1 FROM (SELECT 1 AS a) AS `a b`;",
+			expectedFixedSrc: "SELECT 1 AS x FROM (SELECT 1 AS a) AS `a b`;",
 			expectedErrs: []file.Error{
 				{Msg: "Name x not found inside a b", Position: lsp.Position{Line: 0, Character: 13}, TermLength: 1, IncompleteColumnName: "`a b`.x"},
 			},
@@ -5447,21 +5982,21 @@ func TestAnalyzer_PlaceholderBeforeIdentifier(t *testing.T) {
 		// The examples in #765. The path is replaced as a whole across the whitespace around a dot.
 		"unknown field after a newline before a dot": {
 			file:             "SELECT t\n  .missing FROM (SELECT STRUCT(1 AS a) AS t);",
-			expectedFixedSrc: "SELECT 1 FROM (SELECT STRUCT(1 AS a) AS t);",
+			expectedFixedSrc: "SELECT 1 AS missing FROM (SELECT STRUCT(1 AS a) AS t);",
 			expectedErrs: []file.Error{
 				{Msg: "Field name missing does not exist in STRUCT<a INT64>", Position: lsp.Position{Line: 1, Character: 3}, TermLength: 7, IncompleteColumnName: "t\n  .missing"},
 			},
 		},
 		"field access with a space after a dot on an unknown name": {
 			file:             "SELECT unknown. x;",
-			expectedFixedSrc: "SELECT 1;",
+			expectedFixedSrc: "SELECT 1 AS x;",
 			expectedErrs: []file.Error{
 				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
 			},
 		},
 		"quoted field access with a space after a dot on an unknown name": {
 			file:             "SELECT unknown. `x y`;",
-			expectedFixedSrc: "SELECT 1;",
+			expectedFixedSrc: "SELECT 1 AS `x y`;",
 			expectedErrs: []file.Error{
 				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
 			},
@@ -5518,14 +6053,14 @@ func TestAnalyzer_PlaceholderBeforeFieldAccess(t *testing.T) {
 		// A placeholder in parentheses would raise an error about the placeholder.
 		"field access on an unknown name": {
 			file:             "SELECT unknown.x.y;",
-			expectedFixedSrc: "SELECT 1;",
+			expectedFixedSrc: "SELECT 1 AS y;",
 			expectedErrs: []file.Error{
 				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
 			},
 		},
 		"quoted field access on an unknown name": {
 			file:             "SELECT unknown.`x y`;",
-			expectedFixedSrc: "SELECT 1;",
+			expectedFixedSrc: "SELECT 1 AS `x y`;",
 			expectedErrs: []file.Error{
 				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
 			},
@@ -5561,21 +6096,21 @@ func TestAnalyzer_PlaceholderBeforeFieldAccess(t *testing.T) {
 		},
 		"field access with whitespace on an unknown name": {
 			file:             "SELECT unknown .x;",
-			expectedFixedSrc: "SELECT 1;",
+			expectedFixedSrc: "SELECT 1 AS x;",
 			expectedErrs: []file.Error{
 				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
 			},
 		},
 		"field access on the next line on an unknown name": {
 			file:             "SELECT unknown\n  .x;",
-			expectedFixedSrc: "SELECT 1;",
+			expectedFixedSrc: "SELECT 1 AS x;",
 			expectedErrs: []file.Error{
 				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
 			},
 		},
 		"field access after a comment on an unknown name": {
 			file:             "SELECT unknown /* c */ .x;",
-			expectedFixedSrc: "SELECT 1;",
+			expectedFixedSrc: "SELECT 1 AS x;",
 			expectedErrs: []file.Error{
 				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
 			},
