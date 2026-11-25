@@ -180,7 +180,7 @@
 		"publish": "vsce publish"
 	},
 	"dependencies": {
-		"vscode-languageclient": "^11.0.0"
+		"vscode-languageclient": "^11.0.1"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.6.8",
