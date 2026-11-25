@@ -1081,13 +1081,14 @@ func fixDeclarationError(src string, parsedErr Error, defaultVal string) (fixedS
 	if replaceOffset < 0 || replaceOffset+len(parsedErr.IncompleteColumnName) > len(src) {
 		return src, nil
 	}
-	rest := src[replaceOffset+len(parsedErr.IncompleteColumnName):]
-	defaultVal = keepApartFromDot(defaultVal, rest)
+	replaceEnd := nameEnd(src, replaceOffset, parsedErr.IncompleteColumnName)
+	rest := src[replaceEnd:]
+	defaultVal = keepApartFromIdentifiers(keepApartFromDot(defaultVal, rest), src, replaceOffset, replaceEnd)
 	fixedSrc = src[:replaceOffset] + defaultVal + rest
 	fixOffset := FixOffset{
 		Offset: errOffset,
-		Length: -parsedErr.TermLength + len(defaultVal),
-		edits:  []sourceEdit{{start: replaceOffset, oldLen: len(parsedErr.IncompleteColumnName), newLen: len(defaultVal)}},
+		Length: -(replaceEnd - replaceOffset) + len(defaultVal),
+		edits:  []sourceEdit{{start: replaceOffset, oldLen: replaceEnd - replaceOffset, newLen: len(defaultVal)}},
 	}
 
 	return fixedSrc, []FixOffset{fixOffset}
@@ -1116,8 +1117,9 @@ func fixErrorToExpression(src string, parsedErr Error, expr string) (fixedSrc st
 	}
 	// The fields of an unknown name are unknown too. Leaving them would also make `1.x`,
 	// where `1.` is lexed as a floating point literal.
-	replaceEnd := replaceOffset + len(parsedErr.IncompleteColumnName)
+	replaceEnd := nameEnd(src, replaceOffset, parsedErr.IncompleteColumnName)
 	replaceEnd += fieldAccessLen(src[replaceEnd:])
+	expr = keepApartFromIdentifiers(expr, src, replaceOffset, replaceEnd)
 	fixedSrc = src[:replaceOffset] + expr + src[replaceEnd:]
 	fixOffset := FixOffset{
 		Offset: errOffset,
@@ -1215,6 +1217,36 @@ func fieldPathLen(rest string) int {
 	return i
 }
 
+// nameEnd returns the end of name starting at start in src. The errors spell a quoted
+// name without its backquotes, which are part of it in src. A name taken from src as is,
+// such as the path of an unknown struct field, may start with a quoted part as in
+// "`t`.x", and ends after all of it.
+func nameEnd(src string, start int, name string) int {
+	if strings.HasPrefix(src[start:], name) {
+		return start + len(name)
+	}
+	if strings.HasPrefix(src[start:], "`") {
+		if end, closed := bqparser.SkipQuoted(src, start); closed {
+			return end
+		}
+	}
+	return start + len(name)
+}
+
+// keepApartFromIdentifiers pads expr, which replaces src[start:end], with a space on
+// each side where src has an identifier character, such as an alias right after a
+// quoted name in "`n`x" or a keyword right before one in "AND`n`". Otherwise they
+// would run together, as in "1x" or "ANDtrue".
+func keepApartFromIdentifiers(expr, src string, start, end int) string {
+	if start > 0 && isIdentifierByte(src[start-1]) {
+		expr = " " + expr
+	}
+	if end < len(src) && isIdentifierByte(src[end]) {
+		expr += " "
+	}
+	return expr
+}
+
 // keepApartFromDot parenthesizes expr if rest starts with a dot, because `1.` would be
 // lexed as a floating point literal.
 func keepApartFromDot(expr, rest string) string {
@@ -1245,11 +1277,20 @@ func substitutedPlaceholder(src, fixedSrc string, edits []sourceEdit, offset int
 	if offset < 0 || end > len(fixedSrc) || !strings.EqualFold(fixedSrc[offset:end], placeholder) {
 		return "", false
 	}
-	srcStart, srcEnd := toSrcOffset(edits, offset), toSrcEnd(edits, end)
-	if srcStart < 0 || srcEnd > len(src) || srcStart > srcEnd || strings.EqualFold(src[srcStart:srcEnd], placeholder) {
+	// The whole edit is taken, because the placeholder may be padded with spaces apart from
+	// the identifiers around it, and only part of what it was substituted for maps to it.
+	original, ok := substitutedText(src, edits, offset, end)
+	if !ok || strings.EqualFold(original, placeholder) {
 		return "", false
 	}
-	return src[srcStart:srcEnd], true
+	return original, true
+}
+
+// isDeclaredVariable reports whether original, what the user wrote where a placeholder is,
+// names a declared variable. The name may be quoted, as in "`n`".
+func isDeclaredVariable(declared map[string]string, original string) bool {
+	_, ok := declared[strings.ToLower(strings.Trim(original, "`"))]
+	return ok
 }
 
 // fixSubstitutedOperatorOperand replaces the `1` that a fix-up substituted for an unknown
@@ -1292,7 +1333,7 @@ func fixSubstitutedOperatorOperand(src, fixedSrc string, edits []sourceEdit, nod
 				continue
 			}
 			original, ok := substitutedPlaceholder(src, fixedSrc, edits, start, "1")
-			if _, isDeclared := declared[strings.ToLower(original)]; ok && !isDeclared {
+			if ok && !isDeclaredVariable(declared, original) {
 				found = append(found, operand)
 			}
 		}
@@ -1561,7 +1602,7 @@ func substitutedStructFields(src string, edits []sourceEdit, expr googlesql.ASTE
 		start, end := locStart(expr), locEnd(expr)
 		original, ok := substitutedText(src, edits, start, end)
 		// A placeholder substituted for a declared variable stands for a value of the declared type.
-		if _, isDeclared := declared[strings.ToLower(original)]; !ok || isDeclared {
+		if !ok || isDeclaredVariable(declared, original) {
 			return nil
 		}
 		return []substitutedStructField{{start: start, end: end, path: path}}
@@ -1714,7 +1755,7 @@ func fixSubstitutedArithmeticOperand(src, fixedSrc string, edits []sourceEdit, n
 		for i, operand := range []googlesql.ASTExpressionNode{lhs, rhs} {
 			original, ok := substitutedText(src, edits, locStart(operand), locEnd(operand))
 			// A placeholder substituted for a declared variable stands for a value of the declared type.
-			if _, isDeclared := declared[strings.ToLower(original)]; ok && !isDeclared {
+			if ok && !isDeclaredVariable(declared, original) {
 				expr, placeholder, k = n, operand, i
 				return nil
 			}
@@ -1846,8 +1887,6 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 		return src, nil
 	}
 
-	var fixOffset FixOffset
-	usedCondition := false
 	if cond, ok := innermostCondition(node, errOffset); ok && insideInnermostCondition(node, cond, errOffset) && !containsAnalyticFunction(cond) {
 		// e.x.) SELECT * FROM table WHERE unexist_column = 1
 		loc, _ := cond.GetParseLocationRange()
@@ -1855,38 +1894,23 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 		endOffset := parseLocEnd(loc)
 		if startOffset >= 0 && endOffset >= 0 {
 			length := endOffset - startOffset
-			fixedSrc = src[:startOffset] + "true" + src[endOffset:]
-			fixOffset = FixOffset{
+			placeholder := keepApartFromIdentifiers("true", src, startOffset, endOffset)
+			fixedSrc = src[:startOffset] + placeholder + src[endOffset:]
+			return fixedSrc, []FixOffset{{
 				Offset: startOffset,
-				Length: len("true") - length,
-				edits:  []sourceEdit{{start: startOffset, oldLen: length, newLen: len("true")}},
-			}
-			usedCondition = true
+				Length: len(placeholder) - length,
+				edits:  []sourceEdit{{start: startOffset, oldLen: length, newLen: len(placeholder)}},
+			}}
 		}
 	}
-	if !usedCondition {
-		incompleteOffset := errOffset + parsedErr.TermLength - len(parsedErr.IncompleteColumnName)
-		if isArithmeticOperand(node, incompleteOffset) {
-			// e.x.) SELECT * FROM table WHERE STARTS_WITH(unexist_column || 'a', 'b')
-			// `true` fails the operator, whereas the fix-ups of arithmetic operators give `1` a type.
-			return fixErrorToLiteral(src, parsedErr)
-		}
-		// e.x.) SELECT * FROM table WHERE unexist_column
-		replacedLength := len(parsedErr.IncompleteColumnName)
-		if incompleteOffset < 0 || incompleteOffset+replacedLength > len(src) {
-			return src, nil
-		}
-		// As in fixErrorToExpression, `true.x` would fail to access a field of BOOL.
-		replacedLength += fieldAccessLen(src[incompleteOffset+replacedLength:])
-		fixedSrc = src[:incompleteOffset] + "true" + src[incompleteOffset+replacedLength:]
-		fixOffset = FixOffset{
-			Offset: incompleteOffset,
-			Length: len("true") - replacedLength,
-			edits:  []sourceEdit{{start: incompleteOffset, oldLen: replacedLength, newLen: len("true")}},
-		}
+	incompleteOffset := errOffset + parsedErr.TermLength - len(parsedErr.IncompleteColumnName)
+	if isArithmeticOperand(node, incompleteOffset) {
+		// e.x.) SELECT * FROM table WHERE STARTS_WITH(unexist_column || 'a', 'b')
+		// `true` fails the operator, whereas the fix-ups of arithmetic operators give `1` a type.
+		return fixErrorToLiteral(src, parsedErr)
 	}
-
-	return fixedSrc, []FixOffset{fixOffset}
+	// e.x.) SELECT * FROM table WHERE unexist_column
+	return fixErrorToExpression(src, parsedErr, "true")
 }
 
 // innermostCondition returns the innermost condition around offset, which
@@ -2100,11 +2124,12 @@ func fixNotBoolClauseError(src string, parsedErr Error) (fixedSrc string, fixOff
 	if !ok || end > len(src) {
 		return src, nil
 	}
-	fixedSrc = src[:start] + "true" + src[end:]
+	placeholder := keepApartFromIdentifiers("true", src, start, end)
+	fixedSrc = src[:start] + placeholder + src[end:]
 	return fixedSrc, []FixOffset{{
 		Offset: start,
-		Length: len("true") - parsedErr.TermLength,
-		edits:  []sourceEdit{{start: start, oldLen: parsedErr.TermLength, newLen: len("true")}},
+		Length: len(placeholder) - parsedErr.TermLength,
+		edits:  []sourceEdit{{start: start, oldLen: parsedErr.TermLength, newLen: len(placeholder)}},
 	}}
 }
 
@@ -2197,7 +2222,9 @@ func addInformationToNotExistInStructError(src string, node googlesql.ASTNode, p
 		return parsedErr
 	}
 
-	parsedErr.TermLength = len(notExistColumn)
+	// The message spells a quoted name without its backquotes.
+	end := nameEnd(src, errOffset, notExistColumn)
+	parsedErr.TermLength = end - errOffset
 
 	firstIndex := pathStartAfter(node, strings.LastIndexFunc(src[:errOffset], unicode.IsSpace)+1, errOffset)
 	// A field access on a non-path expression, e.g. `STRUCT(1 AS a).b`, may contain
@@ -2207,7 +2234,7 @@ func addInformationToNotExistInStructError(src string, node googlesql.ASTNode, p
 			firstIndex = start
 		}
 	}
-	parsedErr.IncompleteColumnName = src[firstIndex : errOffset+len(notExistColumn)]
+	parsedErr.IncompleteColumnName = src[firstIndex:end]
 	return parsedErr
 }
 
@@ -2226,10 +2253,12 @@ func addInformationToNotFoundInsideTableError(src string, node googlesql.ASTNode
 		return parsedErr
 	}
 
-	parsedErr.TermLength = len(notExistColumn)
+	// The message spells a quoted name without its backquotes.
+	end := nameEnd(src, errOffset, notExistColumn)
+	parsedErr.TermLength = end - errOffset
 
 	firstIndex := pathStartAfter(node, strings.LastIndexFunc(src[:errOffset], unicode.IsSpace)+1, errOffset)
-	parsedErr.IncompleteColumnName = src[firstIndex : errOffset+len(notExistColumn)]
+	parsedErr.IncompleteColumnName = src[firstIndex:end]
 	return parsedErr
 }
 
