@@ -330,6 +330,86 @@ func TestFixDot_WordBeforeSemicolon(t *testing.T) {
 	}
 }
 
+// A field after whitespace on the same line is part of the path, which the analyzer
+// reports, whereas a keyword or a line break follows a dot being typed (#765).
+func TestFixDot_FieldAfterSpace(t *testing.T) {
+	tests := map[string]struct {
+		src  string
+		want string
+	}{
+		"field": {
+			src:  "SELECT t. x FROM t",
+			want: "SELECT t. x FROM t",
+		},
+		"quoted field": {
+			src:  "SELECT t.\t`x y` FROM t",
+			want: "SELECT t.\t`x y` FROM t",
+		},
+		"keyword": {
+			src:  "SELECT t. FROM t",
+			want: "SELECT true FROM t",
+		},
+		"line break": {
+			src:  "SELECT t.\n  x FROM t",
+			want: "SELECT true\n  x FROM t",
+		},
+		"field after a dot being typed": {
+			src:  "SELECT t. x, u. FROM t",
+			want: "SELECT t. x, true FROM t",
+		},
+		"star": {
+			src:  "SELECT t. * FROM t",
+			want: "SELECT t. * FROM t",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, _, _ := fixDot(tt.src)
+			if got != tt.want {
+				t.Errorf("fixDot(%q) = %q, want %q", tt.src, got, tt.want)
+			}
+		})
+	}
+}
+
+// A dot being typed after a field after whitespace, as in `t. x.`, ends the whole path,
+// which is replaced at once rather than the field before the path.
+func TestFixDot_DotTypedAfterFieldAfterSpace(t *testing.T) {
+	tests := map[string]struct {
+		src      string
+		want     string
+		wantErrs []Error
+	}{
+		"field": {
+			src:  "SELECT t. x. FROM t",
+			want: "SELECT true FROM t",
+			wantErrs: []Error{
+				{Msg: "Unrecognized name: t.x.", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 5, IncompleteColumnName: "t.x."},
+			},
+		},
+		"fields with a comment": {
+			src:  "SELECT t. /* c */ x. y. FROM t",
+			want: "SELECT true FROM t",
+			wantErrs: []Error{
+				{Msg: "Unrecognized name: t.x.y.", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 16, IncompleteColumnName: "t.x.y."},
+			},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, errs, _ := fixDot(tt.src)
+			if got != tt.want {
+				t.Errorf("fixDot(%q) = %q, want %q", tt.src, got, tt.want)
+			}
+			if diff := cmp.Diff(tt.wantErrs, errs); diff != "" {
+				t.Errorf("errors (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestFixDot_SkipsBlockComments(t *testing.T) {
 	tests := map[string]struct {
 		src            string

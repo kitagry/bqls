@@ -470,6 +470,91 @@ func TestProject_CompleteColumns(t *testing.T) {
 				},
 			},
 		},
+		// The cursor is right before the closing backquote, which the term of the error covers (#774).
+		"Complete incomplete quoted column": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT `i|` FROM `project.dataset.table`",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+					TypedPrefix: "i",
+				},
+			},
+		},
+		"Complete incomplete quoted column in the middle": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT `i|d2` FROM `project.dataset.table`",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{},
+		},
+		// Outside of the backquotes, the name is not the typed prefix, which would replace a backquote.
+		"Complete columns without a prefix after the closing backquote": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT `i`| FROM `project.dataset.table`",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+				},
+			},
+		},
+		"Complete columns without a prefix before the opening backquote": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT |`i` FROM `project.dataset.table`",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{Name: "id", Type: bq.IntegerFieldType},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+				},
+			},
+		},
 		"Complete incomplete column of dataset-qualified table": {
 			files: map[lsp.DocumentURI]string{
 				"file1.sql": "SELECT i| FROM dataset.table",
