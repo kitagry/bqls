@@ -2292,6 +2292,112 @@ func TestAnalyzer_UnrecognizedNameInOrderByOfAggregateFunction(t *testing.T) {
 	}
 }
 
+func TestAnalyzer_FixUpsInCreatedTable(t *testing.T) {
+	const table = "`project.dataset.table`"
+	const warning = "bqls could not finish analyzing this statement: it uses t, created by a statement with errors"
+	type message struct {
+		line    int
+		msg     string
+		warning bool
+	}
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+		expectedMsgs     []message
+		expectedOutputs  int
+	}{
+		"unknown column keeps its name": {
+			file:             "CREATE TEMP TABLE t AS SELECT id, y FROM " + table + ";\nSELECT id, y FROM t",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT id, 1 AS y FROM " + table + ";\nSELECT id, y FROM t",
+			expectedMsgs:     []message{{0, "Unrecognized name: y", false}},
+			expectedOutputs:  2,
+		},
+		"unknown column with a field access keeps the last name": {
+			file:             "CREATE TEMP TABLE t AS SELECT id, y.z FROM " + table + ";\nSELECT id, z FROM t",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT id, 1 AS z FROM " + table + ";\nSELECT id, z FROM t",
+			expectedMsgs:     []message{{0, "Unrecognized name: y", false}},
+			expectedOutputs:  2,
+		},
+		"unknown column with an alias": {
+			file:             "CREATE TEMP TABLE t AS SELECT id, y AS w FROM " + table + ";\nSELECT id, w FROM t",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT id, 1 AS w FROM " + table + ";\nSELECT id, w FROM t",
+			expectedMsgs:     []message{{0, "Unrecognized name: y", false}},
+			expectedOutputs:  2,
+		},
+		"unknown column in a view": {
+			file:             "CREATE VIEW dataset.v AS SELECT id, y FROM " + table,
+			expectedFixedSrc: "CREATE VIEW dataset.v AS SELECT id, 1 AS y FROM " + table,
+			expectedMsgs:     []message{{0, "Unrecognized name: y", false}},
+			expectedOutputs:  1,
+		},
+		// The column of the placeholder is INT64, which the user did not write.
+		"column of a placeholder used against another type": {
+			file:             "CREATE TEMP TABLE t AS SELECT y AS v FROM " + table + ";\nSELECT * FROM t WHERE v = 'a'",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT 1 AS v FROM " + table + ";\nSELECT * FROM t WHERE v = 'a'",
+			expectedMsgs:     []message{{0, "Unrecognized name: y", false}, {1, warning, true}},
+			expectedOutputs:  1,
+		},
+		"column of a placeholder used through a subquery": {
+			file:             "CREATE TEMP TABLE t AS SELECT y AS v FROM " + table + ";\nSELECT * FROM (SELECT v AS w FROM t) WHERE w = 'a'",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT 1 AS v FROM " + table + ";\nSELECT * FROM (SELECT v AS w FROM t) WHERE w = 'a'",
+			expectedMsgs:     []message{{0, "Unrecognized name: y", false}, {1, warning, true}},
+			expectedOutputs:  1,
+		},
+		"elements of an unnest placeholder used against another type": {
+			file:             "CREATE TEMP TABLE t AS SELECT v FROM UNNEST(x) AS v;\nSELECT * FROM t WHERE v = 'a'",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT v FROM UNNEST([]) AS v;\nSELECT * FROM t WHERE v = 'a'",
+			expectedMsgs:     []message{{0, "Unrecognized name: x", false}, {1, warning, true}},
+			expectedOutputs:  1,
+		},
+		"table not created": {
+			file:             "CREATE TEMP TABLE t AS SELECT id FROM " + table + " WHERE id = 'a';\nSELECT id FROM t",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT id FROM " + table + " WHERE id = 'a';\nSELECT id FROM t",
+			expectedMsgs:     []message{{0, "No matching signature for operator = for argument types: INT64, STRING", false}, {1, warning, true}},
+		},
+		"another table in a later statement": {
+			file:             "CREATE TEMP TABLE t AS SELECT y AS v FROM " + table + ";\nSELECT * FROM " + table + " WHERE id = 'a'",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT 1 AS v FROM " + table + ";\nSELECT * FROM " + table + " WHERE id = 'a'",
+			expectedMsgs:     []message{{0, "Unrecognized name: y", false}, {1, "No matching signature for operator = for argument types: INT64, STRING", false}},
+			expectedOutputs:  1,
+		},
+		"table created without errors": {
+			file:             "CREATE TEMP TABLE t AS SELECT id AS v FROM " + table + ";\nSELECT * FROM t WHERE v = 'a'",
+			expectedFixedSrc: "CREATE TEMP TABLE t AS SELECT id AS v FROM " + table + ";\nSELECT * FROM t WHERE v = 'a'",
+			expectedMsgs:     []message{{1, "No matching signature for operator = for argument types: INT64, STRING", false}},
+			expectedOutputs:  1,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetDefaultProject().Return("project").AnyTimes()
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
+				AnyTimes()
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			gotMsgs := make([]message, 0, len(got.Errors))
+			for _, e := range got.Errors {
+				gotMsgs = append(gotMsgs, message{line: e.Position.Line, msg: strings.SplitN(e.Msg, "\n", 2)[0], warning: e.Severity == lsp.Warning})
+			}
+			if diff := cmp.Diff(tt.expectedMsgs, gotMsgs, cmp.AllowUnexported(message{})); diff != "" {
+				t.Errorf("errors (-want, +got)\n%s", diff)
+			}
+			if len(got.RNode) != tt.expectedOutputs {
+				t.Errorf("got %d analyzer outputs, want %d", len(got.RNode), tt.expectedOutputs)
+			}
+		})
+	}
+}
+
 func TestAnalyzer_ParseFileKeepsTermBeforeDeletedTrailingClause(t *testing.T) {
 	tests := map[string]struct {
 		file         string

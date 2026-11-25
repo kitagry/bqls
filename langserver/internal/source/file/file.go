@@ -2011,6 +2011,41 @@ func isWholeFunctionArgument(node googlesql.ASTNode, start, end int) bool {
 	return false
 }
 
+// createdColumnName returns the name of the column that the path spanning [start, end) makes
+// by itself in the SELECT list of CREATE TABLE AS SELECT or CREATE VIEW, which is its last
+// name, as GoogleSQL names the column of a path without an alias.
+func createdColumnName(src string, node googlesql.ASTNode, start, end int) (string, bool) {
+	switch node.(type) {
+	case *googlesql.ASTCreateTableStatement, *googlesql.ASTCreateViewStatement, *googlesql.ASTCreateMaterializedViewStatement:
+	default:
+		return "", false
+	}
+	path, ok := SearchAstNode[*googlesql.ASTPathExpression](node, start)
+	if !ok || locStart(path) != start || locEnd(path) != end {
+		return "", false
+	}
+	parent, err := path.Parent()
+	if err != nil {
+		return "", false
+	}
+	column, ok := parent.(*googlesql.ASTSelectColumn)
+	if !ok {
+		return "", false
+	}
+	if alias, err := column.Alias(); err == nil && alias != nil {
+		return "", false
+	}
+	last, err := path.LastName()
+	if err != nil || last == nil {
+		return "", false
+	}
+	nameStart, nameEnd := locStart(last), locEnd(last)
+	if nameStart < 0 || nameEnd > len(src) || nameStart >= nameEnd {
+		return "", false
+	}
+	return src[nameStart:nameEnd], true
+}
+
 // isInUnnestArray reports whether the path spanning [start, end), with the field accesses
 // and subscripts on it, is by itself the array of IN UNNEST or LIKE ANY|SOME|ALL UNNEST.
 func isInUnnestArray(node googlesql.ASTNode, start, end int) bool {

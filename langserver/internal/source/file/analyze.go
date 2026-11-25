@@ -674,6 +674,8 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 	// The state before `[]` replaced an unknown array of UNNEST in FROM, by statement, which
 	// is restored when its alias turns out to be used as something other than INT64.
 	unnestFixes := make(map[int]unnestFix)
+	// Statements that fix-ups have been applied to.
+	fixedStmts := make(map[int]bool)
 	revert := func(c fixUpCheckpoint) {
 		fixedSrc = c.fixedSrc
 		fixOffsets = fixOffsets[:c.fixOffsets]
@@ -776,6 +778,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			budgeted = true
 		}
 
+		// The tables that statements with errors create, whose columns may differ from the
+		// user's, by the lowercased name.
+		erroneousTables := make(map[string]string)
 		for i, s := range stmts {
 			kind, _ := s.NodeKind()
 			if kind == googlesql.ASTNodeKindAstVariableDeclaration {
@@ -825,6 +830,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			if err == nil {
 				if output != nil {
 					a.registerCreatedObject(output, catalog)
+				}
+				if fixedStmts[i] {
+					addErroneousTable(erroneousTables, s)
 				}
 				statements = append(statements, StatementResult{Stmt: s, Output: output})
 				continue
@@ -922,6 +930,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 						if aliasOnNextLine(fixedSrc, s, termStart, termEnd) {
 							// The alias is likely the next column, before which the user is typing without a comma yet.
 							fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "1,")
+						} else if alias, ok := createdColumnName(fixedSrc, s, termStart, termEnd); ok {
+							// A created table or view needs its columns named, which later statements refer to.
+							fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "1 AS "+alias)
 						} else {
 							fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
 						}
@@ -1012,6 +1023,20 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				goto retry
 			}
 
+			if len(fo) == 0 {
+				if table, ok := readsTable(s, erroneousTables); ok {
+					// The error may come from the columns that the fix-ups gave the table, or from the
+					// table missing, which the user does not see in this statement.
+					pErr = Error{
+						Msg:      fmt.Sprintf("bqls could not finish analyzing this statement: it uses %s, created by a statement with errors", table),
+						Position: pErr.Position,
+						Severity: lsp.Warning,
+					}
+					isNotBoolConditionError = false
+				}
+				addErroneousTable(erroneousTables, s)
+			}
+
 			if (lastPass || rejected[i]) && len(fo) > 0 {
 				fixedSrc, fo = srcBeforeFix, nil
 				if skipError {
@@ -1046,6 +1071,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 					edits:      len(edits),
 					fixedErrs:  len(fixedErrs),
 				}
+				fixedStmts[i] = true
 				if unnestAlias != "" {
 					fix, ok := unnestFixes[i]
 					if !ok {

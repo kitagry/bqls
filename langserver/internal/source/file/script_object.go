@@ -1,6 +1,8 @@
 package file
 
 import (
+	"strings"
+
 	"github.com/goccy/go-googlesql"
 )
 
@@ -73,4 +75,48 @@ func (a *Analyzer) addCreatedProcedure(stmt *googlesql.ResolvedCreateProcedureSt
 		return err
 	}
 	return catalog.addScriptProcedure(namePath, signature)
+}
+
+// addErroneousTable adds the table that a CREATE TABLE statement creates to tables, by its
+// lowercased name.
+func addErroneousTable(tables map[string]string, stmt googlesql.ASTNode) {
+	create, ok := stmt.(*googlesql.ASTCreateTableStatement)
+	if !ok {
+		return
+	}
+	path, err := create.Name()
+	if err != nil || path == nil {
+		return
+	}
+	names, err := path.ToIdentifierVector()
+	if err != nil {
+		return
+	}
+	name := strings.Join(names, ".")
+	tables[strings.ToLower(name)] = name
+}
+
+// readsTable returns the first of tables that stmt reads from.
+func readsTable(stmt googlesql.ASTNode, tables map[string]string) (string, bool) {
+	if len(tables) == 0 {
+		return "", false
+	}
+	var used string
+	Walk(stmt, func(n googlesql.ASTNode) error { //nolint
+		table, ok := n.(*googlesql.ASTTablePathExpression)
+		if !ok || used != "" {
+			return nil
+		}
+		path, err := table.PathExpr()
+		if err != nil || path == nil {
+			return nil
+		}
+		names, err := path.ToIdentifierVector()
+		if err != nil {
+			return nil
+		}
+		used = tables[strings.ToLower(strings.Join(names, "."))]
+		return nil
+	})
+	return used, used != ""
 }
