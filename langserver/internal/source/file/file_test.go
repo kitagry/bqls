@@ -4526,6 +4526,56 @@ func TestAnalyzer_UnknownColumnInTupleComparison(t *testing.T) {
 			expectedFixedSrc: "SELECT * FROM " + table + " WHERE true",
 			expectedErrMsgs:  []string{"Unrecognized name: x"},
 		},
+		// IS DISTINCT FROM is the only comparison that GoogleSQL defines for arrays.
+		"array": {
+			file:             "SELECT [x] IS DISTINCT FROM ['a'] FROM " + table,
+			expectedFixedSrc: "SELECT [''] IS DISTINCT FROM ['a'] FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"ARRAY keyword": {
+			file:             "SELECT ARRAY[x] IS DISTINCT FROM ['a'] FROM " + table,
+			expectedFixedSrc: "SELECT ARRAY[''] IS DISTINCT FROM ['a'] FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"array of several elements": {
+			file:             "SELECT [x, y] IS DISTINCT FROM ['a', 'b'] FROM " + table,
+			expectedFixedSrc: "SELECT ['', ''] IS DISTINCT FROM ['a', 'b'] FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x", "Unrecognized name: y"},
+		},
+		"array in a struct": {
+			file:             "SELECT ([x], 1) IS DISTINCT FROM (['a'], 1) FROM " + table,
+			expectedFixedSrc: "SELECT ([''], 1) IS DISTINCT FROM (['a'], 1) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"struct in an array": {
+			file:             "SELECT [(x, 1)] IS DISTINCT FROM [('a', 1)] FROM " + table,
+			expectedFixedSrc: "SELECT [('', 1)] IS DISTINCT FROM [('a', 1)] FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"array compared with a column": {
+			file:             "SELECT [x] IS DISTINCT FROM tags FROM " + table,
+			expectedFixedSrc: "SELECT [''] IS DISTINCT FROM tags FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		// The comparison fails whatever x is, and the error now tells why.
+		"array compared by =": {
+			file:             "SELECT ([x], 1) = (['a'], 1) FROM " + table,
+			expectedFixedSrc: "SELECT ([''], 1) = (['a'], 1) FROM " + table,
+			expectedErrMsgs: []string{
+				"Unrecognized name: x",
+				"Equality is not defined for arguments of type STRUCT<ARRAY<STRING>, INT64>",
+			},
+			expectedNoOutput: true,
+		},
+		"typed array": {
+			file:             "SELECT ARRAY<INT64>[x] IS DISTINCT FROM ['a'] FROM " + table,
+			expectedFixedSrc: "SELECT ARRAY<INT64>[1] IS DISTINCT FROM ['a'] FROM " + table,
+			expectedErrMsgs: []string{
+				"Unrecognized name: x",
+				"No matching signature for operator IS DISTINCT FROM\n  Argument types: ARRAY<INT64>, ARRAY<STRING>\n  Signature: T1 IS DISTINCT FROM T1\n    Unable to find common supertype for templated argument <T1>\n      Input types for <T1>: {ARRAY<INT64>, ARRAY<STRING>}",
+			},
+			expectedNoOutput: true,
+		},
 		"different number of fields": {
 			file:             "SELECT (x, 1) = ('a', 1, 2) FROM " + table,
 			expectedFixedSrc: "SELECT (1, 1) = ('a', 1, 2) FROM " + table,
@@ -4556,6 +4606,7 @@ func TestAnalyzer_UnknownColumnInTupleComparison(t *testing.T) {
 						{Name: "a", Type: bq.StringFieldType},
 						{Name: "b", Type: bq.IntegerFieldType},
 					}},
+					{Name: "tags", Type: bq.StringFieldType, Repeated: true},
 				}}, nil).
 				AnyTimes()
 

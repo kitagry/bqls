@@ -1332,6 +1332,11 @@ func operandTypeForOperator(op, argumentTypes string) (string, bool) {
 		return typeName, ok
 	}
 	// The placeholder is compared with the elements of the array.
+	return arrayElementType(typeName)
+}
+
+// arrayElementType returns the element type of an ARRAY type.
+func arrayElementType(typeName string) (string, bool) {
 	elem, ok := strings.CutPrefix(typeName, "ARRAY<")
 	if !ok {
 		return "", false
@@ -1442,8 +1447,10 @@ func operatorOperands(node googlesql.ASTNode, op string) []googlesql.ASTExpressi
 // fixSubstitutedStructField replaces the placeholders that fix-ups substituted for unknown
 // fields of a struct constructor compared by an operator, as x in `(x, 1) = ('a', 1)`, with
 // a value of the type of the field at the same position in the STRUCT types of the error
-// message. The fields are found by where the fix-ups substituted text, not by the text of
-// the placeholder, which differs between fix-ups.
+// message. It descends into array constructors as well, as x in `[x] IS DISTINCT FROM ['a']`,
+// matching their elements with the element type of the ARRAY types. The fields are found by
+// where the fix-ups substituted text, not by the text of the placeholder, which differs
+// between fix-ups.
 //
 // A STRUCT type whose number of fields differs from the constructor tells nothing about
 // a field, so the error about such a comparison is left as the user's.
@@ -1457,8 +1464,8 @@ func fixSubstitutedStructField(src, fixedSrc string, edits []sourceEdit, node go
 	if op == "IN UNNEST" {
 		// The struct is compared with the elements of the array.
 		for i, typ := range argumentTypes {
-			if elem, ok := strings.CutPrefix(typ, "ARRAY<"); ok {
-				argumentTypes[i] = strings.TrimSuffix(elem, ">")
+			if elem, ok := arrayElementType(typ); ok {
+				argumentTypes[i] = elem
 			}
 		}
 	}
@@ -1524,16 +1531,32 @@ type substitutedStructField struct {
 	path []structFieldPosition
 }
 
+// structFieldPosition is a field of a struct constructor, or an element of an array
+// constructor if arrayElement, whose type is the element type of the ARRAY type.
 type structFieldPosition struct {
 	index, numFields int
+	arrayElement     bool
 }
 
 // substitutedStructFields returns the fields that fix-ups substituted in the struct
-// constructors of expr, at any depth. path leads to expr, and is empty for an operand,
+// and array constructors of expr, at any depth. path leads to expr, and is empty for an operand,
 // which fixSubstitutedOperatorOperand handles.
 func substitutedStructFields(src string, edits []sourceEdit, expr googlesql.ASTExpressionNode, path []structFieldPosition, declared map[string]string) []substitutedStructField {
 	var fieldExprs []googlesql.ASTExpressionNode
+	arrayElement := false
 	switch e := expr.(type) {
+	case *googlesql.ASTArrayConstructor:
+		if typ, _ := e.Type(); typ != nil {
+			// The elements are coerced to the written type, as the fields of STRUCT<...>(...).
+			return nil
+		}
+		arrayElement = true
+		num, _ := e.NumChildren()
+		for i := int32(0); i < num; i++ {
+			if elem, err := e.Elements(i); err == nil && elem != nil {
+				fieldExprs = append(fieldExprs, elem)
+			}
+		}
 	case *googlesql.ASTStructConstructorWithParens:
 		num, _ := e.NumChildren()
 		for i := int32(0); i < num; i++ {
@@ -1569,7 +1592,7 @@ func substitutedStructFields(src string, edits []sourceEdit, expr googlesql.ASTE
 
 	var fields []substitutedStructField
 	for i, f := range fieldExprs {
-		fieldPath := append(slices.Clone(path), structFieldPosition{index: i, numFields: len(fieldExprs)})
+		fieldPath := append(slices.Clone(path), structFieldPosition{index: i, numFields: len(fieldExprs), arrayElement: arrayElement})
 		fields = append(fields, substitutedStructFields(src, edits, f, fieldPath, declared)...)
 	}
 	return fields
@@ -1607,6 +1630,14 @@ func structFieldType(argumentTypes []string, path []structFieldPosition, placeho
 
 func structFieldTypeAt(typ string, path []structFieldPosition) (string, bool) {
 	for _, p := range path {
+		if p.arrayElement {
+			elem, ok := arrayElementType(typ)
+			if !ok {
+				return "", false
+			}
+			typ = elem
+			continue
+		}
 		fields, ok := structFieldTypes(typ)
 		if !ok || len(fields) != p.numFields {
 			return "", false
