@@ -1734,6 +1734,101 @@ func TestAnalyzer_UnrecognizedNameInHavingAndQualify(t *testing.T) {
 	}
 }
 
+func TestAnalyzer_UnrecognizedNameInArithmeticInCondition(t *testing.T) {
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+		expectedPosition lsp.Position
+	}{
+		"comparison of arithmetic expression in where clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE x + 1 > 0",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true",
+			expectedPosition: lsp.Position{Line: 0, Character: 45},
+		},
+		"comparison of nested arithmetic expression in where clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE (x + 1) * 2 > 0",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true",
+			expectedPosition: lsp.Position{Line: 0, Character: 46},
+		},
+		"comparison of function of arithmetic expression in where clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE ABS(x + 1) > 0",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true",
+			expectedPosition: lsp.Position{Line: 0, Character: 49},
+		},
+		"comparison of arithmetic expression in a conjunct": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE id = 1 AND x + 1 > 0",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE id = 1 AND true",
+			expectedPosition: lsp.Position{Line: 0, Character: 56},
+		},
+		"comparison of arithmetic expression in join on clause": {
+			file:             "SELECT a.id FROM `project.dataset.table` a JOIN `project.dataset.table` b ON a.id = x + 1",
+			expectedFixedSrc: "SELECT a.id FROM `project.dataset.table` a JOIN `project.dataset.table` b ON true",
+			expectedPosition: lsp.Position{Line: 0, Character: 84},
+		},
+		"comparison of arithmetic expression in having clause": {
+			file:             "SELECT SUM(id) FROM `project.dataset.table` HAVING SUM(id) + x > 0",
+			expectedFixedSrc: "SELECT SUM(id) FROM `project.dataset.table` HAVING true",
+			expectedPosition: lsp.Position{Line: 0, Character: 61},
+		},
+		"comparison of arithmetic expression with analytic function in qualify clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () + x = 1",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () + 1 = 1",
+			expectedPosition: lsp.Position{Line: 0, Character: 81},
+		},
+		"arithmetic expression as a function argument without a comparison": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE STARTS_WITH(x || 'a', 'b')",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE STARTS_WITH(1 || 'a', 'b')",
+			expectedPosition: lsp.Position{Line: 0, Character: 57},
+		},
+		"comparison with subquery containing analytic function": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE x = (SELECT id FROM `project.dataset.table` QUALIFY ROW_NUMBER() OVER () = 1)",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true",
+			expectedPosition: lsp.Position{Line: 0, Character: 45},
+		},
+		"bitwise shift expression as a function argument without a comparison": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE STARTS_WITH(CAST(x << 1 AS STRING), 'b')",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE STARTS_WITH(CAST(1 << 1 AS STRING), 'b')",
+			expectedPosition: lsp.Position{Line: 0, Character: 62},
+		},
+		"arithmetic expression in between": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE x + 1 BETWEEN 0 AND 1",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE 1 + 1 BETWEEN 0 AND 1",
+			expectedPosition: lsp.Position{Line: 0, Character: 45},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
+				AnyTimes()
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			expectedErrs := []file.Error{{
+				Msg:                  "Unrecognized name: x",
+				Position:             tt.expectedPosition,
+				TermLength:           1,
+				IncompleteColumnName: "x",
+			}}
+			if diff := cmp.Diff(expectedErrs, got.Errors); diff != "" {
+				t.Errorf("Errors diff (-expect, +got)\n%s", diff)
+			}
+			if len(got.RNode) == 0 {
+				t.Errorf("failed to analyze")
+			}
+		})
+	}
+}
+
 func TestAnalyzer_ParseFileKeepsTermBeforeDeletedTrailingClause(t *testing.T) {
 	tests := map[string]struct {
 		file         string
