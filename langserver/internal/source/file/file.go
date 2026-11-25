@@ -2014,11 +2014,7 @@ func isWholeFunctionArgument(node googlesql.ASTNode, start, end int) bool {
 // isInUnnestArray reports whether the path spanning [start, end), with the field accesses
 // and subscripts on it, is by itself the array of IN UNNEST or LIKE ANY|SOME|ALL UNNEST.
 func isInUnnestArray(node googlesql.ASTNode, start, end int) bool {
-	parent := wholeTermParent(node, start, end)
-	if _, ok := parent.(*googlesql.ASTExpressionWithOptAlias); ok {
-		parent, _ = parent.Parent()
-	}
-	unnest, ok := parent.(*googlesql.ASTUnnestExpression)
+	unnest, ok := wholeUnnestArray(node, start, end)
 	if !ok {
 		return false
 	}
@@ -2027,6 +2023,74 @@ func isInUnnestArray(node googlesql.ASTNode, start, end int) bool {
 		return true
 	}
 	return false
+}
+
+// unnestAliasInFrom reports whether the path spanning [start, end), with the field accesses
+// and subscripts on it, is by itself the array of UNNEST in FROM, and returns its alias.
+func unnestAliasInFrom(node googlesql.ASTNode, start, end int) (string, bool) {
+	unnest, ok := wholeUnnestArray(node, start, end)
+	if !ok {
+		return "", false
+	}
+	parent, _ := unnest.Parent()
+	table, ok := parent.(*googlesql.ASTTablePathExpression)
+	if !ok {
+		return "", false
+	}
+	alias, err := table.Alias()
+	if err != nil || alias == nil {
+		return "", true
+	}
+	name, _ := alias.GetAsString()
+	return name, true
+}
+
+// wholeUnnestArray returns the UNNEST whose array is the path spanning [start, end) with the
+// field accesses and subscripts on it.
+func wholeUnnestArray(node googlesql.ASTNode, start, end int) (*googlesql.ASTUnnestExpression, bool) {
+	parent := wholeTermParent(node, start, end)
+	if _, ok := parent.(*googlesql.ASTExpressionWithOptAlias); ok {
+		parent, _ = parent.Parent()
+	}
+	unnest, ok := parent.(*googlesql.ASTUnnestExpression)
+	return unnest, ok
+}
+
+// insideAliasPath reports whether offset lies in a path that starts with one of aliases, or
+// at the start of an expression that contains such a path, as the comparison `'a' = alias`.
+func insideAliasPath(node googlesql.ASTNode, offset int, aliases []string) bool {
+	type span struct{ start, end int }
+	var paths []span
+	Walk(node, func(n googlesql.ASTNode) error { //nolint
+		path, ok := n.(*googlesql.ASTPathExpression)
+		if !ok {
+			return nil
+		}
+		first, err := path.FirstName()
+		if err != nil || first == nil {
+			return nil
+		}
+		name, _ := first.GetAsString()
+		if slices.ContainsFunc(aliases, func(alias string) bool { return strings.EqualFold(alias, name) }) {
+			paths = append(paths, span{locStart(path), locEnd(path)})
+		}
+		return nil
+	})
+	if slices.ContainsFunc(paths, func(p span) bool { return p.start <= offset && offset < p.end }) {
+		return true
+	}
+	found := false
+	Walk(node, func(n googlesql.ASTNode) error { //nolint
+		if locStart(n) != offset {
+			return nil
+		}
+		end := locEnd(n)
+		if slices.ContainsFunc(paths, func(p span) bool { return offset <= p.start && p.end <= end }) {
+			found = true
+		}
+		return nil
+	})
+	return found
 }
 
 // wholeTermParent returns the parent of the path spanning [start, end) with the field

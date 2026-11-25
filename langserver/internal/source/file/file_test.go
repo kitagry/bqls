@@ -2098,9 +2098,8 @@ func TestAnalyzer_UnrecognizedNameInClauseOfSubqueryInCondition(t *testing.T) {
 			expectedPosition: lsp.Position{Line: 0, Character: 52},
 		},
 		"unnest in from clause of subquery in where clause": {
-			// The FROM clause has no fix-up of its own, so the outer condition is replaced.
 			file:             "SELECT * FROM `project.dataset.table` WHERE id IN (SELECT v FROM UNNEST(x) AS v)",
-			expectedFixedSrc: "SELECT * FROM `project.dataset.table` WHERE true",
+			expectedFixedSrc: "SELECT * FROM `project.dataset.table` WHERE id IN (SELECT v FROM UNNEST([]) AS v)",
 			expectedPosition: lsp.Position{Line: 0, Character: 72},
 		},
 	}
@@ -2131,6 +2130,147 @@ func TestAnalyzer_UnrecognizedNameInClauseOfSubqueryInCondition(t *testing.T) {
 			}
 			if len(got.RNode) == 0 {
 				t.Errorf("failed to analyze")
+			}
+		})
+	}
+}
+
+func TestAnalyzer_UnrecognizedNameAsArrayOfUnnestInFrom(t *testing.T) {
+	const table = "`project.dataset.table`"
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+		expectedErrMsgs  []string
+		expectedOutputs  int
+	}{
+		"alias not referenced": {
+			file:             "SELECT 1 FROM UNNEST(x)",
+			expectedFixedSrc: "SELECT 1 FROM UNNEST([])",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+			expectedOutputs:  1,
+		},
+		"alias referenced as a whole": {
+			file:             "SELECT v FROM UNNEST(x) AS v",
+			expectedFixedSrc: "SELECT v FROM UNNEST([]) AS v",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+			expectedOutputs:  1,
+		},
+		"joined with a table": {
+			file:             "SELECT id FROM " + table + ", UNNEST(x) AS v",
+			expectedFixedSrc: "SELECT id FROM " + table + ", UNNEST([]) AS v",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+			expectedOutputs:  1,
+		},
+		// The elements of `[]` are INT64, which the alias may be used against.
+		"alias compared with a string": {
+			file:             "SELECT v FROM UNNEST(x) AS v WHERE v = 'a'",
+			expectedFixedSrc: "SELECT v FROM UNNEST(x) AS v WHERE v = 'a'",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"alias compared after a string": {
+			file:             "SELECT v FROM UNNEST(x) AS v WHERE 'a' = v",
+			expectedFixedSrc: "SELECT v FROM UNNEST(x) AS v WHERE 'a' = v",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"field of alias": {
+			file:             "SELECT v.a FROM UNNEST(x) AS v",
+			expectedFixedSrc: "SELECT v.a FROM UNNEST(x) AS v",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"field of alias after another fix-up": {
+			file:             "SELECT y, v.a FROM UNNEST(x) AS v",
+			expectedFixedSrc: "SELECT y, v.a FROM UNNEST(x) AS v",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"statement after a reverted one": {
+			file:             "SELECT v.a FROM UNNEST(x) AS v;\nSELECT y FROM " + table,
+			expectedFixedSrc: "SELECT v.a FROM UNNEST(x) AS v;\nSELECT 1 FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x", "Unrecognized name: y"},
+			expectedOutputs:  1,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
+				AnyTimes()
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			gotMsgs := make([]string, 0, len(got.Errors))
+			for _, e := range got.Errors {
+				gotMsgs = append(gotMsgs, e.Msg)
+			}
+			if diff := cmp.Diff(tt.expectedErrMsgs, gotMsgs); diff != "" {
+				t.Errorf("errors (-want, +got)\n%s", diff)
+			}
+			if len(got.RNode) != tt.expectedOutputs {
+				t.Errorf("got %d analyzer outputs, want %d", len(got.RNode), tt.expectedOutputs)
+			}
+		})
+	}
+}
+
+func TestAnalyzer_UnrecognizedNameInOrderByOfAggregateFunction(t *testing.T) {
+	const table = "`project.dataset.table`"
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+	}{
+		"in select list": {
+			file:             "SELECT ARRAY_AGG(id ORDER BY x) FROM " + table,
+			expectedFixedSrc: "SELECT ARRAY_AGG(id ORDER BY 1+1) FROM " + table,
+		},
+		"with a separator": {
+			file:             "SELECT STRING_AGG(name, ',' ORDER BY x DESC) FROM " + table,
+			expectedFixedSrc: "SELECT STRING_AGG(name, ',' ORDER BY 1+1 DESC) FROM " + table,
+		},
+		"in having clause": {
+			file:             "SELECT SUM(id) FROM " + table + " HAVING ARRAY_LENGTH(ARRAY_AGG(id ORDER BY x)) > 0",
+			expectedFixedSrc: "SELECT SUM(id) FROM " + table + " HAVING ARRAY_LENGTH(ARRAY_AGG(id ORDER BY 1+1)) > 0",
+		},
+		// A window accepts ordinals and literals.
+		"window": {
+			file:             "SELECT ROW_NUMBER() OVER (ORDER BY x) FROM " + table,
+			expectedFixedSrc: "SELECT ROW_NUMBER() OVER (ORDER BY 1) FROM " + table,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{
+					{Name: "id", Type: bq.IntegerFieldType},
+					{Name: "name", Type: bq.StringFieldType},
+				}}, nil).
+				AnyTimes()
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			gotMsgs := make([]string, 0, len(got.Errors))
+			for _, e := range got.Errors {
+				gotMsgs = append(gotMsgs, e.Msg)
+			}
+			if diff := cmp.Diff([]string{"Unrecognized name: x"}, gotMsgs); diff != "" {
+				t.Errorf("errors (-want, +got)\n%s", diff)
+			}
+			if len(got.RNode) != 1 {
+				t.Errorf("got %d analyzer outputs, want 1", len(got.RNode))
 			}
 		})
 	}
