@@ -1717,6 +1717,16 @@ func TestAnalyzer_UnrecognizedNameInHavingAndQualify(t *testing.T) {
 				IncompleteColumnName: "unknown_col",
 			}},
 		},
+		"subscript compared with analytic function in qualify clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () = unknown_col[OFFSET(0)]",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () = 1",
+			expectedErrs: []file.Error{{
+				Msg:                  "Unrecognized name: unknown_col",
+				Position:             lsp.Position{Line: 0, Character: 81},
+				TermLength:           11,
+				IncompleteColumnName: "unknown_col",
+			}},
+		},
 		"in list compared with analytic function in qualify clause": {
 			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () IN (unknown_col, 2)",
 			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () IN (1, 2)",

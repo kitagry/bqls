@@ -2201,6 +2201,13 @@ func isOperatorOperand(node googlesql.ASTNode, offset int) bool {
 	if err != nil {
 		return false
 	}
+	// The fix-up replaces the field accesses and subscripts after the name together with it,
+	// e.g. `unknown_col[OFFSET(0)]`, so the operand is the outermost of them.
+	for isFieldAccessOrSubscript(parent) && locStart(parent) == offset {
+		if parent, err = parent.Parent(); err != nil {
+			return false
+		}
+	}
 	if _, ok := parent.(*googlesql.ASTInList); ok {
 		if parent, err = parent.Parent(); err != nil {
 			return false
