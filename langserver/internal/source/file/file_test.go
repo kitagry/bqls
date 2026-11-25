@@ -4655,6 +4655,29 @@ func TestAnalyzer_UnknownColumnAsOperatorOperand(t *testing.T) {
 			},
 			expectedNoOutput: true,
 		},
+		"declared variable in WHERE": {
+			file:             "DECLARE v INT64;\nSELECT * FROM " + table + " WHERE name = v",
+			expectedFixedSrc: "DECLARE v INT64;\nSELECT * FROM " + table + " WHERE name = 1",
+			expectedErrMsgs: []string{
+				"No matching signature for operator = for argument types: STRING, INT64\n  Signature: T1 = T1\n    Unable to find common supertype for templated argument <T1>\n      Input types for <T1>: {INT64, STRING}",
+			},
+			expectedNoOutput: true,
+		},
+		// NULL coerces to any argument type, so the operator fails whatever the unknown name is.
+		"user's error beside a NULL function argument in WHERE": {
+			file:             "SELECT * FROM " + table + " WHERE LENGTH(x) = 'a'",
+			expectedFixedSrc: "SELECT * FROM " + table + " WHERE LENGTH(NULL) = 'a'",
+			expectedErrMsgs: []string{
+				"Unrecognized name: x",
+				"No matching signature for operator = for argument types: INT64, STRING\n  Signature: T1 = T1\n    Unable to find common supertype for templated argument <T1>\n      Input types for <T1>: {INT64, STRING}",
+			},
+			expectedNoOutput: true,
+		},
+		"WHEN condition in WHERE": {
+			file:             "SELECT * FROM " + table + " WHERE CASE WHEN x THEN 1 END = id",
+			expectedFixedSrc: "SELECT * FROM " + table + " WHERE true",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
 	}
 
 	for n, tt := range tests {

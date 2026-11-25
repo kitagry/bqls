@@ -843,6 +843,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			isArithmeticOperandError := isOperatorSignatureError || bitwiseOperatorErrorRegex.MatchString(pErr.Msg) || literalCastErrorRegex.MatchString(pErr.Msg)
 			// e.g. Equality is not defined for arguments of type ARRAY<INT64>
 			isUndefinedComparisonError := strings.Contains(pErr.Msg, " is not defined for arguments of type ")
+			// Wider than isOperatorSignatureError, e.g. the placeholder `1` as the condition of
+			// CASE WHEN fails with "No matching signature for operator CASE; all WHEN ...".
+			isAnyOperatorSignatureError := strings.HasPrefix(pErr.Msg, "No matching signature for operator ")
 
 			// add information to Error
 			switch {
@@ -967,8 +970,8 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				}
 			}
 
-			if (isArithmeticOperandError || isUndefinedComparisonError) && len(fo) == 0 {
-				fixedSrc, fo = fixSubstitutedConditionOperand(src, fixedSrc, edits, s, pErr)
+			if (isArithmeticOperandError || isUndefinedComparisonError || isAnyOperatorSignatureError) && len(fo) == 0 {
+				fixedSrc, fo = fixSubstitutedConditionOperand(src, fixedSrc, edits, s, pErr, declarationMap)
 				if len(fo) > 0 {
 					// The placeholder is the fix-up's, whose error about the unknown name is already reported.
 					skipError = true

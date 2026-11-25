@@ -2075,7 +2075,12 @@ const passesPerSubstitutedName = 3
 // fixSubstitutedConditionOperand replaces with `true` the condition whose operator fails
 // on the placeholder `1` of fixErrorForWhereStatement, or on the dummy that the operator
 // fix-ups substituted for it, e.g. `ARRAY<INT64>[] = array_column`.
-func fixSubstitutedConditionOperand(src, fixedSrc string, edits []sourceEdit, node googlesql.ASTNode, parsedErr Error) (string, []FixOffset) {
+//
+// declared maps the lowercased names of declared variables to their dummy values, which
+// stand for values of the declared types, so the errors about them are the user's. So are
+// the errors beside a NULL that a fix-up substituted for a function argument, as NULL
+// coerces to any argument type.
+func fixSubstitutedConditionOperand(src, fixedSrc string, edits []sourceEdit, node googlesql.ASTNode, parsedErr Error, declared map[string]string) (string, []FixOffset) {
 	errOffset, ok := errorByteOffset(fixedSrc, parsedErr.Position)
 	if !ok {
 		return fixedSrc, nil
@@ -2089,8 +2094,12 @@ func fixSubstitutedConditionOperand(src, fixedSrc string, edits []sourceEdit, no
 		if start < 0 || end > len(fixedSrc) || start >= end {
 			return false
 		}
+		substituted := fixedSrc[start:end]
+		if strings.EqualFold(substituted, "NULL") {
+			return false
+		}
 		original, ok := substitutedText(src, edits, start, end)
-		return ok && original != fixedSrc[start:end]
+		return ok && original != substituted && !isDeclaredVariable(declared, original)
 	})
 	if !hasSubstitution {
 		return fixedSrc, nil
