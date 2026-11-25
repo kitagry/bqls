@@ -1538,9 +1538,9 @@ type structFieldPosition struct {
 	arrayElement     bool
 }
 
-// substitutedStructFields returns the fields that fix-ups substituted in the struct
-// and array constructors of expr, at any depth. path leads to expr, and is empty for an operand,
-// which fixSubstitutedOperatorOperand handles.
+// substitutedStructFields returns the fields that fix-ups substituted in the struct and
+// array constructors of expr, at any depth. path leads to expr, and is empty for an
+// operand, which fixSubstitutedOperatorOperand handles.
 func substitutedStructFields(src string, edits []sourceEdit, expr googlesql.ASTExpressionNode, path []structFieldPosition, declared map[string]string) []substitutedStructField {
 	var fieldExprs []googlesql.ASTExpressionNode
 	arrayElement := false
@@ -1593,7 +1593,13 @@ func substitutedStructFields(src string, edits []sourceEdit, expr googlesql.ASTE
 	var fields []substitutedStructField
 	for i, f := range fieldExprs {
 		fieldPath := append(slices.Clone(path), structFieldPosition{index: i, numFields: len(fieldExprs), arrayElement: arrayElement})
-		fields = append(fields, substitutedStructFields(src, edits, f, fieldPath, declared)...)
+		found := substitutedStructFields(src, edits, f, fieldPath, declared)
+		if arrayElement && len(found) == 0 {
+			// The elements share a type, so an element the user wrote, as 2 in `[x, 2]`, already
+			// agrees with the placeholder, and replacing it would only break the array.
+			return nil
+		}
+		fields = append(fields, found...)
 	}
 	return fields
 }

@@ -4542,6 +4542,16 @@ func TestAnalyzer_UnknownColumnInTupleComparison(t *testing.T) {
 			expectedFixedSrc: "SELECT ['', ''] IS DISTINCT FROM ['a', 'b'] FROM " + table,
 			expectedErrMsgs:  []string{"Unrecognized name: x", "Unrecognized name: y"},
 		},
+		// 2 shares the type of the placeholder, so the comparison fails whatever x is.
+		"array of an unknown name and a value": {
+			file:             "SELECT [x, 2] IS DISTINCT FROM ['a'] FROM " + table,
+			expectedFixedSrc: "SELECT [1, 2] IS DISTINCT FROM ['a'] FROM " + table,
+			expectedErrMsgs: []string{
+				"Unrecognized name: x",
+				"No matching signature for operator IS DISTINCT FROM\n  Argument types: ARRAY<INT64>, ARRAY<STRING>\n  Signature: T1 IS DISTINCT FROM T1\n    Unable to find common supertype for templated argument <T1>\n      Input types for <T1>: {ARRAY<INT64>, ARRAY<STRING>}",
+			},
+			expectedNoOutput: true,
+		},
 		"array in a struct": {
 			file:             "SELECT ([x], 1) IS DISTINCT FROM (['a'], 1) FROM " + table,
 			expectedFixedSrc: "SELECT ([''], 1) IS DISTINCT FROM (['a'], 1) FROM " + table,
