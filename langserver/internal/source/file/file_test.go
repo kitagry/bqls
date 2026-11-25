@@ -4183,11 +4183,12 @@ func TestAnalyzer_RevertFixUpThatBreaksSyntax(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	bqClient := mock_bigquery.NewMockClient(ctrl)
 
-	// These tests need a fix-up that breaks the syntax. Substituting `1` for n turns
-	// `` `n`x `` (n with the alias x) into `1x`, which does not parse because an alias
-	// must be apart from a literal. If that gets fixed too, pick another such case, or
-	// these tests pass without exercising the revert.
-	src := "DECLARE n INT64;\nSELECT 1;\nSELECT `n`x;\nSELECT 2;"
+	// These tests need a fix-up that breaks the syntax. Substituting `1` for n in the IN
+	// list of UNPIVOT, which takes column names rather than expressions, makes `IN (1)`,
+	// which does not parse. If the fix-ups learn to keep the syntax here too, these tests
+	// fail on FixedSrc and the warning, so pick another case that still breaks the syntax.
+	// `` `n`x `` was such a case until the fix for #752.
+	src := "DECLARE n INT64;\nSELECT 1;\nSELECT 1 FROM (SELECT 1 AS a) UNPIVOT(v FOR k IN (n));\nSELECT 2;"
 	got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", src)
 	defer got.Close()
 
@@ -4199,7 +4200,7 @@ func TestAnalyzer_RevertFixUpThatBreaksSyntax(t *testing.T) {
 	}
 	want := []file.Error{{
 		Msg:      "bqls could not finish analyzing this statement",
-		Position: lsp.Position{Line: 2, Character: 7},
+		Position: lsp.Position{Line: 2, Character: 50},
 		Severity: lsp.Warning,
 	}}
 	if diff := cmp.Diff(want, got.Errors); diff != "" {
@@ -4215,15 +4216,15 @@ func TestAnalyzer_KeepFixingUpAfterARevertedFixUp(t *testing.T) {
 	bqClient := mock_bigquery.NewMockClient(ctrl)
 
 	// The statements after the one whose fix-up is reverted still need their own fix-ups.
-	// `` `n`x `` stands for a fix-up that breaks the syntax, as in TestAnalyzer_RevertFixUpThatBreaksSyntax.
-	src := "DECLARE n INT64;\nSELECT `n`x;\nSELECT n + 1;\nSELECT n + UNKNOWN_FUNC();"
+	// The UNPIVOT stands for a fix-up that breaks the syntax, as in TestAnalyzer_RevertFixUpThatBreaksSyntax.
+	src := "DECLARE n INT64;\nSELECT 1 FROM (SELECT 1 AS a) UNPIVOT(v FOR k IN (n));\nSELECT n + 1;\nSELECT n + UNKNOWN_FUNC();"
 	got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", src)
 	defer got.Close()
 
 	want := []file.Error{
 		{
 			Msg:      "bqls could not finish analyzing this statement",
-			Position: lsp.Position{Line: 1, Character: 7},
+			Position: lsp.Position{Line: 1, Character: 50},
 			Severity: lsp.Warning,
 		},
 		{
@@ -4707,7 +4708,7 @@ func TestAnalyzer_UnknownColumnAsArithmeticOperand(t *testing.T) {
 
 func TestAnalyzer_UnknownColumnAsOperatorOperandWithRevertedFixUp(t *testing.T) {
 	const table = "`project.dataset.table`"
-	// `` SELECT `n`x `` stands for a statement whose fix-up breaks the syntax and is reverted,
+	// The UNPIVOT stands for a statement whose fix-up breaks the syntax and is reverted,
 	// as in TestAnalyzer_RevertFixUpThatBreaksSyntax.
 	tests := map[string]struct {
 		file string
@@ -4716,19 +4717,19 @@ func TestAnalyzer_UnknownColumnAsOperatorOperandWithRevertedFixUp(t *testing.T) 
 		expectedErrs     []file.Error
 	}{
 		"reverted statement before the operator": {
-			file:             "DECLARE n INT64;\nSELECT `n`x;\nSELECT IF(x = 'a', 1, 2) FROM " + table + ";",
-			expectedFixedSrc: "DECLARE n INT64;\nSELECT `n`x;\nSELECT IF('' = 'a', 1, 2) FROM " + table + ";",
+			file:             "DECLARE n INT64;\nSELECT 1 FROM (SELECT 1 AS a) UNPIVOT(v FOR k IN (n));\nSELECT IF(x = 'a', 1, 2) FROM " + table + ";",
+			expectedFixedSrc: "DECLARE n INT64;\nSELECT 1 FROM (SELECT 1 AS a) UNPIVOT(v FOR k IN (n));\nSELECT IF('' = 'a', 1, 2) FROM " + table + ";",
 			expectedErrs: []file.Error{
-				{Msg: "bqls could not finish analyzing this statement", Position: lsp.Position{Line: 1, Character: 7}, Severity: lsp.Warning},
+				{Msg: "bqls could not finish analyzing this statement", Position: lsp.Position{Line: 1, Character: 50}, Severity: lsp.Warning},
 				{Msg: "Unrecognized name: x", Position: lsp.Position{Line: 2, Character: 10}, TermLength: 1, IncompleteColumnName: "x"},
 			},
 		},
 		"reverted statement after the operator": {
-			file:             "DECLARE n INT64;\nSELECT IF(x = 'a', 1, 2) FROM " + table + ";\nSELECT `n`x;",
-			expectedFixedSrc: "DECLARE n INT64;\nSELECT IF('' = 'a', 1, 2) FROM " + table + ";\nSELECT `n`x;",
+			file:             "DECLARE n INT64;\nSELECT IF(x = 'a', 1, 2) FROM " + table + ";\nSELECT 1 FROM (SELECT 1 AS a) UNPIVOT(v FOR k IN (n));",
+			expectedFixedSrc: "DECLARE n INT64;\nSELECT IF('' = 'a', 1, 2) FROM " + table + ";\nSELECT 1 FROM (SELECT 1 AS a) UNPIVOT(v FOR k IN (n));",
 			expectedErrs: []file.Error{
 				{Msg: "Unrecognized name: x", Position: lsp.Position{Line: 1, Character: 10}, TermLength: 1, IncompleteColumnName: "x"},
-				{Msg: "bqls could not finish analyzing this statement", Position: lsp.Position{Line: 2, Character: 7}, Severity: lsp.Warning},
+				{Msg: "bqls could not finish analyzing this statement", Position: lsp.Position{Line: 2, Character: 50}, Severity: lsp.Warning},
 			},
 		},
 	}
@@ -4752,6 +4753,75 @@ func TestAnalyzer_UnknownColumnAsOperatorOperandWithRevertedFixUp(t *testing.T) 
 			}
 			if len(got.RNode) != 1 {
 				t.Errorf("got %d analyzed statements, want 1 for the IF", len(got.RNode))
+			}
+		})
+	}
+}
+
+func TestAnalyzer_PlaceholderBeforeIdentifier(t *testing.T) {
+	// A placeholder must stay apart from an identifier right before or after it, such as
+	// an alias written without whitespace after a quoted name. `1x` would not parse.
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+		expectedErrs     []file.Error
+	}{
+		"alias after a declared INT64": {
+			file:             "DECLARE n INT64;\nSELECT `n`x;",
+			expectedFixedSrc: "DECLARE n INT64;\nSELECT 1 x;",
+		},
+		"alias after a declared INTERVAL": {
+			file:             "DECLARE i INTERVAL;\nSELECT `i`x;",
+			expectedFixedSrc: "DECLARE i INTERVAL;\nSELECT INTERVAL 0 DAY x;",
+		},
+		"alias after an unknown name": {
+			file:             "SELECT `unknown`x;",
+			expectedFixedSrc: "SELECT 1 x;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		"keyword after an unknown name as a WHERE condition": {
+			file:             "SELECT a FROM (SELECT 1 AS a) WHERE `unknown`AND TRUE;",
+			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE true AND TRUE;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 36}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		"keyword before an unknown name as a WHERE condition": {
+			file:             "SELECT a FROM (SELECT 1 AS a) WHERE a = 1 AND`unknown`;",
+			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE a = 1 AND true;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 45}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		"keyword before a declared INT64": {
+			file:             "DECLARE n INT64;\nSELECT a FROM (SELECT 1 AS a) WHERE a = 1 AND`n` = 1;",
+			expectedFixedSrc: "DECLARE n INT64;\nSELECT a FROM (SELECT 1 AS a) WHERE a = 1 AND 1 = 1;",
+		},
+		"keyword after a comparison with an unknown name": {
+			file:             "SELECT a FROM (SELECT 1 AS a) WHERE unknown = 'x'AND TRUE;",
+			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE true AND TRUE;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 36}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			if diff := cmp.Diff(tt.expectedErrs, got.Errors, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("errors (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -4886,6 +4956,14 @@ func TestAnalyzer_PlaceholderBeforeFieldAccess(t *testing.T) {
 			expectedFixedSrc: "SELECT [1][OFFSET(NULL)];",
 			expectedErrs: []file.Error{
 				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 18}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		// The path of an unknown field starts with a quoted name, which is not the whole path.
+		"subscript after an unknown field of a quoted name": {
+			file:             "SELECT `t`.x[0] FROM (SELECT STRUCT([1] AS y) AS t);",
+			expectedFixedSrc: "SELECT 1 FROM (SELECT STRUCT([1] AS y) AS t);",
+			expectedErrs: []file.Error{
+				{Msg: "Field name x does not exist in STRUCT<y ARRAY<INT64>>", Position: lsp.Position{Line: 0, Character: 11}, TermLength: 1, IncompleteColumnName: "`t`.x"},
 			},
 		},
 		"dot-star on an unknown name": {

@@ -1081,13 +1081,14 @@ func fixDeclarationError(src string, parsedErr Error, defaultVal string) (fixedS
 	if replaceOffset < 0 || replaceOffset+len(parsedErr.IncompleteColumnName) > len(src) {
 		return src, nil
 	}
-	rest := src[replaceOffset+len(parsedErr.IncompleteColumnName):]
-	defaultVal = keepApartFromDot(defaultVal, rest)
+	replaceEnd := nameEnd(src, replaceOffset, parsedErr.IncompleteColumnName)
+	rest := src[replaceEnd:]
+	defaultVal = keepApartFromIdentifiers(keepApartFromDot(defaultVal, rest), src, replaceOffset, replaceEnd)
 	fixedSrc = src[:replaceOffset] + defaultVal + rest
 	fixOffset := FixOffset{
 		Offset: errOffset,
-		Length: -parsedErr.TermLength + len(defaultVal),
-		edits:  []sourceEdit{{start: replaceOffset, oldLen: len(parsedErr.IncompleteColumnName), newLen: len(defaultVal)}},
+		Length: -(replaceEnd - replaceOffset) + len(defaultVal),
+		edits:  []sourceEdit{{start: replaceOffset, oldLen: replaceEnd - replaceOffset, newLen: len(defaultVal)}},
 	}
 
 	return fixedSrc, []FixOffset{fixOffset}
@@ -1116,8 +1117,9 @@ func fixErrorToExpression(src string, parsedErr Error, expr string) (fixedSrc st
 	}
 	// The fields of an unknown name are unknown too. Leaving them would also make `1.x`,
 	// where `1.` is lexed as a floating point literal.
-	replaceEnd := replaceOffset + len(parsedErr.IncompleteColumnName)
+	replaceEnd := nameEnd(src, replaceOffset, parsedErr.IncompleteColumnName)
 	replaceEnd += fieldAccessLen(src[replaceEnd:])
+	expr = keepApartFromIdentifiers(expr, src, replaceOffset, replaceEnd)
 	fixedSrc = src[:replaceOffset] + expr + src[replaceEnd:]
 	fixOffset := FixOffset{
 		Offset: errOffset,
@@ -1213,6 +1215,36 @@ func fieldPathLen(rest string) int {
 		i = j
 	}
 	return i
+}
+
+// nameEnd returns the end of name starting at start in src. The errors spell a quoted
+// name without its backquotes, which are part of it in src. A name taken from src as is,
+// such as the path of an unknown struct field, may start with a quoted part as in
+// "`t`.x", and ends after all of it.
+func nameEnd(src string, start int, name string) int {
+	if strings.HasPrefix(src[start:], name) {
+		return start + len(name)
+	}
+	if strings.HasPrefix(src[start:], "`") {
+		if end, closed := bqparser.SkipQuoted(src, start); closed {
+			return end
+		}
+	}
+	return start + len(name)
+}
+
+// keepApartFromIdentifiers pads expr, which replaces src[start:end], with a space on
+// each side where src has an identifier character, such as an alias right after a
+// quoted name in "`n`x" or a keyword right before one in "AND`n`". Otherwise they
+// would run together, as in "1x" or "ANDtrue".
+func keepApartFromIdentifiers(expr, src string, start, end int) string {
+	if start > 0 && isIdentifierByte(src[start-1]) {
+		expr = " " + expr
+	}
+	if end < len(src) && isIdentifierByte(src[end]) {
+		expr += " "
+	}
+	return expr
 }
 
 // keepApartFromDot parenthesizes expr if rest starts with a dot, because `1.` would be
@@ -1855,11 +1887,12 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 		endOffset := parseLocEnd(loc)
 		if startOffset >= 0 && endOffset >= 0 {
 			length := endOffset - startOffset
-			fixedSrc = src[:startOffset] + "true" + src[endOffset:]
+			placeholder := keepApartFromIdentifiers("true", src, startOffset, endOffset)
+			fixedSrc = src[:startOffset] + placeholder + src[endOffset:]
 			fixOffset = FixOffset{
 				Offset: startOffset,
-				Length: len("true") - length,
-				edits:  []sourceEdit{{start: startOffset, oldLen: length, newLen: len("true")}},
+				Length: len(placeholder) - length,
+				edits:  []sourceEdit{{start: startOffset, oldLen: length, newLen: len(placeholder)}},
 			}
 			usedCondition = true
 		}
@@ -1876,13 +1909,15 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 		if incompleteOffset < 0 || incompleteOffset+replacedLength > len(src) {
 			return src, nil
 		}
+		replacedLength = nameEnd(src, incompleteOffset, parsedErr.IncompleteColumnName) - incompleteOffset
 		// As in fixErrorToExpression, `true.x` would fail to access a field of BOOL.
 		replacedLength += fieldAccessLen(src[incompleteOffset+replacedLength:])
-		fixedSrc = src[:incompleteOffset] + "true" + src[incompleteOffset+replacedLength:]
+		placeholder := keepApartFromIdentifiers("true", src, incompleteOffset, incompleteOffset+replacedLength)
+		fixedSrc = src[:incompleteOffset] + placeholder + src[incompleteOffset+replacedLength:]
 		fixOffset = FixOffset{
 			Offset: incompleteOffset,
-			Length: len("true") - replacedLength,
-			edits:  []sourceEdit{{start: incompleteOffset, oldLen: replacedLength, newLen: len("true")}},
+			Length: len(placeholder) - replacedLength,
+			edits:  []sourceEdit{{start: incompleteOffset, oldLen: replacedLength, newLen: len(placeholder)}},
 		}
 	}
 
