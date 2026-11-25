@@ -4662,6 +4662,128 @@ func TestAnalyzer_UnknownColumnInTupleComparison(t *testing.T) {
 	}
 }
 
+func TestAnalyzer_UnknownColumnInArrayConstructor(t *testing.T) {
+	const table = "`project.dataset.table`"
+	arrayElementsError := func(types string) string {
+		return fmt.Sprintf("Array elements of types {%s} do not have a common supertype", types)
+	}
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+		expectedErrMsgs  []string
+		// The user's own type error leaves the statement without an analyzer output.
+		expectedNoOutput bool
+	}{
+		"unknown name and a value": {
+			file:             "SELECT [x, 'a'] FROM " + table,
+			expectedFixedSrc: "SELECT ['', 'a'] FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"value before the unknown name": {
+			file:             "SELECT ['a', x] FROM " + table,
+			expectedFixedSrc: "SELECT ['a', ''] FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"several unknown names": {
+			file:             "SELECT [x, y, 'a'] FROM " + table,
+			expectedFixedSrc: "SELECT ['', '', 'a'] FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x", "Unrecognized name: y"},
+		},
+		// NULL coerces to the type of the other elements, though the error lists it as a type.
+		"NULL element": {
+			file:             "SELECT [x, NULL, 'a'] FROM " + table,
+			expectedFixedSrc: "SELECT ['', NULL, 'a'] FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"ARRAY keyword": {
+			file:             "SELECT ARRAY[x, 'a'] FROM " + table,
+			expectedFixedSrc: "SELECT ARRAY['', 'a'] FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"field of a struct element": {
+			file:             "SELECT [(x, 1), ('a', 1)] FROM " + table,
+			expectedFixedSrc: "SELECT [('', 1), ('a', 1)] FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"array in a struct": {
+			file:             "SELECT ([x, 'a'], 1) FROM " + table,
+			expectedFixedSrc: "SELECT (['', 'a'], 1) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"compared array": {
+			file:             "SELECT [x, 'a'] IS DISTINCT FROM ['b'] FROM " + table,
+			expectedFixedSrc: "SELECT ['', 'a'] IS DISTINCT FROM ['b'] FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		// The values the user wrote do not agree on a type, so the array fails whatever x is.
+		"values of several types": {
+			file:             "SELECT [x, 'a', DATE '2020-01-01'] FROM " + table,
+			expectedFixedSrc: "SELECT [1, 'a', DATE '2020-01-01'] FROM " + table,
+			expectedErrMsgs: []string{
+				"Unrecognized name: x",
+				arrayElementsError("INT64, STRING, DATE"),
+			},
+			expectedNoOutput: true,
+		},
+		// 2 and 'a' do not agree whatever x is, so the error stays after x is replaced.
+		"values of the user that disagree": {
+			file:             "SELECT [x, 2, 'a'] FROM " + table,
+			expectedFixedSrc: "SELECT ['', 2, 'a'] FROM " + table,
+			expectedErrMsgs: []string{
+				"Unrecognized name: x",
+				arrayElementsError("INT64, STRING"),
+			},
+			expectedNoOutput: true,
+		},
+		"declared variable": {
+			file:             "DECLARE v INT64;\nSELECT [v, 'a'] FROM " + table,
+			expectedFixedSrc: "DECLARE v INT64;\nSELECT [1, 'a'] FROM " + table,
+			expectedErrMsgs:  []string{arrayElementsError("INT64, STRING")},
+			expectedNoOutput: true,
+		},
+		"values the user wrote": {
+			file:             "SELECT [1, 'a'] FROM " + table,
+			expectedFixedSrc: "SELECT [1, 'a'] FROM " + table,
+			expectedErrMsgs:  []string{arrayElementsError("INT64, STRING")},
+			expectedNoOutput: true,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{
+					{Name: "id", Type: bq.IntegerFieldType},
+				}}, nil).
+				AnyTimes()
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			wantOutputs := 1
+			if tt.expectedNoOutput {
+				wantOutputs = 0
+			}
+			if len(got.RNode) != wantOutputs {
+				t.Errorf("got %d analyzer outputs, want %d", len(got.RNode), wantOutputs)
+			}
+			gotMsgs := make([]string, 0, len(got.Errors))
+			for _, e := range got.Errors {
+				gotMsgs = append(gotMsgs, e.Msg)
+			}
+			if diff := cmp.Diff(tt.expectedErrMsgs, gotMsgs); diff != "" {
+				t.Errorf("errors (-want, +got)\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestAnalyzer_UnknownColumnAsArithmeticOperand(t *testing.T) {
 	const table = "`project.dataset.table`"
 	tests := map[string]struct {

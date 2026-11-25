@@ -34,6 +34,10 @@ var bitwiseOperatorErrorRegex = regexp.MustCompile(`^Bitwise operator \S+ requir
 
 var literalCastErrorRegex = regexp.MustCompile(`^Could not cast literal .* to type \S+$`)
 
+// arrayElementsErrorRegex captures the types of the elements of an array constructor, as
+// `INT64, STRING` in `Array elements of types {INT64, STRING} do not have a common supertype`.
+var arrayElementsErrorRegex = regexp.MustCompile(`^Array elements of types \{(.*)\} do not have a common supertype$`)
+
 var logicalOperandErrorRegex = regexp.MustCompile(`^No matching signature for operator (AND|OR|NOT)\n(?s:.*?)Argument (\d+): Unable to coerce type \S+ to expected type BOOL`)
 
 type ParsedFile struct {
@@ -1529,6 +1533,12 @@ func fixSubstitutedStructField(src, fixedSrc string, edits []sourceEdit, node go
 		return nil
 	})
 
+	return replaceSubstitutedStructFields(fixedSrc, fields, argumentTypes)
+}
+
+// replaceSubstitutedStructFields replaces each placeholder in fields with a value of the
+// type of the field at its path in types, the types that the error message lists.
+func replaceSubstitutedStructFields(fixedSrc string, fields []substitutedStructField, types []string) (string, []FixOffset) {
 	var fixOffsets []FixOffset
 	// From the last one, so that each edit keeps the offsets of the ones before it.
 	for _, f := range slices.Backward(fields) {
@@ -1536,7 +1546,7 @@ func fixSubstitutedStructField(src, fixedSrc string, edits []sourceEdit, node go
 		if !ok {
 			continue
 		}
-		typeName, ok := structFieldType(argumentTypes, f.path, placeholderType)
+		typeName, ok := structFieldType(types, f.path, placeholderType)
 		if !ok {
 			continue
 		}
@@ -1552,6 +1562,45 @@ func fixSubstitutedStructField(src, fixedSrc string, edits []sourceEdit, node go
 		})
 	}
 	return fixedSrc, fixOffsets
+}
+
+// fixSubstitutedArrayElement replaces the placeholders that fix-ups substituted for unknown
+// elements of an array constructor, as x in `[x, 'a']`, with a value of the type of the
+// other elements, taken from the error message. The placeholders in the fields of struct
+// elements, as x in `[(x, 1), ('a', 1)]`, are matched with the fields of the STRUCT types.
+//
+// The elements the user wrote are left as they are, and so is the array if they do not
+// agree on a type, since it then fails whatever the unknown names are.
+func fixSubstitutedArrayElement(src, fixedSrc string, edits []sourceEdit, node googlesql.ASTNode, parsedErr Error, declared map[string]string) (string, []FixOffset) {
+	m := arrayElementsErrorRegex.FindStringSubmatch(parsedErr.Msg)
+	if m == nil {
+		return fixedSrc, nil
+	}
+	errOffset, ok := errorByteOffset(fixedSrc, parsedErr.Position)
+	if !ok {
+		return fixedSrc, nil
+	}
+	array, ok := SearchAstNode[*googlesql.ASTArrayConstructor](node, errOffset)
+	if !ok || locStart(array) != errOffset {
+		return fixedSrc, nil
+	}
+
+	var fields []substitutedStructField
+	num, _ := array.NumChildren()
+	for i := int32(0); i < num; i++ {
+		elem, err := array.Elements(i)
+		if err != nil || elem == nil {
+			continue
+		}
+		if f, ok := substitutedField(src, edits, elem, nil, declared); ok {
+			fields = append(fields, f)
+			continue
+		}
+		fields = append(fields, substitutedStructFields(src, edits, elem, nil, declared)...)
+	}
+	// A NULL element is listed as a type, though it coerces to the type of the others.
+	types := slices.DeleteFunc(splitTypeList(m[1]), func(typ string) bool { return typ == "NULL" })
+	return replaceSubstitutedStructFields(fixedSrc, fields, types)
 }
 
 // placeholderTypes maps the placeholders that fix-ups substitute for an unknown name, such
@@ -1619,13 +1668,10 @@ func substitutedStructFields(src string, edits []sourceEdit, expr googlesql.ASTE
 		if len(path) == 0 {
 			return nil
 		}
-		start, end := locStart(expr), locEnd(expr)
-		original, ok := substitutedText(src, edits, start, end)
-		// A placeholder substituted for a declared variable stands for a value of the declared type.
-		if !ok || isDeclaredVariable(declared, original) {
-			return nil
+		if f, ok := substitutedField(src, edits, expr, path, declared); ok {
+			return []substitutedStructField{f}
 		}
-		return []substitutedStructField{{start: start, end: end, path: path}}
+		return nil
 	}
 
 	var fields []substitutedStructField
@@ -1640,6 +1686,17 @@ func substitutedStructFields(src string, edits []sourceEdit, expr googlesql.ASTE
 		fields = append(fields, found...)
 	}
 	return fields
+}
+
+// substitutedField reports whether a fix-up substituted expr, at path, for an unknown name.
+func substitutedField(src string, edits []sourceEdit, expr googlesql.ASTExpressionNode, path []structFieldPosition, declared map[string]string) (substitutedStructField, bool) {
+	start, end := locStart(expr), locEnd(expr)
+	original, ok := substitutedText(src, edits, start, end)
+	// A placeholder substituted for a declared variable stands for a value of the declared type.
+	if !ok || isDeclaredVariable(declared, original) {
+		return substitutedStructField{}, false
+	}
+	return substitutedStructField{start: start, end: end, path: path}, true
 }
 
 // substitutedText reports whether [start, end) of the text after edits lies in text that
