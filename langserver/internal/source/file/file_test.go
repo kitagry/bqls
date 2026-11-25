@@ -4380,6 +4380,23 @@ func TestAnalyzer_UnknownColumnAsOperatorOperand(t *testing.T) {
 			},
 			expectedNoOutput: true,
 		},
+		"quoted declared variable": {
+			file:             "DECLARE v INT64;\nSELECT `v` = 'a' FROM " + table,
+			expectedFixedSrc: "DECLARE v INT64;\nSELECT 1 = 'a' FROM " + table,
+			expectedErrMsgs: []string{
+				"No matching signature for operator = for argument types: INT64, STRING\n  Signature: T1 = T1\n    Unable to find common supertype for templated argument <T1>\n      Input types for <T1>: {INT64, STRING}",
+			},
+			expectedNoOutput: true,
+		},
+		// The placeholder is padded with a space, which must not hide what it was substituted for.
+		"quoted declared variable right before a keyword": {
+			file:             "DECLARE v INT64;\nSELECT `v`IN ('a') FROM " + table,
+			expectedFixedSrc: "DECLARE v INT64;\nSELECT 1 IN ('a') FROM " + table,
+			expectedErrMsgs: []string{
+				"No matching signature for operator IN for argument types literal INT64 and {STRING}",
+			},
+			expectedNoOutput: true,
+		},
 	}
 
 	for n, tt := range tests {
@@ -4834,6 +4851,27 @@ func TestAnalyzer_PlaceholderBeforeIdentifier(t *testing.T) {
 		"keyword before a declared INT64": {
 			file:             "DECLARE n INT64;\nSELECT a FROM (SELECT 1 AS a) WHERE a = 1 AND`n` = 1;",
 			expectedFixedSrc: "DECLARE n INT64;\nSELECT a FROM (SELECT 1 AS a) WHERE a = 1 AND 1 = 1;",
+		},
+		"WHERE right before a non-BOOL column": {
+			file:             "SELECT a FROM (SELECT 1 AS a) WHERE`a`;",
+			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE true;",
+			expectedErrs: []file.Error{
+				{Msg: "WHERE clause should return type BOOL, but returns INT64", Position: lsp.Position{Line: 0, Character: 35}, TermLength: 3, IncompleteColumnName: "`a`"},
+			},
+		},
+		"alias after an unknown quoted field": {
+			file:             "SELECT t.`x`y FROM (SELECT STRUCT(1 AS y) AS t);",
+			expectedFixedSrc: "SELECT 1 y FROM (SELECT STRUCT(1 AS y) AS t);",
+			expectedErrs: []file.Error{
+				{Msg: "Field name x does not exist in STRUCT<y INT64>", Position: lsp.Position{Line: 0, Character: 9}, TermLength: 3, IncompleteColumnName: "t.`x`"},
+			},
+		},
+		"alias after a quoted name not found inside a table": {
+			file:             "SELECT t.`b`x FROM (SELECT 1 AS a) AS t;",
+			expectedFixedSrc: "SELECT 1 x FROM (SELECT 1 AS a) AS t;",
+			expectedErrs: []file.Error{
+				{Msg: "Name b not found inside t", Position: lsp.Position{Line: 0, Character: 9}, TermLength: 3, IncompleteColumnName: "t.`b`"},
+			},
 		},
 		"keyword after a comparison with an unknown name": {
 			file:             "SELECT a FROM (SELECT 1 AS a) WHERE unknown = 'x'AND TRUE;",
