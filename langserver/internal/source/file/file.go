@@ -1438,11 +1438,17 @@ func operandTypeForOperator(op, argumentTypes string) (string, bool) {
 		return "BOOL", true
 	}
 	typeName, ok := operandTypeOtherThanPlaceholder(argumentTypes)
-	if !ok || op != "IN UNNEST" {
+	if !ok || !isUnnestOperator(op) {
 		return typeName, ok
 	}
 	// The placeholder is compared with the elements of the array.
 	return arrayElementType(typeName)
+}
+
+// isUnnestOperator reports whether op, the operator named in a signature error, compares
+// its left operand with the elements of an array, e.g. IN UNNEST and LIKE ANY|SOME UNNEST.
+func isUnnestOperator(op string) bool {
+	return strings.HasSuffix(op, " UNNEST")
 }
 
 // arrayElementType returns the element type of an ARRAY type.
@@ -1498,6 +1504,15 @@ func operatorOperands(node googlesql.ASTNode, op string) []googlesql.ASTExpressi
 			operands = append(operands, e)
 		}
 	}
+	addInList := func(list *googlesql.ASTInList, err error) {
+		if err != nil || list == nil {
+			return
+		}
+		num, _ := list.NumChildren()
+		for i := int32(0); i < num; i++ {
+			add(list.List(i))
+		}
+	}
 	switch n := node.(type) {
 	case *googlesql.ASTBinaryExpression:
 		switch op {
@@ -1525,23 +1540,13 @@ func operatorOperands(node googlesql.ASTNode, op string) []googlesql.ASTExpressi
 			add(n.Lhs())
 		case "IN":
 			add(n.Lhs())
-			if list, err := n.InList(); err == nil && list != nil {
-				num, _ := list.NumChildren()
-				for i := int32(0); i < num; i++ {
-					add(list.List(i))
-				}
-			}
+			addInList(n.InList())
 		}
 	case *googlesql.ASTLikeExpression:
 		// e.g. LIKE ANY|SOME, NOT LIKE ANY|SOME and LIKE ALL
 		if strings.Contains(op, "LIKE ") {
 			add(n.Lhs())
-			if list, err := n.InList(); err == nil && list != nil {
-				num, _ := list.NumChildren()
-				for i := int32(0); i < num; i++ {
-					add(list.List(i))
-				}
-			}
+			addInList(n.InList())
 		}
 	case *googlesql.ASTAndExpr:
 		if op == "AND" {
@@ -1582,7 +1587,7 @@ func fixSubstitutedStructField(src, fixedSrc string, edits []sourceEdit, node go
 	}
 	op := m[1]
 	argumentTypes := argumentTypeList(m[2])
-	if op == "IN UNNEST" {
+	if isUnnestOperator(op) {
 		// The struct is compared with the elements of the array.
 		for i, typ := range argumentTypes {
 			if elem, ok := arrayElementType(typ); ok {
@@ -2007,7 +2012,7 @@ func isWholeFunctionArgument(node googlesql.ASTNode, start, end int) bool {
 }
 
 // isInUnnestArray reports whether the path spanning [start, end), with the field accesses
-// and subscripts on it, is by itself the array of IN UNNEST.
+// and subscripts on it, is by itself the array of IN UNNEST or LIKE ANY|SOME|ALL UNNEST.
 func isInUnnestArray(node googlesql.ASTNode, start, end int) bool {
 	parent := wholeTermParent(node, start, end)
 	if _, ok := parent.(*googlesql.ASTExpressionWithOptAlias); ok {
@@ -2017,9 +2022,11 @@ func isInUnnestArray(node googlesql.ASTNode, start, end int) bool {
 	if !ok {
 		return false
 	}
-	in, _ := unnest.Parent()
-	_, ok = in.(*googlesql.ASTInExpression)
-	return ok
+	switch op, _ := unnest.Parent(); op.(type) {
+	case *googlesql.ASTInExpression, *googlesql.ASTLikeExpression:
+		return true
+	}
+	return false
 }
 
 // wholeTermParent returns the parent of the path spanning [start, end) with the field
@@ -2222,14 +2229,18 @@ func isArithmeticExpression(n googlesql.ASTNode) bool {
 	return false
 }
 
-// isNegation reports whether n is a unary minus or bitwise NOT.
+// isNegation reports whether n is a unary minus, unary plus or bitwise NOT.
 func isNegation(n googlesql.ASTNode) bool {
 	unary, ok := n.(*googlesql.ASTUnaryExpression)
 	if !ok {
 		return false
 	}
-	op, _ := unary.Op()
-	return op == googlesql.ASTUnaryExpressionEnums_OpMinus || op == googlesql.ASTUnaryExpressionEnums_OpBitwiseNot
+	switch op, _ := unary.Op(); op {
+	case googlesql.ASTUnaryExpressionEnums_OpMinus, googlesql.ASTUnaryExpressionEnums_OpPlus,
+		googlesql.ASTUnaryExpressionEnums_OpBitwiseNot:
+		return true
+	}
+	return false
 }
 
 // isOperatorOperand reports whether the path starting at offset is an operand of an

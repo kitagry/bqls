@@ -1757,6 +1757,16 @@ func TestAnalyzer_UnrecognizedNameInHavingAndQualify(t *testing.T) {
 				IncompleteColumnName: "unknown_col",
 			}},
 		},
+		"unary plus compared with analytic function in qualify clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () = +unknown_col",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () = +1",
+			expectedErrs: []file.Error{{
+				Msg:                  "Unrecognized name: unknown_col",
+				Position:             lsp.Position{Line: 0, Character: 82},
+				TermLength:           11,
+				IncompleteColumnName: "unknown_col",
+			}},
+		},
 		"like any list with analytic function in qualify clause": {
 			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY CAST(ROW_NUMBER() OVER () AS STRING) LIKE ANY (unknown_col, 'a')",
 			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY CAST(ROW_NUMBER() OVER () AS STRING) LIKE ANY ('', 'a')",
@@ -4668,6 +4678,16 @@ func TestAnalyzer_UnknownColumnAsOperatorOperand(t *testing.T) {
 		"left operand of LIKE ANY": {
 			file:             "SELECT x LIKE ANY ('a', 'b') FROM " + table,
 			expectedFixedSrc: "SELECT '' LIKE ANY ('a', 'b') FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"array of LIKE ANY UNNEST": {
+			file:             "SELECT name LIKE ANY UNNEST(x) FROM " + table,
+			expectedFixedSrc: "SELECT name LIKE ANY UNNEST([]) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"left operand of LIKE ALL UNNEST": {
+			file:             "SELECT x LIKE ALL UNNEST(['a']) FROM " + table,
+			expectedFixedSrc: "SELECT '' LIKE ALL UNNEST(['a']) FROM " + table,
 			expectedErrMsgs:  []string{"Unrecognized name: x"},
 		},
 		// In WHERE and ON, the whole condition around an unknown name is replaced with `true`.
