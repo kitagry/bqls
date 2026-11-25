@@ -891,30 +891,27 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				} else if isWholeFunctionArgument(s, termStart, termEnd) {
 					// NULL coerces to any argument type, whereas `1` or `true` fails to match the signature.
 					fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "NULL")
-				} else if _, ok := SearchAstNode[*googlesql.ASTSelectList](node, errTermOffset); ok {
-					if aliasOnNextLine(fixedSrc, s, termStart, termEnd) {
-						// The alias is likely the next column, before which the user is typing without a comma yet.
-						fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "1,")
-					} else {
+				} else {
+					switch innermostClause(node, errTermOffset).(type) {
+					case *googlesql.ASTSelectList:
+						if aliasOnNextLine(fixedSrc, s, termStart, termEnd) {
+							// The alias is likely the next column, before which the user is typing without a comma yet.
+							fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "1,")
+						} else {
+							fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
+						}
+					case *googlesql.ASTGroupBy:
+						if _, ok := SearchAstNode[*googlesql.ASTPipeAggregate](node, errTermOffset); ok {
+							// Pipe AGGREGATE rejects both GROUP BY ordinals and literals.
+							fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "1+1")
+						} else {
+							fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
+						}
+					case *googlesql.ASTOrderBy:
 						fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
+					case *googlesql.ASTWhereClause, *googlesql.ASTOnClause, *googlesql.ASTHaving, *googlesql.ASTQualify:
+						fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
 					}
-				} else if _, ok := SearchAstNode[*googlesql.ASTWhereClause](node, errTermOffset); ok {
-					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
-				} else if _, ok := SearchAstNode[*googlesql.ASTGroupBy](node, errTermOffset); ok {
-					if _, ok := SearchAstNode[*googlesql.ASTPipeAggregate](node, errTermOffset); ok {
-						// Pipe AGGREGATE rejects both GROUP BY ordinals and literals.
-						fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "1+1")
-					} else {
-						fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
-					}
-				} else if _, ok := SearchAstNode[*googlesql.ASTOrderBy](node, errTermOffset); ok {
-					fixedSrc, fo = fixErrorToLiteral(fixedSrc, pErr)
-				} else if _, ok := SearchAstNode[*googlesql.ASTOnClause](node, errTermOffset); ok {
-					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
-				} else if _, ok := SearchAstNode[*googlesql.ASTHaving](node, errTermOffset); ok {
-					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
-				} else if _, ok := SearchAstNode[*googlesql.ASTQualify](node, errTermOffset); ok {
-					fixedSrc, fo = fixErrorForWhereStatement(fixedSrc, s, pErr)
 				}
 			}
 

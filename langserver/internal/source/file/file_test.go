@@ -1829,6 +1829,77 @@ func TestAnalyzer_UnrecognizedNameInArithmeticInCondition(t *testing.T) {
 	}
 }
 
+func TestAnalyzer_UnrecognizedNameInClauseOfSubqueryInCondition(t *testing.T) {
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+		expectedPosition lsp.Position
+	}{
+		"order by of subquery in where clause": {
+			file:             "SELECT * FROM `project.dataset.table` WHERE id = (SELECT id FROM `project.dataset.table` ORDER BY x LIMIT 1)",
+			expectedFixedSrc: "SELECT * FROM `project.dataset.table` WHERE id = (SELECT id FROM `project.dataset.table` ORDER BY 1 LIMIT 1)",
+			expectedPosition: lsp.Position{Line: 0, Character: 98},
+		},
+		"order by of exists subquery in where clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE EXISTS (SELECT 1 FROM `project.dataset.table` ORDER BY x)",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE EXISTS (SELECT 1 FROM `project.dataset.table` ORDER BY 1)",
+			expectedPosition: lsp.Position{Line: 0, Character: 100},
+		},
+		"group by of subquery in where clause": {
+			file:             "SELECT * FROM `project.dataset.table` WHERE id IN (SELECT id FROM `project.dataset.table` GROUP BY x)",
+			expectedFixedSrc: "SELECT * FROM `project.dataset.table` WHERE id IN (SELECT id FROM `project.dataset.table` GROUP BY 1)",
+			expectedPosition: lsp.Position{Line: 0, Character: 99},
+		},
+		"group by of subquery in join on clause": {
+			file:             "SELECT a.id FROM `project.dataset.table` a JOIN `project.dataset.table` b ON a.id IN (SELECT id FROM `project.dataset.table` GROUP BY x)",
+			expectedFixedSrc: "SELECT a.id FROM `project.dataset.table` a JOIN `project.dataset.table` b ON a.id IN (SELECT id FROM `project.dataset.table` GROUP BY 1)",
+			expectedPosition: lsp.Position{Line: 0, Character: 134},
+		},
+		"where clause of subquery in select list": {
+			file:             "SELECT (SELECT 1 FROM `project.dataset.table` WHERE x) FROM `project.dataset.table`",
+			expectedFixedSrc: "SELECT (SELECT 1 FROM `project.dataset.table` WHERE true) FROM `project.dataset.table`",
+			expectedPosition: lsp.Position{Line: 0, Character: 52},
+		},
+		"unnest in from clause of subquery in where clause": {
+			// The FROM clause has no fix-up of its own, so the outer condition is replaced.
+			file:             "SELECT * FROM `project.dataset.table` WHERE id IN (SELECT v FROM UNNEST(x) AS v)",
+			expectedFixedSrc: "SELECT * FROM `project.dataset.table` WHERE true",
+			expectedPosition: lsp.Position{Line: 0, Character: 72},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
+				AnyTimes()
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			expectedErrs := []file.Error{{
+				Msg:                  "Unrecognized name: x",
+				Position:             tt.expectedPosition,
+				TermLength:           1,
+				IncompleteColumnName: "x",
+			}}
+			if diff := cmp.Diff(expectedErrs, got.Errors); diff != "" {
+				t.Errorf("Errors diff (-expect, +got)\n%s", diff)
+			}
+			if len(got.RNode) == 0 {
+				t.Errorf("failed to analyze")
+			}
+		})
+	}
+}
+
 func TestAnalyzer_ParseFileKeepsTermBeforeDeletedTrailingClause(t *testing.T) {
 	tests := map[string]struct {
 		file         string

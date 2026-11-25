@@ -2117,6 +2117,25 @@ func isArithmeticOperand(node googlesql.ASTNode, offset int) bool {
 	return err == nil && isArithmeticExpression(parent)
 }
 
+// innermostClause returns the innermost clause around offset that has a fix-up for an
+// unknown name. An outer clause, e.g. the WHERE of `WHERE id IN (SELECT id FROM t GROUP BY x)`,
+// would rewrite the subquery being typed.
+func innermostClause(node googlesql.ASTNode, offset int) googlesql.ASTNode {
+	var clause googlesql.ASTNode
+	// The Walk visits the enclosing nodes from the outermost one.
+	Walk(node, func(n googlesql.ASTNode) error { //nolint
+		switch n.(type) {
+		case *googlesql.ASTSelectList, *googlesql.ASTWhereClause, *googlesql.ASTGroupBy, *googlesql.ASTOrderBy,
+			*googlesql.ASTOnClause, *googlesql.ASTHaving, *googlesql.ASTQualify:
+			if locStart(n) <= offset && offset <= locEnd(n) {
+				clause = n
+			}
+		}
+		return nil
+	})
+	return clause
+}
+
 // insideInnermostCondition reports whether expr lies within the innermost WHERE/ON/HAVING/QUALIFY
 // condition containing offset. Otherwise expr belongs to an outer query, e.g. it
 // compares against a subquery, and rewriting it would drop the subquery being typed.
