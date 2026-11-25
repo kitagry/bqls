@@ -4088,15 +4088,19 @@ func TestAnalyzer_RevertFixUpThatBreaksSyntax(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	bqClient := mock_bigquery.NewMockClient(ctrl)
 
-	// Substituting `1` for n turns `n.x.y` into `1.x.y`, which does not parse
-	// because `1.` is lexed as a floating point literal. When #742 fixes that,
-	// these tests need another fix-up that breaks the syntax.
-	src := "DECLARE n INT64;\nSELECT 1;\nSELECT n.x.y;\nSELECT 2;"
+	// These tests need a fix-up that breaks the syntax. Substituting `1` for n turns
+	// `` `n`x `` (n with the alias x) into `1x`, which does not parse because an alias
+	// must be apart from a literal. If that gets fixed too, pick another such case, or
+	// these tests pass without exercising the revert.
+	src := "DECLARE n INT64;\nSELECT 1;\nSELECT `n`x;\nSELECT 2;"
 	got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", src)
 	defer got.Close()
 
 	if got.Node == nil {
 		t.Fatalf("the script was not parsed, errors: %+v", got.Errors)
+	}
+	if got.FixedSrc != src {
+		t.Errorf("FixedSrc = %q, want the fix-up reverted", got.FixedSrc)
 	}
 	want := []file.Error{{
 		Msg:      "bqls could not finish analyzing this statement",
@@ -4116,7 +4120,8 @@ func TestAnalyzer_KeepFixingUpAfterARevertedFixUp(t *testing.T) {
 	bqClient := mock_bigquery.NewMockClient(ctrl)
 
 	// The statements after the one whose fix-up is reverted still need their own fix-ups.
-	src := "DECLARE n INT64;\nSELECT n.x.y;\nSELECT n + 1;\nSELECT n + UNKNOWN_FUNC();"
+	// `` `n`x `` stands for a fix-up that breaks the syntax, as in TestAnalyzer_RevertFixUpThatBreaksSyntax.
+	src := "DECLARE n INT64;\nSELECT `n`x;\nSELECT n + 1;\nSELECT n + UNKNOWN_FUNC();"
 	got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", src)
 	defer got.Close()
 
@@ -4151,6 +4156,11 @@ func TestAnalyzer_UnknownColumnAsOperatorOperand(t *testing.T) {
 	}{
 		"IF condition": {
 			file:             "SELECT IF(x = 'a', 1, 2) FROM " + table,
+			expectedFixedSrc: "SELECT IF('' = 'a', 1, 2) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"IF condition with a field access": {
+			file:             "SELECT IF(x.y = 'a', 1, 2) FROM " + table,
 			expectedFixedSrc: "SELECT IF('' = 'a', 1, 2) FROM " + table,
 			expectedErrMsgs:  []string{"Unrecognized name: x"},
 		},
@@ -4313,7 +4323,7 @@ func TestAnalyzer_UnknownColumnAsOperatorOperand(t *testing.T) {
 
 func TestAnalyzer_UnknownColumnAsOperatorOperandWithRevertedFixUp(t *testing.T) {
 	const table = "`project.dataset.table`"
-	// `SELECT n.x.y` stands for a statement whose fix-up breaks the syntax and is reverted,
+	// `` SELECT `n`x `` stands for a statement whose fix-up breaks the syntax and is reverted,
 	// as in TestAnalyzer_RevertFixUpThatBreaksSyntax.
 	tests := map[string]struct {
 		file string
@@ -4322,16 +4332,16 @@ func TestAnalyzer_UnknownColumnAsOperatorOperandWithRevertedFixUp(t *testing.T) 
 		expectedErrs     []file.Error
 	}{
 		"reverted statement before the operator": {
-			file:             "DECLARE n INT64;\nSELECT n.x.y;\nSELECT IF(x = 'a', 1, 2) FROM " + table + ";",
-			expectedFixedSrc: "DECLARE n INT64;\nSELECT n.x.y;\nSELECT IF('' = 'a', 1, 2) FROM " + table + ";",
+			file:             "DECLARE n INT64;\nSELECT `n`x;\nSELECT IF(x = 'a', 1, 2) FROM " + table + ";",
+			expectedFixedSrc: "DECLARE n INT64;\nSELECT `n`x;\nSELECT IF('' = 'a', 1, 2) FROM " + table + ";",
 			expectedErrs: []file.Error{
 				{Msg: "bqls could not finish analyzing this statement", Position: lsp.Position{Line: 1, Character: 7}, Severity: lsp.Warning},
 				{Msg: "Unrecognized name: x", Position: lsp.Position{Line: 2, Character: 10}, TermLength: 1, IncompleteColumnName: "x"},
 			},
 		},
 		"reverted statement after the operator": {
-			file:             "DECLARE n INT64;\nSELECT IF(x = 'a', 1, 2) FROM " + table + ";\nSELECT n.x.y;",
-			expectedFixedSrc: "DECLARE n INT64;\nSELECT IF('' = 'a', 1, 2) FROM " + table + ";\nSELECT n.x.y;",
+			file:             "DECLARE n INT64;\nSELECT IF(x = 'a', 1, 2) FROM " + table + ";\nSELECT `n`x;",
+			expectedFixedSrc: "DECLARE n INT64;\nSELECT IF('' = 'a', 1, 2) FROM " + table + ";\nSELECT `n`x;",
 			expectedErrs: []file.Error{
 				{Msg: "Unrecognized name: x", Position: lsp.Position{Line: 1, Character: 10}, TermLength: 1, IncompleteColumnName: "x"},
 				{Msg: "bqls could not finish analyzing this statement", Position: lsp.Position{Line: 2, Character: 7}, Severity: lsp.Warning},
@@ -4358,6 +4368,100 @@ func TestAnalyzer_UnknownColumnAsOperatorOperandWithRevertedFixUp(t *testing.T) 
 			}
 			if len(got.RNode) != 1 {
 				t.Errorf("got %d analyzed statements, want 1 for the IF", len(got.RNode))
+			}
+		})
+	}
+}
+
+func TestAnalyzer_PlaceholderBeforeFieldAccess(t *testing.T) {
+	// A placeholder `1` before a dot would be lexed as the floating point literal `1.`.
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+		expectedErrs     []file.Error
+	}{
+		"field access on a declared INT64": {
+			file:             "DECLARE n INT64;\nSELECT n.x;",
+			expectedFixedSrc: "DECLARE n INT64;\nSELECT (1).x;",
+			expectedErrs: []file.Error{
+				{Msg: "Cannot access field x on a value with type INT64", Position: lsp.Position{Line: 1, Character: 9}},
+			},
+		},
+		"nested field access on a declared INT64": {
+			file:             "DECLARE n INT64;\nSELECT n.x.y;",
+			expectedFixedSrc: "DECLARE n INT64;\nSELECT (1).x.y;",
+			expectedErrs: []file.Error{
+				{Msg: "Cannot access field x on a value with type INT64", Position: lsp.Position{Line: 1, Character: 9}},
+			},
+		},
+		"field access on a declared FLOAT64": {
+			file:             "DECLARE f FLOAT64;\nSELECT f.x;",
+			expectedFixedSrc: "DECLARE f FLOAT64;\nSELECT (1.0).x;",
+			expectedErrs: []file.Error{
+				{Msg: "Cannot access field x on a value with type FLOAT64", Position: lsp.Position{Line: 1, Character: 9}},
+			},
+		},
+		// A placeholder in parentheses would raise an error about the placeholder.
+		"field access on an unknown name": {
+			file:             "SELECT unknown.x.y;",
+			expectedFixedSrc: "SELECT 1;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		"quoted field access on an unknown name": {
+			file:             "SELECT unknown.`x y`;",
+			expectedFixedSrc: "SELECT 1;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		// Removing only `.x` would make `1[OFFSET(0)]`, an error about the placeholder.
+		"subscript after a field access on an unknown name": {
+			file:             "SELECT unknown.x[OFFSET(0)];",
+			expectedFixedSrc: "SELECT unknown.x[OFFSET(0)];",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		"dot-star on an unknown name": {
+			file:             "SELECT unknown.*;",
+			expectedFixedSrc: "SELECT 1;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		// `1` would not match the signature of LENGTH.
+		"field access on an unknown name as a function argument": {
+			file:             "SELECT LENGTH(unknown.x);",
+			expectedFixedSrc: "SELECT LENGTH(NULL);",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 14}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		"field access on an unknown name as a WHERE condition": {
+			file:             "SELECT a FROM (SELECT 1 AS a) WHERE unknown.x;",
+			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE true;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 36}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+
+			got := file.NewAnalyzer(logrus.New(), bqClient).ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			if diff := cmp.Diff(tt.expectedErrs, got.Errors); diff != "" {
+				t.Errorf("errors (-want +got):\n%s", diff)
 			}
 		})
 	}
