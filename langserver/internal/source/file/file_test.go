@@ -4789,6 +4789,29 @@ func TestAnalyzer_PlaceholderBeforeIdentifier(t *testing.T) {
 				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 36}, TermLength: 7, IncompleteColumnName: "unknown"},
 			},
 		},
+		// The placeholder also replaces a subscript after the name, after which the alias follows.
+		"alias after a subscript on an unknown name": {
+			file:             "SELECT unknown[OFFSET(0)]x;",
+			expectedFixedSrc: "SELECT 1 x;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		"WHERE right before a comparison with an unknown name": {
+			file:             "SELECT a FROM (SELECT 1 AS a) WHERE`unknown` = 1;",
+			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE true;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 35}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		// An arithmetic operand in WHERE gets `1` rather than `true`.
+		"THEN right before an unknown arithmetic operand in WHERE": {
+			file:             "SELECT a FROM (SELECT 1 AS a) WHERE STARTS_WITH(CASE WHEN TRUE THEN`unknown` || 'a' END, 'b');",
+			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE STARTS_WITH(CASE WHEN TRUE THEN 1 || 'a' END, 'b');",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 67}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
 		// The examples in #768.
 		"SELECT right before a declared INT64": {
 			file:             "DECLARE n INT64;\nSELECT`n`;",
