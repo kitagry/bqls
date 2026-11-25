@@ -1847,10 +1847,10 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 	}
 
 	var fixOffset FixOffset
-	usedBinaryExpr := false
-	if binExpr, ok := SearchAstNode[*googlesql.ASTBinaryExpression](node, errOffset); ok && insideInnermostCondition(node, binExpr, errOffset) && !windowEnclosesOffset(binExpr, errOffset) {
+	usedCondition := false
+	if cond, ok := innermostCondition(node, errOffset); ok && insideInnermostCondition(node, cond, errOffset) && !containsAnalyticFunction(cond) {
 		// e.x.) SELECT * FROM table WHERE unexist_column = 1
-		loc, _ := binExpr.GetParseLocationRange()
+		loc, _ := cond.GetParseLocationRange()
 		startOffset := parseLocStart(loc)
 		endOffset := parseLocEnd(loc)
 		if startOffset >= 0 && endOffset >= 0 {
@@ -1861,12 +1861,17 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 				Length: len("true") - length,
 				edits:  []sourceEdit{{start: startOffset, oldLen: length, newLen: len("true")}},
 			}
-			usedBinaryExpr = true
+			usedCondition = true
 		}
 	}
-	if !usedBinaryExpr {
-		// e.x.) SELECT * FROM table WHERE unexist_column
+	if !usedCondition {
 		incompleteOffset := errOffset + parsedErr.TermLength - len(parsedErr.IncompleteColumnName)
+		if isArithmeticOperand(node, incompleteOffset) {
+			// e.x.) SELECT * FROM table WHERE STARTS_WITH(unexist_column || 'a', 'b')
+			// `true` fails the operator, whereas the fix-ups of arithmetic operators give `1` a type.
+			return fixErrorToLiteral(src, parsedErr)
+		}
+		// e.x.) SELECT * FROM table WHERE unexist_column
 		replacedLength := len(parsedErr.IncompleteColumnName)
 		if incompleteOffset < 0 || incompleteOffset+replacedLength > len(src) {
 			return src, nil
@@ -1882,6 +1887,56 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 	}
 
 	return fixedSrc, []FixOffset{fixOffset}
+}
+
+// innermostCondition returns the innermost condition around offset, which
+// fixErrorForWhereStatement replaces with `true` as a whole.
+func innermostCondition(node googlesql.ASTNode, offset int) (googlesql.ASTNode, bool) {
+	var cond googlesql.ASTNode
+	// The Walk visits the enclosing nodes from the outermost one.
+	Walk(node, func(n googlesql.ASTNode) error { //nolint
+		if isCondition(n) && locStart(n) <= offset && offset < locEnd(n) {
+			cond = n
+		}
+		return nil
+	})
+	return cond, cond != nil
+}
+
+// isCondition reports whether n is an expression that yields BOOL whatever the types of
+// its operands are. An arithmetic expression is not, as `x + 1` in `x + 1 > 0`.
+func isCondition(n googlesql.ASTNode) bool {
+	switch n := n.(type) {
+	case *googlesql.ASTBinaryExpression:
+		op, _ := n.Op()
+		_, isArithmetic := arithmeticOperators[op]
+		return !isArithmetic
+	}
+	return false
+}
+
+// isArithmeticExpression reports whether n is an arithmetic, concatenation or bitwise expression.
+func isArithmeticExpression(n googlesql.ASTNode) bool {
+	switch n := n.(type) {
+	case *googlesql.ASTBinaryExpression:
+		op, _ := n.Op()
+		_, ok := arithmeticOperators[op]
+		return ok
+	case *googlesql.ASTBitwiseShiftExpression:
+		return true
+	}
+	return false
+}
+
+// isArithmeticOperand reports whether the path starting at offset is an operand of an
+// arithmetic, concatenation or bitwise operator.
+func isArithmeticOperand(node googlesql.ASTNode, offset int) bool {
+	path, ok := SearchAstNode[*googlesql.ASTPathExpression](node, offset)
+	if !ok || locStart(path) != offset {
+		return false
+	}
+	parent, err := path.Parent()
+	return err == nil && isArithmeticExpression(parent)
 }
 
 // insideInnermostCondition reports whether expr lies within the innermost WHERE/ON/HAVING/QUALIFY
@@ -1907,12 +1962,31 @@ func insideInnermostCondition(node googlesql.ASTNode, expr googlesql.ASTNode, of
 	return clauseStart <= locStart(expr) && locEnd(expr) <= clauseEnd
 }
 
-// windowEnclosesOffset reports whether offset lies in a window specification inside
-// expr, e.g. `QUALIFY ROW_NUMBER() OVER (PARTITION BY unknown_col) = 1`. Rewriting
-// such expr would drop the analytic function, without which QUALIFY fails to analyze.
-func windowEnclosesOffset(expr googlesql.ASTNode, offset int) bool {
-	_, ok := SearchAstNode[*googlesql.ASTWindowSpecification](expr, offset)
-	return ok
+// containsAnalyticFunction reports whether expr contains an analytic function, e.g.
+// `QUALIFY ROW_NUMBER() OVER (PARTITION BY unknown_col) = 1`. Rewriting such expr would
+// drop the analytic function, without which QUALIFY fails to analyze. The ones in a
+// subquery are not counted, since the enclosing clause does not depend on them.
+func containsAnalyticFunction(expr googlesql.ASTNode) bool {
+	if expr == nil {
+		return false
+	}
+	switch expr.(type) {
+	case *googlesql.ASTAnalyticFunctionCall:
+		return true
+	case *googlesql.ASTQuery:
+		return false
+	}
+	n, err := expr.NumChildren()
+	if err != nil {
+		return false
+	}
+	for i := int32(0); i < n; i++ {
+		child, err := expr.Child(i)
+		if err == nil && child != nil && containsAnalyticFunction(child) {
+			return true
+		}
+	}
+	return false
 }
 
 // addInformationToNotBoolClauseError fills IncompleteColumnName only when the whole
