@@ -4706,12 +4706,91 @@ func TestAnalyzer_PlaceholderBeforeFieldAccess(t *testing.T) {
 				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
 			},
 		},
-		// Removing only `.x` would make `1[OFFSET(0)]`, an error about the placeholder.
-		"subscript after a field access on an unknown name": {
-			file:             "SELECT unknown.x[OFFSET(0)];",
-			expectedFixedSrc: "SELECT unknown.x[OFFSET(0)];",
+		// Keeping the subscript would make `1[OFFSET(0)]`, an error about the placeholder.
+		"subscript on an unknown name": {
+			file:             "SELECT unknown[OFFSET(0)];",
+			expectedFixedSrc: "SELECT 1;",
 			expectedErrs: []file.Error{
 				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		"subscript after a field access on an unknown name": {
+			file:             "SELECT unknown.x[OFFSET(0)];",
+			expectedFixedSrc: "SELECT 1;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		"field access after a subscript on an unknown name": {
+			file:             "SELECT unknown[OFFSET(0)].x;",
+			expectedFixedSrc: "SELECT 1;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		"subscript containing a bracket in a string on an unknown name": {
+			file:             "SELECT unknown[OFFSET(LENGTH(']'))];",
+			expectedFixedSrc: "SELECT 1;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		"field access with whitespace on an unknown name": {
+			file:             "SELECT unknown .x;",
+			expectedFixedSrc: "SELECT 1;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		"field access on the next line on an unknown name": {
+			file:             "SELECT unknown\n  .x;",
+			expectedFixedSrc: "SELECT 1;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		"field access after a comment on an unknown name": {
+			file:             "SELECT unknown /* c */ .x;",
+			expectedFixedSrc: "SELECT 1;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 7}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		"subscript after a comment on an unknown name as a function argument": {
+			file:             "SELECT LENGTH(unknown /* c */ [OFFSET(0)]);",
+			expectedFixedSrc: "SELECT LENGTH(NULL);",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 14}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		// `1` would not match the signature of LENGTH.
+		"subscript on an unknown name as a function argument": {
+			file:             "SELECT LENGTH(unknown[OFFSET(0)]);",
+			expectedFixedSrc: "SELECT LENGTH(NULL);",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 14}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		"field access after a subscript on an unknown name as a function argument": {
+			file:             "SELECT LENGTH(unknown.x[OFFSET(0)].y);",
+			expectedFixedSrc: "SELECT LENGTH(NULL);",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 14}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		"subscript on an unknown name as a WHERE condition": {
+			file:             "SELECT a FROM (SELECT 1 AS a) WHERE unknown[OFFSET(0)];",
+			expectedFixedSrc: "SELECT a FROM (SELECT 1 AS a) WHERE true;",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 36}, TermLength: 7, IncompleteColumnName: "unknown"},
+			},
+		},
+		// The unknown name is the index, not the array, so the array is kept.
+		"unknown name as a subscript index": {
+			file:             "SELECT [1][OFFSET(unknown)];",
+			expectedFixedSrc: "SELECT [1][OFFSET(NULL)];",
+			expectedErrs: []file.Error{
+				{Msg: "Unrecognized name: unknown", Position: lsp.Position{Line: 0, Character: 18}, TermLength: 7, IncompleteColumnName: "unknown"},
 			},
 		},
 		"dot-star on an unknown name": {
