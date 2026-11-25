@@ -880,8 +880,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				// The span of the unknown name with its field accesses and subscripts, which the fix-ups below replace.
 				termStart, termEnd := errTermOffset+pErr.TermLength-len(pErr.IncompleteColumnName), errTermOffset+pErr.TermLength
 				if termStart >= 0 && termEnd <= len(fixedSrc) {
-					termEnd = nameEnd(fixedSrc, termStart, pErr.IncompleteColumnName)
-					termEnd += fieldAccessLen(fixedSrc[termEnd:])
+					termEnd = unknownTermEnd(fixedSrc, termStart, pErr.IncompleteColumnName)
 				}
 				if defaultVal, ok := declarationMap[strings.ToLower(pErr.IncompleteColumnName)]; isUnrecognizedNameError && ok {
 					fixedSrc, fo = fixDeclarationError(fixedSrc, pErr, defaultVal)

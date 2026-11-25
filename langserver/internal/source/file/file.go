@@ -1082,16 +1082,7 @@ func fixDeclarationError(src string, parsedErr Error, defaultVal string) (fixedS
 		return src, nil
 	}
 	replaceEnd := nameEnd(src, replaceOffset, parsedErr.IncompleteColumnName)
-	rest := src[replaceEnd:]
-	defaultVal = keepApartFromIdentifiers(keepApartFromDot(defaultVal, rest), src, replaceOffset, replaceEnd)
-	fixedSrc = src[:replaceOffset] + defaultVal + rest
-	fixOffset := FixOffset{
-		Offset: errOffset,
-		Length: -(replaceEnd - replaceOffset) + len(defaultVal),
-		edits:  []sourceEdit{{start: replaceOffset, oldLen: replaceEnd - replaceOffset, newLen: len(defaultVal)}},
-	}
-
-	return fixedSrc, []FixOffset{fixOffset}
+	return substitute(src, replaceOffset, replaceEnd, keepApartFromDot(defaultVal, src[replaceEnd:]), errOffset)
 }
 
 // fix field name <name> error.
@@ -1117,17 +1108,25 @@ func fixErrorToExpression(src string, parsedErr Error, expr string) (fixedSrc st
 	}
 	// The fields of an unknown name are unknown too. Leaving them would also make `1.x`,
 	// where `1.` is lexed as a floating point literal.
-	replaceEnd := nameEnd(src, replaceOffset, parsedErr.IncompleteColumnName)
-	replaceEnd += fieldAccessLen(src[replaceEnd:])
-	expr = keepApartFromIdentifiers(expr, src, replaceOffset, replaceEnd)
-	fixedSrc = src[:replaceOffset] + expr + src[replaceEnd:]
-	fixOffset := FixOffset{
-		Offset: errOffset,
-		Length: -(replaceEnd - replaceOffset) + len(expr),
-		edits:  []sourceEdit{{start: replaceOffset, oldLen: replaceEnd - replaceOffset, newLen: len(expr)}},
-	}
+	return substitute(src, replaceOffset, unknownTermEnd(src, replaceOffset, parsedErr.IncompleteColumnName), expr, errOffset)
+}
 
-	return fixedSrc, []FixOffset{fixOffset}
+// substitute replaces src[start:end] with expr, kept apart from the identifiers around it.
+// offset is where the fix-up anchors its FixOffset.
+func substitute(src string, start, end int, expr string, offset int) (fixedSrc string, fixOffsets []FixOffset) {
+	expr = keepApartFromIdentifiers(expr, src, start, end)
+	return src[:start] + expr + src[end:], []FixOffset{{
+		Offset: offset,
+		Length: len(expr) - (end - start),
+		edits:  []sourceEdit{{start: start, oldLen: end - start, newLen: len(expr)}},
+	}}
+}
+
+// unknownTermEnd returns the end of the unknown name starting at start in src with the
+// field accesses and subscripts after it, which the fix-ups replace together.
+func unknownTermEnd(src string, start int, name string) int {
+	end := nameEnd(src, start, name)
+	return end + fieldAccessLen(src[end:])
 }
 
 // fieldAccessLen returns the length of the field accesses such as `.x.y` or `.*` and the
@@ -1218,19 +1217,17 @@ func fieldPathLen(rest string) int {
 }
 
 // nameEnd returns the end of name starting at start in src. The errors spell a quoted
-// name without its backquotes, which are part of it in src. A name taken from src as is,
-// such as the path of an unknown struct field, may start with a quoted part as in
-// "`t`.x", and ends after all of it.
+// name without its backquotes, which are part of it in src, or cut it at a space inside
+// it, as "`my" of "`my field`". A name taken from src as is, such as the path of an
+// unknown struct field, may start with a quoted part as in "`t`.x", and ends after all of it.
 func nameEnd(src string, start int, name string) int {
-	if strings.HasPrefix(src[start:], name) {
-		return start + len(name)
-	}
+	end := start + len(name)
 	if strings.HasPrefix(src[start:], "`") {
-		if end, closed := bqparser.SkipQuoted(src, start); closed {
-			return end
+		if quotedEnd, closed := bqparser.SkipQuoted(src, start); closed && quotedEnd > end {
+			return quotedEnd
 		}
 	}
-	return start + len(name)
+	return end
 }
 
 // keepApartFromIdentifiers pads expr, which replaces src[start:end], with a space on
@@ -1893,14 +1890,7 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 		startOffset := parseLocStart(loc)
 		endOffset := parseLocEnd(loc)
 		if startOffset >= 0 && endOffset >= 0 {
-			length := endOffset - startOffset
-			placeholder := keepApartFromIdentifiers("true", src, startOffset, endOffset)
-			fixedSrc = src[:startOffset] + placeholder + src[endOffset:]
-			return fixedSrc, []FixOffset{{
-				Offset: startOffset,
-				Length: len(placeholder) - length,
-				edits:  []sourceEdit{{start: startOffset, oldLen: length, newLen: len(placeholder)}},
-			}}
+			return substitute(src, startOffset, endOffset, "true", startOffset)
 		}
 	}
 	incompleteOffset := errOffset + parsedErr.TermLength - len(parsedErr.IncompleteColumnName)
@@ -2124,13 +2114,7 @@ func fixNotBoolClauseError(src string, parsedErr Error) (fixedSrc string, fixOff
 	if !ok || end > len(src) {
 		return src, nil
 	}
-	placeholder := keepApartFromIdentifiers("true", src, start, end)
-	fixedSrc = src[:start] + placeholder + src[end:]
-	return fixedSrc, []FixOffset{{
-		Offset: start,
-		Length: len(placeholder) - parsedErr.TermLength,
-		edits:  []sourceEdit{{start: start, oldLen: parsedErr.TermLength, newLen: len(placeholder)}},
-	}}
+	return substitute(src, start, end, "true", start)
 }
 
 // addInformationToPipeColumnNotFoundError covers the column name that pipe

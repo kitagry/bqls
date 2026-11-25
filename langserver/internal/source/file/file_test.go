@@ -4936,6 +4936,14 @@ func TestAnalyzer_PlaceholderBeforeIdentifier(t *testing.T) {
 				{Msg: "Field name x does not exist in STRUCT<y INT64>", Position: lsp.Position{Line: 0, Character: 9}, TermLength: 3, IncompleteColumnName: "t.`x`"},
 			},
 		},
+		// The message cuts the name at the space in it.
+		"alias after an unknown quoted field with a space": {
+			file:             "SELECT t.`my field`y FROM (SELECT STRUCT(1 AS y) AS t);",
+			expectedFixedSrc: "SELECT 1 y FROM (SELECT STRUCT(1 AS y) AS t);",
+			expectedErrs: []file.Error{
+				{Msg: "Field name `my field` does not exist in STRUCT<y INT64>", Position: lsp.Position{Line: 0, Character: 9}, TermLength: 10, IncompleteColumnName: "t.`my field`"},
+			},
+		},
 		"alias after a quoted name not found inside a table": {
 			file:             "SELECT t.`b`x FROM (SELECT 1 AS a) AS t;",
 			expectedFixedSrc: "SELECT 1 x FROM (SELECT 1 AS a) AS t;",
