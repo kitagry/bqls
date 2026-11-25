@@ -1697,6 +1697,36 @@ func TestAnalyzer_UnrecognizedNameInHavingAndQualify(t *testing.T) {
 				IncompleteColumnName: "unknown_col",
 			}},
 		},
+		"compared with analytic function in qualify clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () = unknown_col",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () = 1",
+			expectedErrs: []file.Error{{
+				Msg:                  "Unrecognized name: unknown_col",
+				Position:             lsp.Position{Line: 0, Character: 81},
+				TermLength:           11,
+				IncompleteColumnName: "unknown_col",
+			}},
+		},
+		"compared with non-INT64 analytic function in qualify clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY CAST(ROW_NUMBER() OVER () AS STRING) = unknown_col",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY CAST(ROW_NUMBER() OVER () AS STRING) = ''",
+			expectedErrs: []file.Error{{
+				Msg:                  "Unrecognized name: unknown_col",
+				Position:             lsp.Position{Line: 0, Character: 97},
+				TermLength:           11,
+				IncompleteColumnName: "unknown_col",
+			}},
+		},
+		"in list compared with analytic function in qualify clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () IN (unknown_col, 2)",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () IN (1, 2)",
+			expectedErrs: []file.Error{{
+				Msg:                  "Unrecognized name: unknown_col",
+				Position:             lsp.Position{Line: 0, Character: 83},
+				TermLength:           11,
+				IncompleteColumnName: "unknown_col",
+			}},
+		},
 		"partition by of window function in qualify clause": {
 			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER (PARTITION BY unknown_col ORDER BY id) = 1",
 			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER (PARTITION BY true ORDER BY id) = 1",

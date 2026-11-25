@@ -2058,9 +2058,10 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 		// e.x.) SELECT * FROM table WHERE unexist_column = 1
 		return substitute(src, locStart(cond), locEnd(cond), "true", locStart(cond))
 	}
-	if isArithmeticOperand(node, incompleteOffset) {
+	if isOperatorOperand(node, incompleteOffset) {
 		// e.x.) SELECT * FROM table WHERE STARTS_WITH(unexist_column || 'a', 'b')
-		// `true` fails the operator, whereas the fix-ups of arithmetic operators give `1` a type.
+		// e.x.) SELECT * FROM table QUALIFY ROW_NUMBER() OVER () = unexist_column
+		// `true` fails the operator, whereas the fix-ups of operators give `1` a type.
 		return fixErrorToLiteral(src, parsedErr)
 	}
 	// e.x.) SELECT * FROM table WHERE unexist_column
@@ -2188,15 +2189,24 @@ func isArithmeticExpression(n googlesql.ASTNode) bool {
 	return false
 }
 
-// isArithmeticOperand reports whether the path starting at offset is an operand of an
-// arithmetic, concatenation or bitwise operator.
-func isArithmeticOperand(node googlesql.ASTNode, offset int) bool {
+// isOperatorOperand reports whether the path starting at offset is an operand of an
+// arithmetic, concatenation or bitwise operator, or of a condition such as a comparison
+// or an IN list.
+func isOperatorOperand(node googlesql.ASTNode, offset int) bool {
 	path, ok := SearchAstNode[*googlesql.ASTPathExpression](node, offset)
 	if !ok || locStart(path) != offset {
 		return false
 	}
 	parent, err := path.Parent()
-	return err == nil && isArithmeticExpression(parent)
+	if err != nil {
+		return false
+	}
+	if _, ok := parent.(*googlesql.ASTInList); ok {
+		if parent, err = parent.Parent(); err != nil {
+			return false
+		}
+	}
+	return isArithmeticExpression(parent) || isCondition(parent)
 }
 
 // innermostClause returns the innermost clause around offset that has a fix-up for an
