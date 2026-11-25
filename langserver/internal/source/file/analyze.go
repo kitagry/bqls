@@ -877,7 +877,7 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 			skipError := false
 			if isUnrecognizedNameError || isNotExistInStructError || isNotFoundInsideError {
 				errTermOffset := positionToByteOffset(fixedSrc, pErr.Position)
-				// The span of the unknown name with its field accesses, which the fix-ups below replace.
+				// The span of the unknown name with its field accesses and subscripts, which the fix-ups below replace.
 				termStart, termEnd := errTermOffset+pErr.TermLength-len(pErr.IncompleteColumnName), errTermOffset+pErr.TermLength
 				if termEnd >= 0 && termEnd <= len(fixedSrc) {
 					termEnd += fieldAccessLen(fixedSrc[termEnd:])

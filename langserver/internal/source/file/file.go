@@ -1128,15 +1128,65 @@ func fixErrorToExpression(src string, parsedErr Error, expr string) (fixedSrc st
 	return fixedSrc, []FixOffset{fixOffset}
 }
 
-// fieldAccessLen returns the length of the field accesses such as `.x.y` or `.*` that
-// rest starts with. It returns 0 if a subscript follows them, since the placeholder
-// would then be subscripted.
+// fieldAccessLen returns the length of the field accesses such as `.x.y` or `.*` and the
+// subscripts such as `[OFFSET(0)]` that rest starts with, including whitespace and comments
+// before them. They apply to the unknown name, so leaving them would apply them to the placeholder.
 func fieldAccessLen(rest string) int {
-	n := fieldPathLen(rest)
-	if strings.HasPrefix(rest[n:], "[") {
-		return 0
+	n := 0
+	for {
+		i := n
+		for i < len(rest) {
+			if unicode.IsSpace(rune(rest[i])) {
+				i++
+			} else if next := bqparser.SkipComment(rest, i); next != i {
+				i = next
+			} else {
+				break
+			}
+		}
+		var m int
+		switch {
+		case strings.HasPrefix(rest[i:], "."):
+			m = fieldPathLen(rest[i:])
+		case strings.HasPrefix(rest[i:], "["):
+			m = subscriptLen(rest[i:])
+		}
+		if m == 0 {
+			return n
+		}
+		n = i + m
 	}
-	return n
+}
+
+// subscriptLen returns the length of the subscript that rest starts with, or 0 if it is
+// not closed. Brackets in strings and comments do not count.
+func subscriptLen(rest string) int {
+	depth := 0
+	for i := 0; i < len(rest); {
+		switch rest[i] {
+		case '\'', '"', '`':
+			end, closed := bqparser.SkipQuoted(rest, i)
+			if !closed {
+				return 0
+			}
+			i = end
+			continue
+		case '[':
+			depth++
+		case ']':
+			depth--
+			if depth == 0 {
+				return i + 1
+			}
+		default:
+			if next := bqparser.SkipComment(rest, i); next != i {
+				i = next
+				continue
+			}
+		}
+		i++
+	}
+	return 0
 }
 
 func fieldPathLen(rest string) int {
@@ -1735,20 +1785,33 @@ func replaceSpan(fixedSrc string, start, end int, text string) (string, []FixOff
 	}}
 }
 
-// isWholeFunctionArgument reports whether the path spanning [start, end) is by itself an
-// argument of a function call, CAST or EXTRACT.
+// isWholeFunctionArgument reports whether the path spanning [start, end), with the field
+// accesses and subscripts on it, is by itself an argument of a function call, CAST or EXTRACT.
 func isWholeFunctionArgument(node googlesql.ASTNode, start, end int) bool {
 	path, ok := SearchAstNode[*googlesql.ASTPathExpression](node, start)
-	if !ok || locStart(path) != start || locEnd(path) != end {
+	if !ok || locStart(path) != start {
 		return false
 	}
-	parent, err := path.Parent()
-	if err != nil {
+	var expr googlesql.ASTNode = path
+	parent, err := expr.Parent()
+	for err == nil && isFieldAccessOrSubscript(parent) && locStart(parent) == start {
+		expr = parent
+		parent, err = expr.Parent()
+	}
+	if err != nil || locEnd(expr) != end {
 		return false
 	}
 	switch parent.(type) {
 	case *googlesql.ASTFunctionCall, *googlesql.ASTCastExpression, *googlesql.ASTExtractExpression:
 		return !insideTablePartitionBy(parent)
+	}
+	return false
+}
+
+func isFieldAccessOrSubscript(node googlesql.ASTNode) bool {
+	switch node.(type) {
+	case *googlesql.ASTArrayElement, *googlesql.ASTDotIdentifier:
+		return true
 	}
 	return false
 }
