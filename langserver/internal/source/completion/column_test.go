@@ -1178,7 +1178,7 @@ func TestProject_CompleteColumns(t *testing.T) {
 					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,
-						Value: "INT64",
+						Value: "INTEGER\nid description",
 					},
 					TypedPrefix: "i",
 				},
@@ -1413,6 +1413,60 @@ func TestProject_CompleteColumns(t *testing.T) {
 				{
 					Kind:    lsp.CIKField,
 					NewText: "id_alias",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+					TypedPrefix: "i",
+				},
+			},
+		},
+		"Complete column in having clause": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT SUM(id) FROM `project.dataset.table` HAVING i| = 'a'",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
+					Detail:  "INT64",
+					Documentation: lsp.MarkupContent{
+						Kind:  lsp.MKPlainText,
+						Value: "INTEGER",
+					},
+					TypedPrefix: "i",
+				},
+			},
+		},
+		"Complete column in qualify clause": {
+			files: map[lsp.DocumentURI]string{
+				"file1.sql": "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () = 1 AND i| = 'a'",
+			},
+			bqTableMetadataMap: map[string]*bq.TableMetadata{
+				"project.dataset.table": {
+					Schema: bq.Schema{
+						{
+							Name: "id",
+							Type: bq.IntegerFieldType,
+						},
+					},
+				},
+			},
+			expectCompletionItems: []CompletionItem{
+				{
+					Kind:    lsp.CIKField,
+					NewText: "id",
 					Detail:  "INT64",
 					Documentation: lsp.MarkupContent{
 						Kind:  lsp.MKPlainText,

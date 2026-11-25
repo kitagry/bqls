@@ -1640,6 +1640,100 @@ func TestAnalyzer_UnrecognizedNameInWhereRewritesOnlyItsOwnClause(t *testing.T) 
 	}
 }
 
+func TestAnalyzer_UnrecognizedNameInHavingAndQualify(t *testing.T) {
+	tests := map[string]struct {
+		file string
+
+		expectedFixedSrc string
+		expectedErrs     []file.Error
+	}{
+		"binary expression in having clause": {
+			file:             "SELECT SUM(id) FROM `project.dataset.table` HAVING unknown_col = 'a'",
+			expectedFixedSrc: "SELECT SUM(id) FROM `project.dataset.table` HAVING true",
+			expectedErrs: []file.Error{{
+				Msg:                  "Unrecognized name: unknown_col",
+				Position:             lsp.Position{Line: 0, Character: 51},
+				TermLength:           11,
+				IncompleteColumnName: "unknown_col",
+			}},
+		},
+		"bare name in having clause": {
+			file:             "SELECT SUM(id) FROM `project.dataset.table` HAVING unknown_col",
+			expectedFixedSrc: "SELECT SUM(id) FROM `project.dataset.table` HAVING true",
+			expectedErrs: []file.Error{{
+				Msg:                  "Unrecognized name: unknown_col",
+				Position:             lsp.Position{Line: 0, Character: 51},
+				TermLength:           11,
+				IncompleteColumnName: "unknown_col",
+			}},
+		},
+		"inside aggregate function in having clause": {
+			file:             "SELECT SUM(id) FROM `project.dataset.table` HAVING COUNTIF(unknown_col = 'a') > 0",
+			expectedFixedSrc: "SELECT SUM(id) FROM `project.dataset.table` HAVING COUNTIF(true) > 0",
+			expectedErrs: []file.Error{{
+				Msg:                  "Unrecognized name: unknown_col",
+				Position:             lsp.Position{Line: 0, Character: 59},
+				TermLength:           11,
+				IncompleteColumnName: "unknown_col",
+			}},
+		},
+		"outside window function in qualify clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () = 1 AND unknown_col = 'a'",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () = 1 AND true",
+			expectedErrs: []file.Error{{
+				Msg:                  "Unrecognized name: unknown_col",
+				Position:             lsp.Position{Line: 0, Character: 87},
+				TermLength:           11,
+				IncompleteColumnName: "unknown_col",
+			}},
+		},
+		"inside window function in qualify clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY COUNTIF(unknown_col = 'a') OVER () > 0",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY COUNTIF(true) OVER () > 0",
+			expectedErrs: []file.Error{{
+				Msg:                  "Unrecognized name: unknown_col",
+				Position:             lsp.Position{Line: 0, Character: 66},
+				TermLength:           11,
+				IncompleteColumnName: "unknown_col",
+			}},
+		},
+		"partition by of window function in qualify clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER (PARTITION BY unknown_col ORDER BY id) = 1",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER (PARTITION BY true ORDER BY id) = 1",
+			expectedErrs: []file.Error{{
+				Msg:                  "Unrecognized name: unknown_col",
+				Position:             lsp.Position{Line: 0, Character: 90},
+				TermLength:           11,
+				IncompleteColumnName: "unknown_col",
+			}},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			bqClient := mock_bigquery.NewMockClient(ctrl)
+			bqClient.EXPECT().GetTableMetadata(gomock.Any(), "project", "dataset", "table").
+				Return(&bq.TableMetadata{Schema: bq.Schema{{Name: "id", Type: bq.IntegerFieldType}}}, nil).
+				AnyTimes()
+			analyzer := file.NewAnalyzer(logrus.New(), bqClient)
+
+			got := analyzer.ParseFile("uri", tt.file)
+			defer got.Close()
+
+			if got.FixedSrc != tt.expectedFixedSrc {
+				t.Errorf("FixedSrc = %q, want %q", got.FixedSrc, tt.expectedFixedSrc)
+			}
+			if diff := cmp.Diff(tt.expectedErrs, got.Errors); diff != "" {
+				t.Errorf("Errors diff (-expect, +got)\n%s", diff)
+			}
+			if len(got.RNode) == 0 {
+				t.Errorf("failed to analyze")
+			}
+		})
+	}
+}
+
 func TestAnalyzer_ParseFileKeepsTermBeforeDeletedTrailingClause(t *testing.T) {
 	tests := map[string]struct {
 		file         string

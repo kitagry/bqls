@@ -1383,7 +1383,7 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 
 	var fixOffset FixOffset
 	usedBinaryExpr := false
-	if binExpr, ok := SearchAstNode[*googlesql.ASTBinaryExpression](node, errOffset); ok && insideInnermostCondition(node, binExpr, errOffset) {
+	if binExpr, ok := SearchAstNode[*googlesql.ASTBinaryExpression](node, errOffset); ok && insideInnermostCondition(node, binExpr, errOffset) && !windowEnclosesOffset(binExpr, errOffset) {
 		// e.x.) SELECT * FROM table WHERE unexist_column = 1
 		loc, _ := binExpr.GetParseLocationRange()
 		startOffset := parseLocStart(loc)
@@ -1417,7 +1417,7 @@ func fixErrorForWhereStatement(src string, node googlesql.ASTStatementNode, pars
 	return fixedSrc, []FixOffset{fixOffset}
 }
 
-// insideInnermostCondition reports whether expr lies within the innermost WHERE/ON
+// insideInnermostCondition reports whether expr lies within the innermost WHERE/ON/HAVING/QUALIFY
 // condition containing offset. Otherwise expr belongs to an outer query, e.g. it
 // compares against a subquery, and rewriting it would drop the subquery being typed.
 func insideInnermostCondition(node googlesql.ASTNode, expr googlesql.ASTNode, offset int) bool {
@@ -1428,10 +1428,24 @@ func insideInnermostCondition(node googlesql.ASTNode, expr googlesql.ASTNode, of
 	if on, ok := SearchAstNode[*googlesql.ASTOnClause](node, offset); ok && locStart(on) > clauseStart {
 		clauseStart, clauseEnd = locStart(on), locEnd(on)
 	}
+	if having, ok := SearchAstNode[*googlesql.ASTHaving](node, offset); ok && locStart(having) > clauseStart {
+		clauseStart, clauseEnd = locStart(having), locEnd(having)
+	}
+	if qualify, ok := SearchAstNode[*googlesql.ASTQualify](node, offset); ok && locStart(qualify) > clauseStart {
+		clauseStart, clauseEnd = locStart(qualify), locEnd(qualify)
+	}
 	if clauseStart < 0 {
 		return false
 	}
 	return clauseStart <= locStart(expr) && locEnd(expr) <= clauseEnd
+}
+
+// windowEnclosesOffset reports whether offset lies in a window specification inside
+// expr, e.g. `QUALIFY ROW_NUMBER() OVER (PARTITION BY unknown_col) = 1`. Rewriting
+// such expr would drop the analytic function, without which QUALIFY fails to analyze.
+func windowEnclosesOffset(expr googlesql.ASTNode, offset int) bool {
+	_, ok := SearchAstNode[*googlesql.ASTWindowSpecification](expr, offset)
+	return ok
 }
 
 // addInformationToNotBoolClauseError fills IncompleteColumnName only when the whole
