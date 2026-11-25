@@ -1532,6 +1532,17 @@ func operatorOperands(node googlesql.ASTNode, op string) []googlesql.ASTExpressi
 				}
 			}
 		}
+	case *googlesql.ASTLikeExpression:
+		// e.g. LIKE ANY|SOME, NOT LIKE ANY|SOME and LIKE ALL
+		if strings.Contains(op, "LIKE ") {
+			add(n.Lhs())
+			if list, err := n.InList(); err == nil && list != nil {
+				num, _ := list.NumChildren()
+				for i := int32(0); i < num; i++ {
+					add(list.List(i))
+				}
+			}
+		}
 	case *googlesql.ASTAndExpr:
 		if op == "AND" {
 			num, _ := n.NumChildren()
@@ -1988,9 +1999,35 @@ func replaceSpan(fixedSrc string, start, end int, text string) (string, []FixOff
 // isWholeFunctionArgument reports whether the path spanning [start, end), with the field
 // accesses and subscripts on it, is by itself an argument of a function call, CAST or EXTRACT.
 func isWholeFunctionArgument(node googlesql.ASTNode, start, end int) bool {
+	switch parent := wholeTermParent(node, start, end); parent.(type) {
+	case *googlesql.ASTFunctionCall, *googlesql.ASTCastExpression, *googlesql.ASTExtractExpression:
+		return !insideTablePartitionBy(parent)
+	}
+	return false
+}
+
+// isInUnnestArray reports whether the path spanning [start, end), with the field accesses
+// and subscripts on it, is by itself the array of IN UNNEST.
+func isInUnnestArray(node googlesql.ASTNode, start, end int) bool {
+	parent := wholeTermParent(node, start, end)
+	if _, ok := parent.(*googlesql.ASTExpressionWithOptAlias); ok {
+		parent, _ = parent.Parent()
+	}
+	unnest, ok := parent.(*googlesql.ASTUnnestExpression)
+	if !ok {
+		return false
+	}
+	in, _ := unnest.Parent()
+	_, ok = in.(*googlesql.ASTInExpression)
+	return ok
+}
+
+// wholeTermParent returns the parent of the path spanning [start, end) with the field
+// accesses and subscripts on it, or nil if they do not span it.
+func wholeTermParent(node googlesql.ASTNode, start, end int) googlesql.ASTNode {
 	path, ok := SearchAstNode[*googlesql.ASTPathExpression](node, start)
 	if !ok || locStart(path) != start {
-		return false
+		return nil
 	}
 	var expr googlesql.ASTNode = path
 	parent, err := expr.Parent()
@@ -1999,13 +2036,9 @@ func isWholeFunctionArgument(node googlesql.ASTNode, start, end int) bool {
 		parent, err = expr.Parent()
 	}
 	if err != nil || locEnd(expr) != end {
-		return false
+		return nil
 	}
-	switch parent.(type) {
-	case *googlesql.ASTFunctionCall, *googlesql.ASTCastExpression, *googlesql.ASTExtractExpression:
-		return !insideTablePartitionBy(parent)
-	}
-	return false
+	return parent
 }
 
 func isFieldAccessOrSubscript(node googlesql.ASTNode) bool {
@@ -2189,6 +2222,16 @@ func isArithmeticExpression(n googlesql.ASTNode) bool {
 	return false
 }
 
+// isNegation reports whether n is a unary minus or bitwise NOT.
+func isNegation(n googlesql.ASTNode) bool {
+	unary, ok := n.(*googlesql.ASTUnaryExpression)
+	if !ok {
+		return false
+	}
+	op, _ := unary.Op()
+	return op == googlesql.ASTUnaryExpressionEnums_OpMinus || op == googlesql.ASTUnaryExpressionEnums_OpBitwiseNot
+}
+
 // isOperatorOperand reports whether the path starting at offset is an operand of an
 // arithmetic, concatenation or bitwise operator, or of a condition such as a comparison
 // or an IN list.
@@ -2202,8 +2245,9 @@ func isOperatorOperand(node googlesql.ASTNode, offset int) bool {
 		return false
 	}
 	// The fix-up replaces the field accesses and subscripts after the name together with it,
-	// e.g. `unknown_col[OFFSET(0)]`, so the operand is the outermost of them.
-	for isFieldAccessOrSubscript(parent) && locStart(parent) == offset {
+	// e.g. `unknown_col[OFFSET(0)]`, so the operand is the outermost of them. A negation keeps
+	// the type of `1`, e.g. `-unknown_col`.
+	for (isFieldAccessOrSubscript(parent) && locStart(parent) == offset) || isNegation(parent) {
 		if parent, err = parent.Parent(); err != nil {
 			return false
 		}

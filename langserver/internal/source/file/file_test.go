@@ -1737,6 +1737,46 @@ func TestAnalyzer_UnrecognizedNameInHavingAndQualify(t *testing.T) {
 				IncompleteColumnName: "unknown_col",
 			}},
 		},
+		"negated and compared with analytic function in qualify clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () = -unknown_col",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () = -1",
+			expectedErrs: []file.Error{{
+				Msg:                  "Unrecognized name: unknown_col",
+				Position:             lsp.Position{Line: 0, Character: 82},
+				TermLength:           11,
+				IncompleteColumnName: "unknown_col",
+			}},
+		},
+		"bitwise not compared with analytic function in qualify clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () = ~unknown_col",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () = ~1",
+			expectedErrs: []file.Error{{
+				Msg:                  "Unrecognized name: unknown_col",
+				Position:             lsp.Position{Line: 0, Character: 82},
+				TermLength:           11,
+				IncompleteColumnName: "unknown_col",
+			}},
+		},
+		"like any list with analytic function in qualify clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY CAST(ROW_NUMBER() OVER () AS STRING) LIKE ANY (unknown_col, 'a')",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY CAST(ROW_NUMBER() OVER () AS STRING) LIKE ANY ('', 'a')",
+			expectedErrs: []file.Error{{
+				Msg:                  "Unrecognized name: unknown_col",
+				Position:             lsp.Position{Line: 0, Character: 105},
+				TermLength:           11,
+				IncompleteColumnName: "unknown_col",
+			}},
+		},
+		"in unnest with analytic function in qualify clause": {
+			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () IN UNNEST(unknown_col)",
+			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER () IN UNNEST([])",
+			expectedErrs: []file.Error{{
+				Msg:                  "Unrecognized name: unknown_col",
+				Position:             lsp.Position{Line: 0, Character: 89},
+				TermLength:           11,
+				IncompleteColumnName: "unknown_col",
+			}},
+		},
 		"partition by of window function in qualify clause": {
 			file:             "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER (PARTITION BY unknown_col ORDER BY id) = 1",
 			expectedFixedSrc: "SELECT id FROM `project.dataset.table` WHERE true QUALIFY ROW_NUMBER() OVER (PARTITION BY true ORDER BY id) = 1",
@@ -4605,6 +4645,31 @@ func TestAnalyzer_UnknownColumnAsOperatorOperand(t *testing.T) {
 			expectedFixedSrc: "SELECT '' IN UNNEST(['a']) FROM " + table,
 			expectedErrMsgs:  []string{"Unrecognized name: x"},
 		},
+		"array of IN UNNEST": {
+			file:             "SELECT name IN UNNEST(x) FROM " + table,
+			expectedFixedSrc: "SELECT name IN UNNEST([]) FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"LIKE ANY": {
+			file:             "SELECT name LIKE ANY (x, 'a') FROM " + table,
+			expectedFixedSrc: "SELECT name LIKE ANY ('', 'a') FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"NOT LIKE SOME": {
+			file:             "SELECT name NOT LIKE SOME ('a', x) FROM " + table,
+			expectedFixedSrc: "SELECT name NOT LIKE SOME ('a', '') FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"LIKE ALL": {
+			file:             "SELECT name LIKE ALL (x, 'a') FROM " + table,
+			expectedFixedSrc: "SELECT name LIKE ALL ('', 'a') FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"left operand of LIKE ANY": {
+			file:             "SELECT x LIKE ANY ('a', 'b') FROM " + table,
+			expectedFixedSrc: "SELECT '' LIKE ANY ('a', 'b') FROM " + table,
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
 		// In WHERE and ON, the whole condition around an unknown name is replaced with `true`.
 		"IN in WHERE": {
 			file:             "SELECT * FROM " + table + " WHERE x IN ('a')",
@@ -4624,6 +4689,16 @@ func TestAnalyzer_UnknownColumnAsOperatorOperand(t *testing.T) {
 		"IN UNNEST in WHERE": {
 			file:             "SELECT * FROM " + table + " WHERE x IN UNNEST(['a'])",
 			expectedFixedSrc: "SELECT * FROM " + table + " WHERE true",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"array of IN UNNEST in WHERE": {
+			file:             "SELECT * FROM " + table + " WHERE name IN UNNEST(x)",
+			expectedFixedSrc: "SELECT * FROM " + table + " WHERE name IN UNNEST([])",
+			expectedErrMsgs:  []string{"Unrecognized name: x"},
+		},
+		"LIKE ANY list element in WHERE": {
+			file:             "SELECT * FROM " + table + " WHERE name LIKE ANY (x, 'a')",
+			expectedFixedSrc: "SELECT * FROM " + table + " WHERE name LIKE ANY ('', 'a')",
 			expectedErrMsgs:  []string{"Unrecognized name: x"},
 		},
 		"BETWEEN in WHERE": {

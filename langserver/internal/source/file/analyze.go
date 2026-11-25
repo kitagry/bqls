@@ -897,6 +897,9 @@ func (a *Analyzer) ParseFile(uri lsp.DocumentURI, src string) ParsedFile {
 				} else if isWholeFunctionArgument(s, termStart, termEnd) {
 					// NULL coerces to any argument type, whereas `1` or `true` fails to match the signature.
 					fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "NULL")
+				} else if isInUnnestArray(s, termStart, termEnd) {
+					// An empty array coerces to an array of any element type.
+					fixedSrc, fo = fixErrorToExpression(fixedSrc, pErr, "[]")
 				} else {
 					switch innermostClause(node, errTermOffset).(type) {
 					case *googlesql.ASTSelectList:
