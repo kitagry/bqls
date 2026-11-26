@@ -20,7 +20,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/text v0.44.0
 	google.golang.org/api v0.316.0
-	modernc.org/sqlite v1.62.0
+	modernc.org/sqlite v1.63.0
 )
 
 require (
